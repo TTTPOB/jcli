@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import click
 
-from jcli.config import get_server_url, get_token
+from j_cli.config import get_server_url, get_token
 
 
 def _ensure_no_proxy(server_url: str) -> None:
@@ -59,11 +59,11 @@ def main(ctx, server_url, token, use_json):
 
 
 # Import and register command groups
-from jcli.commands.healthcheck import healthcheck  # noqa: E402
-from jcli.commands.kernelspec import kernelspec  # noqa: E402
-from jcli.commands.session import session  # noqa: E402
-from jcli.commands.kernel_cmd import kernel  # noqa: E402
-from jcli.commands.exec_cmd import exec_cmd  # noqa: E402
+from j_cli.commands.healthcheck import healthcheck  # noqa: E402
+from j_cli.commands.kernelspec import kernelspec  # noqa: E402
+from j_cli.commands.session import session  # noqa: E402
+from j_cli.commands.kernel_cmd import kernel  # noqa: E402
+from j_cli.commands.exec_cmd import exec_cmd  # noqa: E402
 
 main.add_command(healthcheck)
 main.add_command(kernelspec)

@@ -2,8 +2,8 @@
 
 import click
 
-from jcli.cli import Context, pass_ctx
-from jcli.output import emit, emit_error
+from j_cli.cli import Context, pass_ctx
+from j_cli.output import emit, emit_error
 
 
 @click.group()
@@ -17,7 +17,7 @@ def kernel():
 def interrupt(ctx: Context, session_id: str):
     """Interrupt a running kernel by session ID."""
     try:
-        from jcli.server import get_kernel_id_for_session, interrupt_kernel
+        from j_cli.server import get_kernel_id_for_session, interrupt_kernel
 
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
         interrupt_kernel(ctx.server_url, kernel_id, ctx.token)
@@ -35,7 +35,7 @@ def interrupt(ctx: Context, session_id: str):
 def restart(ctx: Context, session_id: str):
     """Restart a kernel by session ID."""
     try:
-        from jcli.server import get_kernel_id_for_session, restart_kernel
+        from j_cli.server import get_kernel_id_for_session, restart_kernel
 
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
         restart_kernel(ctx.server_url, kernel_id, ctx.token)

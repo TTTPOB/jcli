@@ -2,8 +2,8 @@
 
 import click
 
-from jcli.cli import Context, pass_ctx
-from jcli.output import emit, emit_error
+from j_cli.cli import Context, pass_ctx
+from j_cli.output import emit, emit_error
 
 
 @click.group()
@@ -18,7 +18,7 @@ def session():
 def create(ctx: Context, kernel: str, name: str | None):
     """Create a new session with the given kernel."""
     try:
-        from jcli.server import create_session
+        from j_cli.server import create_session
 
         info = create_session(ctx.server_url, kernel, name, ctx.token)
         emit(
@@ -37,7 +37,7 @@ def create(ctx: Context, kernel: str, name: str | None):
 def list_sessions(ctx: Context):
     """List active sessions."""
     try:
-        from jcli.server import list_sessions
+        from j_cli.server import list_sessions
 
         sessions = list_sessions(ctx.server_url, ctx.token)
 
@@ -65,7 +65,7 @@ def list_sessions(ctx: Context):
 def kill(ctx: Context, session_id: str):
     """Kill (delete) a session."""
     try:
-        from jcli.server import delete_session
+        from j_cli.server import delete_session
 
         delete_session(ctx.server_url, session_id, ctx.token)
         emit(

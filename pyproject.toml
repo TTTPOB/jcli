@@ -31,7 +31,10 @@ test = [
 ]
 
 [project.scripts]
-jcli = "jcli.cli:main"
+j-cli = "j_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["j_cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

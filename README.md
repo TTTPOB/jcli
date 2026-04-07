@@ -1,8 +1,8 @@
-# jcli
+# j-cli
 
 CLI tool for LLM agents to operate Jupyter Lab servers.
 
-jcli enables AI agents (and humans) to remotely control Jupyter servers — execute code in kernels, manage sessions, and write outputs back to notebooks, all from the command line.
+j-cli enables AI agents (and humans) to remotely control Jupyter servers — execute code in kernels, manage sessions, and write outputs back to notebooks, all from the command line.
 
 ## Installation
 
@@ -21,11 +21,11 @@ export JCLI_JUPYTER_SERVER_URL=http://localhost:8888
 export JCLI_JUPYTER_SERVER_TOKEN=your-token
 
 # check connectivity
-jcli healthcheck
+j-cli healthcheck
 
 # create a session and execute code
-jcli session create --kernel python3 --name my-session
-jcli exec <session_id> --code "print('hello world')"
+j-cli session create --kernel python3 --name my-session
+j-cli exec <session_id> --code "print('hello world')"
 ```
 
 ## Commands
@@ -44,7 +44,7 @@ jcli exec <session_id> --code "print('hello world')"
 Check server connectivity and running kernel count.
 
 ```bash
-jcli healthcheck
+j-cli healthcheck
 ```
 
 ### `kernelspec list`
@@ -52,22 +52,22 @@ jcli healthcheck
 List available kernel specifications.
 
 ```bash
-jcli kernelspec list
+j-cli kernelspec list
 ```
 
 ### `session`
 
 ```bash
-jcli session create --kernel python3 --name my-session
-jcli session list
-jcli session kill <session_id>
+j-cli session create --kernel python3 --name my-session
+j-cli session list
+j-cli session kill <session_id>
 ```
 
 ### `kernel`
 
 ```bash
-jcli kernel interrupt <session_id>
-jcli kernel restart <session_id>
+j-cli kernel interrupt <session_id>
+j-cli kernel restart <session_id>
 ```
 
 ### `exec`
@@ -76,16 +76,16 @@ Execute code in a kernel session. Supports inline code, py:percent files, and Ju
 
 ```bash
 # inline code
-jcli exec <session_id> --code "import pandas as pd; df = pd.read_csv('data.csv'); df.head()"
+j-cli exec <session_id> --code "import pandas as pd; df = pd.read_csv('data.csv'); df.head()"
 
 # execute from py:percent file
-jcli exec <session_id> --file analysis.py
+j-cli exec <session_id> --file analysis.py
 
 # execute specific cells from a notebook
-jcli exec <session_id> --file notebook.ipynb --cell 0:3
+j-cli exec <session_id> --file notebook.ipynb --cell 0:3
 
 # execute a single cell
-jcli exec <session_id> --file notebook.ipynb --cell 5
+j-cli exec <session_id> --file notebook.ipynb --cell 5
 ```
 
 **Cell spec formats** (0-indexed):
@@ -97,11 +97,11 @@ jcli exec <session_id> --file notebook.ipynb --cell 5
 | `3:` | Cell 3 to end |
 | `:5` | Cells 0 through 4 |
 
-**Notebook writeback**: When executing from a file, outputs are automatically written back to the paired `.ipynb` file. For `analysis.py`, jcli looks for `analysis.ipynb` in the same directory.
+**Notebook writeback**: When executing from a file, outputs are automatically written back to the paired `.ipynb` file. For `analysis.py`, j-cli looks for `analysis.ipynb` in the same directory.
 
 ## Py:Percent Format
 
-jcli supports the [py:percent](https://jupytext.readthedocs.io/en/latest/formats-scripts.html#the-percent-format) format — plain Python files with cell markers:
+j-cli supports the [py:percent](https://jupytext.readthedocs.io/en/latest/formats-scripts.html#the-percent-format) format — plain Python files with cell markers:
 
 ```python
 # ---

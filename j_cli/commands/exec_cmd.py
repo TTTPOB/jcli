@@ -2,10 +2,10 @@
 
 import click
 
-from jcli.cli import Context, pass_ctx
-from jcli.output import emit, emit_error
-from jcli.executor import process_outputs, format_outputs_human
-from jcli.notebook_writer import write_outputs_to_notebook
+from j_cli.cli import Context, pass_ctx
+from j_cli.output import emit, emit_error
+from j_cli.executor import process_outputs, format_outputs_human
+from j_cli.notebook_writer import write_outputs_to_notebook
 
 
 @click.command("exec")
@@ -25,8 +25,8 @@ def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | N
         emit_error("PARSE_ERROR", "Either --code or --file must be provided", ctx.use_json)
 
     try:
-        from jcli.server import get_kernel_id_for_session
-        from jcli.kernel import execute_code
+        from j_cli.server import get_kernel_id_for_session
+        from j_cli.kernel import execute_code
 
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
     except Exception as e:
@@ -45,7 +45,7 @@ def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | N
 def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int):
     """Execute inline code."""
     try:
-        from jcli.kernel import execute_code
+        from j_cli.kernel import execute_code
 
         result = execute_code(ctx.server_url, ctx.token, kernel_id, code, timeout)
         raw_outputs = result.get("outputs", [])
@@ -65,8 +65,8 @@ def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int):
 def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | None, timeout: int):
     """Execute cells from a file."""
     try:
-        from jcli.parser import parse_file, parse_cell_spec
-        from jcli.kernel import execute_code
+        from j_cli.parser import parse_file, parse_cell_spec
+        from j_cli.kernel import execute_code
 
         parsed = parse_file(file_path)
 
