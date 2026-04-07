@@ -20,6 +20,7 @@ test = [
     "pytest-asyncio",
     "jupyter-server>=2,<3",
     "ipykernel",
+    "matplotlib",
 ]
 
 [project.scripts]
