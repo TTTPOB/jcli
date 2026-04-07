@@ -2,8 +2,8 @@
 
 import click
 
-from j_cli.cli import Context, pass_ctx
-from j_cli.output import emit, emit_error
+from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.output import emit, emit_error
 
 
 @click.group()
@@ -16,7 +16,7 @@ def kernelspec():
 def list_specs(ctx: Context):
     """List available kernel specs."""
     try:
-        from j_cli.server import list_kernelspecs
+        from jupyter_jcli.server import list_kernelspecs
 
         specs = list_kernelspecs(ctx.server_url, ctx.token)
 

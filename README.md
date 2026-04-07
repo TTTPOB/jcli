@@ -1,4 +1,4 @@
-# j-cli
+# jupyter-jcli
 
 CLI tool for LLM agents to operate Jupyter Lab servers.
 

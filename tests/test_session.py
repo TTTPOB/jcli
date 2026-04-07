@@ -4,7 +4,7 @@ import json
 
 from click.testing import CliRunner
 
-from j_cli.cli import main
+from jupyter_jcli.cli import main
 
 
 def test_session_create_and_list(jupyter_server):

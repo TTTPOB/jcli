@@ -2,7 +2,7 @@
 
 from click.testing import CliRunner
 
-from j_cli.cli import main
+from jupyter_jcli.cli import main
 
 
 def test_healthcheck_human(jupyter_server):

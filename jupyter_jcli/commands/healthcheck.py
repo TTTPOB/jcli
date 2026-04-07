@@ -2,8 +2,8 @@
 
 import click
 
-from j_cli.cli import Context, pass_ctx
-from j_cli.output import emit, emit_error
+from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.output import emit, emit_error
 
 
 @click.command()
@@ -11,7 +11,7 @@ from j_cli.output import emit, emit_error
 def healthcheck(ctx: Context):
     """Check if the Jupyter server is reachable."""
     try:
-        from j_cli.server import healthcheck as do_healthcheck
+        from jupyter_jcli.server import healthcheck as do_healthcheck
 
         info = do_healthcheck(ctx.server_url, ctx.token)
         emit(

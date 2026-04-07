@@ -6,7 +6,7 @@ import textwrap
 
 from click.testing import CliRunner
 
-from j_cli.cli import main
+from jupyter_jcli.cli import main
 
 
 def _create_session(runner, url, token):

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "j-cli"
+name = "jupyter-jcli"
 version = "0.1.0"
 description = "CLI tool for LLM agents to operate Jupyter Lab servers"
 requires-python = ">=3.10"
@@ -31,10 +31,10 @@ test = [
 ]
 
 [project.scripts]
-j-cli = "j_cli.cli:main"
+j-cli = "jupyter_jcli.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["j_cli"]
+packages = ["jupyter_jcli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

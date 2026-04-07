@@ -20,10 +20,10 @@ command -v j-cli > /dev/null && echo "installed" || echo "not installed"
 If not installed, install it with:
 
 ```bash
-uv tool install j-cli
+uv tool install jupyter-jcli
 ```
 
-Note: the binary and PyPI package name is `j-cli`.
+Note: the PyPI package name is `jupyter-jcli`, the binary name is `j-cli`.
 
 ## Connection
 
@@ -51,7 +51,7 @@ A typical workflow follows these steps:
 1. **Check connectivity** — verify the server is reachable
 2. **Detect kernel spec** — if the user provides a `.py` or `.ipynb` file, use the parser module to extract the kernel name:
    ```python
-   from j_cli.parser import parse_file
+   from jupyter_jcli.parser import parse_file
    parsed = parse_file("analysis.py")  # or "notebook.ipynb"
    print(parsed.kernel_name)  # e.g. "ir", "python3", "julia-1.10"
    ```
@@ -68,7 +68,7 @@ j-cli healthcheck
 # Output: OK  Jupyter server v2.14.2  0 kernel(s) running
 
 # 2. Detect kernel spec from the file
-python -c "from j_cli.parser import parse_file; print(parse_file('analysis.py').kernel_name)"
+python -c "from jupyter_jcli.parser import parse_file; print(parse_file('analysis.py').kernel_name)"
 # Output: ir
 
 # 3. Create a session with the detected kernel
