@@ -3,10 +3,17 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "jcli"
+name = "j-cli"
 version = "0.1.0"
 description = "CLI tool for LLM agents to operate Jupyter Lab servers"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "tttpob", email = "i@tpob.io" }]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "click>=8",
     "jupyter-kernel-client>=0.7.3",
