@@ -26,7 +26,6 @@ def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | N
 
     try:
         from j_cli.server import get_kernel_id_for_session
-        from j_cli.kernel import execute_code
 
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
     except Exception as e:
@@ -66,7 +65,7 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
     """Execute cells from a file."""
     try:
         from j_cli.parser import parse_file, parse_cell_spec
-        from j_cli.kernel import execute_code
+        from j_cli.kernel import kernel_connection
 
         parsed = parse_file(file_path)
 
@@ -84,24 +83,25 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
         cell_results = []
         all_outputs_human = []
 
-        for cell in selected:
-            result = execute_code(ctx.server_url, ctx.token, kernel_id, cell.source, timeout)
-            raw_outputs = result.get("outputs", [])
-            outputs = process_outputs(raw_outputs)
+        with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
+            for cell in selected:
+                result = kernel.execute(cell.source, timeout=timeout)
+                raw_outputs = result.get("outputs", [])
+                outputs = process_outputs(raw_outputs)
 
-            cell_results.append({
-                "cell_index": cell.index,
-                "source_preview": cell.source[:80].replace("\n", " "),
-                "outputs": outputs,
-                "raw_outputs": raw_outputs,
-                "execution_count": result.get("execution_count"),
-            })
+                cell_results.append({
+                    "cell_index": cell.index,
+                    "source_preview": cell.source[:80].replace("\n", " "),
+                    "outputs": outputs,
+                    "raw_outputs": raw_outputs,
+                    "execution_count": result.get("execution_count"),
+                })
 
-            if not ctx.use_json:
-                all_outputs_human.append(f"--- cell {cell.index} ---")
-                text = format_outputs_human(outputs)
-                if text:
-                    all_outputs_human.append(text)
+                if not ctx.use_json:
+                    all_outputs_human.append(f"--- cell {cell.index} ---")
+                    text = format_outputs_human(outputs)
+                    if text:
+                        all_outputs_human.append(text)
 
         # Write back to notebook
         notebook_updated = None
