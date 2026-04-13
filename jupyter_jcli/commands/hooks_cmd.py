@@ -101,6 +101,96 @@ def nbconvert_guard():
 
 
 # ---------------------------------------------------------------------------
+# python-run-guard
+# ---------------------------------------------------------------------------
+
+PYTHON_RUN_GUARDS: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "python script",
+        re.compile(
+            r"""
+            (?:^|[\s;&|`(])               # shell boundary
+            (?:                             # optional uv/pixi wrapper
+                uv\s+run\s+(?:-\S+(?:\s+\S+)?\s+)*?
+                |pixi\s+run\s+(?:-\S+(?:\s+\S+)?\s+)*?
+            )?
+            python\d?\s+                   # python or python3
+            (?![-])                        # not a flag (-c / -m / -u / etc.)
+            (?P<file>\S+\.py)\b           # the .py file argument
+            """,
+            re.VERBOSE,
+        ),
+    ),
+    (
+        "python shebang",
+        re.compile(
+            r"(?:^|[\s;&|`(])(?P<file>\./\S+\.py)\b",
+        ),
+    ),
+]
+
+_PYTHON_HINT = (
+    "`{label}` on `{file}` would execute a py:percent file that has a paired\n"
+    "notebook (`{ipynb}`). Reconsider — in most cases this is not what you want:\n"
+    "running it as a script throws away kernel state, rich outputs, and the\n"
+    "py/ipynb pair sync that j-cli maintains.\n\n"
+    "Think carefully about intent. If you want to run the notebook's code against\n"
+    "a live kernel (the common case), use a j-cli session instead:\n"
+    "  1. j-cli healthcheck\n"
+    "  2. j-cli session list           # reuse an existing session when possible\n"
+    "  3. j-cli session create --kernel <spec> --path {file}\n"
+    "  4. j-cli exec <session_id> --file {file} [--cell N | --cell N:M]\n\n"
+    "If you truly need a one-shot script execution (e.g. the file also doubles as\n"
+    "a CLI entrypoint), rename the entrypoint so it no longer shadows the notebook\n"
+    "pair, or invoke it via `python -m <module>` to make the intent explicit."
+)
+
+
+@hooks.command("python-run-guard")
+def python_run_guard():
+    """PreToolUse hook: soft guard against running py:percent files as scripts."""
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        sys.exit(0)  # fail-open
+
+    command: str = ""
+    cwd: str = ""
+    try:
+        command = payload.get("tool_input", {}).get("command", "") or ""
+        cwd = payload.get("cwd", "") or ""
+    except (AttributeError, TypeError):
+        sys.exit(0)  # fail-open
+
+    cwd_path = Path(cwd) if cwd else Path.cwd()
+
+    from jupyter_jcli.parser import find_paired_ipynb
+
+    for label, pattern in PYTHON_RUN_GUARDS:
+        m = pattern.search(command)
+        if not m:
+            continue
+        file_str: str = m.group("file")
+        try:
+            file_path = Path(file_str)
+            if not file_path.is_absolute():
+                file_path = cwd_path / file_path
+            ipynb = find_paired_ipynb(file_path)
+        except Exception:  # noqa: BLE001 — fail-open on filesystem errors
+            sys.exit(0)
+        if ipynb is not None:
+            _print_decision(
+                "deny",
+                _PYTHON_HINT.format(label=label, file=file_str, ipynb=ipynb.name),
+            )
+        # First match wins — stop after the first syntactic match regardless.
+        sys.exit(0)
+
+    # No pattern matched — allow (empty stdout).
+    sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
 # pair-drift-guard
 # ---------------------------------------------------------------------------
 
