@@ -9,6 +9,20 @@ description: Use this skill whenever the user wants to execute code on a Jupyter
 
 j-cli is a CLI tool that lets you operate Jupyter Lab servers. Use it to execute code in kernels, manage sessions, and write outputs back to notebooks. Always use `--json` (`-j`) flag when you need to parse the output programmatically.
 
+## One-time Claude Code hook install
+
+Run this once per project to prevent Claude from falling back to `jupyter nbconvert --execute` (or `papermill` / `runipy`) instead of j-cli:
+
+```bash
+j-cli setup claude --local    # writes .claude/settings.local.json (gitignored, this machine only)
+# or:
+j-cli setup claude --project  # writes .claude/settings.json       (committed, team-shared)
+# or:
+j-cli setup claude --user     # writes ~/.claude/settings.json     (global, all projects)
+```
+
+The command is idempotent — re-running updates the hook in place without duplicating it.
+
 ## Prerequisites
 
 Before using j-cli, check if it is installed:
