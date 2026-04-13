@@ -14,46 +14,6 @@ import click
 # A match on *any* pattern causes a deny.
 # ---------------------------------------------------------------------------
 
-GUARDS: list[tuple[str, re.Pattern[str]]] = [
-    (
-        "nbconvert --execute",
-        re.compile(
-            r"""
-            (?:^|[\s;&|`(])                            # start-of-string or shell boundary
-            (?:python\d?\s+-m\s+|uv\s+run\s+|!\s*)?   # optional python -m / uv run / shell-bang
-            jupyter\s+nbconvert\b                      # the target command
-            (?=.*?(?:\s--execute\b|\s--execute=))      # somewhere later: --execute flag
-            """,
-            re.IGNORECASE | re.VERBOSE | re.DOTALL,
-        ),
-    ),
-    (
-        "papermill",
-        re.compile(
-            r"(?:^|[\s;&|`(])(?:uv\s+run\s+)?papermill\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "runipy",
-        re.compile(
-            r"(?:^|[\s;&|`(])(?:uv\s+run\s+)?runipy\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "ipython run-notebook",
-        re.compile(
-            r"""
-            (?:^|[\s;&|`(])
-            (?:uv\s+run\s+)?ipython\b
-            (?=.*?(?:%run\s+\S+\.ipynb|\s\S+\.ipynb\b))
-            """,
-            re.IGNORECASE | re.VERBOSE | re.DOTALL,
-        ),
-    ),
-]
-
 _HINT = (
     "`{label}` is intercepted by j-cli. Use j-cli instead:\n"
     "  1. j-cli healthcheck\n"
@@ -67,6 +27,48 @@ _HINT = (
 @click.group(hidden=True)
 def hooks():
     """Internal hook handlers (not intended for direct use)."""
+
+
+def _check_exec_guard(sc) -> str | None:
+    """Return the guard label if *sc* should be denied, else ``None``.
+
+    Checks for: jupyter nbconvert --execute, papermill, runipy,
+    ipython with a notebook argument, and python -m jupyter nbconvert --execute.
+    """
+    name = sc.name.lower()
+    args = sc.args
+
+    if name == "jupyter":
+        if args and args[0] == "nbconvert":
+            if any(a == "--execute" or a.startswith("--execute=") for a in args):
+                return "nbconvert --execute"
+        return None
+
+    # python -m jupyter nbconvert --execute …
+    if re.fullmatch(r"python\d*(?:\.\d+)?", name) and args and args[0] == "-m":
+        rest = args[1:]
+        if rest and rest[0] == "jupyter":
+            from jupyter_jcli.hooks_parser import SimpleCommand
+            inner = SimpleCommand(
+                name="jupyter", args=rest[1:], assigns={}, raw=sc.raw
+            )
+            return _check_exec_guard(inner)
+        return None
+
+    if name == "papermill":
+        return "papermill"
+
+    if name == "runipy":
+        return "runipy"
+
+    if name == "ipython":
+        for a in args:
+            if a.endswith(".ipynb"):
+                return "ipython run-notebook"
+            if "%run" in a and ".ipynb" in a:
+                return "ipython run-notebook"
+
+    return None
 
 
 @hooks.command("notebook-exec-guard")
@@ -84,8 +86,17 @@ def nbconvert_guard():
     except (AttributeError, TypeError):
         sys.exit(0)
 
-    for label, pattern in GUARDS:
-        if pattern.search(command):
+    from jupyter_jcli.hooks_parser import iter_simple_commands, unwrap_runner
+
+    try:
+        simple_commands = iter_simple_commands(command)
+    except Exception:  # noqa: BLE001 — fail-open on parse error
+        sys.exit(0)
+
+    for sc in simple_commands:
+        inner = unwrap_runner(sc)
+        label = _check_exec_guard(inner)
+        if label is not None:
             decision = {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",

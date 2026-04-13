@@ -6,7 +6,6 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from jupyter_jcli.commands.hooks_cmd import GUARDS
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +58,17 @@ def _is_deny(out: dict | None) -> bool:
     ("ls -la", False),
     ("echo hello", False),
     ("python script.py", False),
-    # single-quoted string inside echo: ' is not a shell boundary, so correctly allowed
+    # single-quoted string inside echo: correctly allowed (AST context)
     ("echo 'jupyter nbconvert --execute'", False),
+    # Regression: double-quoted string must not cause false positive
+    ('echo "jupyter nbconvert --execute foo.ipynb"', False),
+    # Regression: G1 false positive — --execute in a later echo must not
+    # bleed through DOTALL lookahead into the preceding nbconvert command
+    ("ls x.ipynb; echo --execute", False),
+    # Regression: new wrapper support
+    ("conda run jupyter nbconvert --execute foo.ipynb", True),
+    ("poetry run papermill in.ipynb out.ipynb", True),
+    ("env runipy foo.ipynb", True),
 ])
 def test_guard_decisions(command: str, should_deny: bool):
     exit_code, out = _invoke(command)
@@ -109,11 +117,13 @@ def test_deny_message_mentions_nbconvert_label():
 
 
 # ---------------------------------------------------------------------------
-# GUARDS constant is importable and non-empty
+# Verify all four guard categories are active (CLI-level smoke test)
 # ---------------------------------------------------------------------------
 
-def test_guards_non_empty():
-    assert len(GUARDS) >= 4
-    for label, pattern in GUARDS:
-        assert isinstance(label, str)
-        assert hasattr(pattern, "search")
+def test_all_guard_categories_active():
+    """Each of the four intercepted tool families must produce a deny."""
+    assert _is_deny(_invoke("papermill in.ipynb out.ipynb")[1])
+    assert _is_deny(_invoke("runipy foo.ipynb")[1])
+    assert _is_deny(_invoke("ipython foo.ipynb")[1])
+    # nbconvert --execute via jupyter subcommand
+    assert _is_deny(_invoke("jupyter nbconvert --execute foo.ipynb")[1])
