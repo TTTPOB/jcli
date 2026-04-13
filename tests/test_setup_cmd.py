@@ -158,17 +158,22 @@ class TestMerge:
         _invoke(runner, ["--local"])
         result = _read_json(target)
 
-        # Bash block: managed entry updated, other-hook preserved, no duplicate
-        bash_blocks = [b for b in result["hooks"]["PreToolUse"] if b.get("matcher") == "Bash"]
-        assert len(bash_blocks) == 1
-        inner = bash_blocks[0]["hooks"]
-        managed = [e for e in inner if e.get("_jcli_managed") == "notebook-exec-guard"]
+        all_entries = [
+            e
+            for block in result["hooks"]["PreToolUse"]
+            if block.get("matcher") == "Bash"
+            for e in block.get("hooks", [])
+        ]
+        # notebook-exec-guard updated, not duplicated
+        managed = [e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"]
         assert len(managed) == 1
         assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
-        other = [e for e in inner if e.get("command") == "other-hook"]
-        assert len(other) == 1
-        # New pair-drift-guard blocks also installed
-        assert _has_hook(result)  # notebook-exec-guard still there
+        # other-hook preserved
+        assert any(e.get("command") == "other-hook" for e in all_entries)
+        # python-run-guard also installed (may be a separate Bash block)
+        assert _count_managed(result, "python-run-guard") == 1
+        # pair-drift-guard blocks also installed
+        assert _has_hook(result)
 
     def test_upgrade_replaces_legacy_managed_entry(self, tmp_path, monkeypatch):
         """Setup with a new version replaces a legacy-named managed entry in-place."""
@@ -197,18 +202,22 @@ class TestMerge:
         _invoke(runner, ["--local"])
         result = _read_json(target)
 
-        # The Bash block must not be duplicated
-        bash_blocks = [b for b in result["hooks"]["PreToolUse"] if b.get("matcher") == "Bash"]
-        assert len(bash_blocks) == 1, "must not append a new Bash block for the legacy entry"
-        inner = bash_blocks[0]["hooks"]
-        # Legacy entry replaced with current name.
-        assert not any(e.get("_jcli_managed") == "nbconvert-guard" for e in inner)
+        all_entries = [
+            e
+            for block in result["hooks"]["PreToolUse"]
+            if block.get("matcher") == "Bash"
+            for e in block.get("hooks", [])
+        ]
+        # Legacy entry gone, replaced by current name (exactly once).
+        assert not any(e.get("_jcli_managed") == "nbconvert-guard" for e in all_entries)
         assert _has_hook(result)
-        managed = [e for e in inner if e.get("_jcli_managed") == "notebook-exec-guard"]
+        managed = [e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"]
         assert len(managed) == 1
         assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
         # Unrelated hook preserved.
-        assert any(e.get("command") == "other-hook" for e in inner)
+        assert any(e.get("command") == "other-hook" for e in all_entries)
+        # python-run-guard also installed.
+        assert _count_managed(result, "python-run-guard") == 1
 
     def test_upgrade_deduplicates_both_old_and_new(self, tmp_path, monkeypatch):
         """If both legacy and current entries exist (the scenario the user hit), only one survives."""
@@ -312,7 +321,7 @@ def _has_matcher(settings: dict, matcher: str) -> bool:
 
 class TestThreeBlocks:
     def test_all_three_blocks_installed(self, tmp_path, monkeypatch):
-        """Fresh install creates all three managed hook blocks."""
+        """Fresh install creates all four managed hook blocks."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = _invoke(runner, ["--local"])
@@ -325,6 +334,7 @@ class TestThreeBlocks:
         assert _has_matcher(settings, "NotebookEdit")
         assert _count_managed(settings, "pair-drift-guard") == 1
         assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+        assert _count_managed(settings, "python-run-guard") == 1
 
     def test_idempotent_three_blocks(self, tmp_path, monkeypatch):
         """Running setup twice does not duplicate any block."""
@@ -338,6 +348,7 @@ class TestThreeBlocks:
         assert _count_managed(settings, "notebook-exec-guard") == 1
         assert _count_managed(settings, "pair-drift-guard") == 1
         assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+        assert _count_managed(settings, "python-run-guard") == 1
 
     def test_pair_drift_guard_commands(self, tmp_path, monkeypatch):
         """pair-drift-guard entries point to the correct command."""

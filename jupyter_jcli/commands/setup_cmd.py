@@ -51,6 +51,15 @@ _MANAGED_BLOCKS: list[dict] = [
         },
         "legacy": frozenset(),
     },
+    {
+        "matcher": "Bash",
+        "entry": {
+            "type": "command",
+            "command": "j-cli _hooks python-run-guard",
+            "_jcli_managed": "python-run-guard",
+        },
+        "legacy": frozenset(),
+    },
 ]
 
 # All managed values across all blocks (current + legacy) — used for upgrade detection
@@ -76,7 +85,7 @@ def setup():
               help="Write to ./.claude/settings.local.json (default, gitignored)")
 @pass_ctx
 def claude(ctx: Context, scope: str):
-    """Install Claude Code PreToolUse hooks: notebook-exec-guard and pair-drift-guard."""
+    """Install Claude Code PreToolUse hooks: notebook-exec-guard, python-run-guard, and pair-drift-guard."""
     path = _resolve_path(scope)
     path.parent.mkdir(parents=True, exist_ok=True)
 
