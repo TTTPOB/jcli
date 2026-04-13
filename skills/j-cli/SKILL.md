@@ -1,6 +1,6 @@
 ---
 name: j-cli
-description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, or write execution outputs back to notebooks.
+description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, write execution outputs back to notebooks, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
 ---
 
 # j-cli — Jupyter CLI for LLM Agents
@@ -221,6 +221,24 @@ When executing from a file, j-cli automatically writes outputs back to the paire
 
 This keeps notebooks in sync with their execution results.
 
+## Searching notebook content with ripgrep
+
+Use `rg` with the `--pre` flag and the bundled preprocessor to search inside `.ipynb` files:
+
+```bash
+# Search all notebooks for a pattern
+rg --pre skills/j-cli/scripts/rg_ipynb_preprocessor.py 'pattern' .
+
+# Search only .ipynb files
+rg --pre skills/j-cli/scripts/rg_ipynb_preprocessor.py -g '*.ipynb' 'pattern' .
+
+# The preprocessor renders each notebook as plain text: cell sources and outputs
+# Binary outputs (images, PDFs) are replaced with a size notice
+```
+
+The preprocessor is at `skills/j-cli/scripts/rg_ipynb_preprocessor.py` and has no
+external dependencies.
+
 ## Py:Percent Format
 
 j-cli supports py:percent format — plain Python files with `# %%` cell markers:
@@ -246,6 +264,31 @@ plt.show()
 # ## Results
 # The plot above shows a sine wave.
 ```
+
+### Editing via py:percent round-trip
+
+**Never edit `.ipynb` files directly** — use the py:percent round-trip to edit notebook
+cells safely without losing outputs:
+
+```bash
+# 1. Convert notebook to py:percent (outputs are preserved in the .ipynb)
+j-cli convert ipynb-to-py analysis.ipynb analysis.py
+
+# 2. Edit analysis.py using normal text tools (Edit tool, etc.)
+#    Cell markers: # %% (code), # %% [markdown], # %% [raw]
+
+# 3. Write edited sources back — outputs/metadata in the .ipynb are untouched
+j-cli convert py-to-ipynb analysis.py analysis.ipynb
+```
+
+If a paired `.py` already exists (same stem), you can go directly to step 2 and then step 3.
+
+The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exists:
+- **Exists** → source-only update (outputs, execution counts, metadata preserved)
+- **Does not exist** → new notebook created from the py cells
+
+> **Policy**: The `NotebookEdit` tool is disabled by the `pair-drift-guard` hook installed
+> via `j-cli setup claude`. Always go through the py:percent round-trip instead.
 
 ## Error Handling
 
