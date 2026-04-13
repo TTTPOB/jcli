@@ -11,8 +11,8 @@ from jupyter_jcli.output import emit, emit_error
 # The hook block written into settings.json.
 _HOOK_ENTRY = {
     "type": "command",
-    "command": "j-cli _hooks nbconvert-guard",
-    "_jcli_managed": "nbconvert-guard",
+    "command": "j-cli _hooks notebook-exec-guard",
+    "_jcli_managed": "notebook-exec-guard",
 }
 
 _HOOK_BLOCK = {
@@ -22,7 +22,7 @@ _HOOK_BLOCK = {
 
 # Stable marker key used for de-duplication.
 _MANAGED_KEY = "_jcli_managed"
-_MANAGED_VAL = "nbconvert-guard"
+_MANAGED_VAL = "notebook-exec-guard"
 
 
 @click.group()

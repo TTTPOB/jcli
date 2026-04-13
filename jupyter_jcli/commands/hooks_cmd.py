@@ -66,7 +66,7 @@ def hooks():
     """Internal hook handlers (not intended for direct use)."""
 
 
-@hooks.command("nbconvert-guard")
+@hooks.command("notebook-exec-guard")
 def nbconvert_guard():
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
     try:

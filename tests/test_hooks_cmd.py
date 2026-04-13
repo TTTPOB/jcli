@@ -1,4 +1,4 @@
-"""Tests for `j-cli _hooks nbconvert-guard`."""
+"""Tests for `j-cli _hooks notebook-exec-guard`."""
 
 import json
 
@@ -14,10 +14,10 @@ from jupyter_jcli.commands.hooks_cmd import GUARDS
 # ---------------------------------------------------------------------------
 
 def _invoke(command: str) -> tuple[int, dict | None]:
-    """Invoke nbconvert-guard with a Bash command payload. Returns (exit_code, json_output)."""
+    """Invoke notebook-exec-guard with a Bash command payload. Returns (exit_code, json_output)."""
     runner = CliRunner()
     payload = json.dumps({"tool_input": {"command": command}})
-    result = runner.invoke(main, ["_hooks", "nbconvert-guard"], input=payload, catch_exceptions=False)
+    result = runner.invoke(main, ["_hooks", "notebook-exec-guard"], input=payload, catch_exceptions=False)
     if result.output.strip():
         return result.exit_code, json.loads(result.output)
     return result.exit_code, None
@@ -84,7 +84,7 @@ def test_guard_decisions(command: str, should_deny: bool):
 def test_malformed_stdin_allows(raw_input: str):
     runner = CliRunner()
     result = runner.invoke(
-        main, ["_hooks", "nbconvert-guard"], input=raw_input, catch_exceptions=False
+        main, ["_hooks", "notebook-exec-guard"], input=raw_input, catch_exceptions=False
     )
     assert result.exit_code == 0
     assert result.output.strip() == "", f"Expected empty stdout for input {raw_input!r}"

@@ -22,10 +22,10 @@ def _read_json(path: Path) -> dict:
 
 
 def _has_hook(settings: dict) -> bool:
-    """Return True if the nbconvert-guard hook block is present in settings."""
+    """Return True if the notebook-exec-guard hook block is present in settings."""
     for block in settings.get("hooks", {}).get("PreToolUse", []):
         for entry in block.get("hooks", []):
-            if entry.get("_jcli_managed") == "nbconvert-guard":
+            if entry.get("_jcli_managed") == "notebook-exec-guard":
                 return True
     return False
 
@@ -97,7 +97,7 @@ class TestMerge:
             1
             for block in blocks
             for entry in block.get("hooks", [])
-            if entry.get("_jcli_managed") == "nbconvert-guard"
+            if entry.get("_jcli_managed") == "notebook-exec-guard"
         )
         assert managed_count == 1
 
@@ -144,7 +144,7 @@ class TestMerge:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "old-command", "_jcli_managed": "nbconvert-guard"},
+                            {"type": "command", "command": "old-command", "_jcli_managed": "notebook-exec-guard"},
                             {"type": "command", "command": "other-hook"},
                         ],
                     }
@@ -162,9 +162,9 @@ class TestMerge:
         assert len(blocks) == 1  # no new block appended
         inner = blocks[0]["hooks"]
         # Managed entry updated; other-hook still present
-        managed = [e for e in inner if e.get("_jcli_managed") == "nbconvert-guard"]
+        managed = [e for e in inner if e.get("_jcli_managed") == "notebook-exec-guard"]
         assert len(managed) == 1
-        assert managed[0]["command"] == "j-cli _hooks nbconvert-guard"
+        assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
         other = [e for e in inner if e.get("command") == "other-hook"]
         assert len(other) == 1
 
