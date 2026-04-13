@@ -1,0 +1,119 @@
+"""Tests for `j-cli _hooks nbconvert-guard`."""
+
+import json
+
+import pytest
+from click.testing import CliRunner
+
+from jupyter_jcli.cli import main
+from jupyter_jcli.commands.hooks_cmd import GUARDS
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+def _invoke(command: str) -> tuple[int, dict | None]:
+    """Invoke nbconvert-guard with a Bash command payload. Returns (exit_code, json_output)."""
+    runner = CliRunner()
+    payload = json.dumps({"tool_input": {"command": command}})
+    result = runner.invoke(main, ["_hooks", "nbconvert-guard"], input=payload, catch_exceptions=False)
+    if result.output.strip():
+        return result.exit_code, json.loads(result.output)
+    return result.exit_code, None
+
+
+def _is_deny(out: dict | None) -> bool:
+    if out is None:
+        return False
+    return (
+        out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Table-driven tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("command, should_deny", [
+    # nbconvert --execute variants — all should deny
+    ("jupyter nbconvert --to notebook --execute foo.ipynb", True),
+    ("jupyter nbconvert --execute foo.ipynb", True),
+    ("python -m jupyter nbconvert --execute foo.ipynb", True),
+    ("uv run jupyter nbconvert --execute foo.ipynb", True),
+    ("cd /tmp && jupyter nbconvert --execute foo.ipynb", True),
+    # nbconvert without --execute — must allow
+    ("jupyter nbconvert --to html foo.ipynb", False),
+    # papermill — deny
+    ("papermill in.ipynb out.ipynb", True),
+    ("uv run papermill in.ipynb out.ipynb", True),
+    # runipy — deny
+    ("runipy foo.ipynb", True),
+    ("uv run runipy foo.ipynb", True),
+    # ipython forms — deny
+    ('ipython -c "%run foo.ipynb"', True),
+    ("ipython foo.ipynb", True),
+    # ipython without notebook — allow
+    ('ipython -c "print(1)"', False),
+    # safe commands — allow
+    ("ls -la", False),
+    ("echo hello", False),
+    ("python script.py", False),
+    # single-quoted string inside echo: ' is not a shell boundary, so correctly allowed
+    ("echo 'jupyter nbconvert --execute'", False),
+])
+def test_guard_decisions(command: str, should_deny: bool):
+    exit_code, out = _invoke(command)
+    assert exit_code == 0
+    assert _is_deny(out) == should_deny, (
+        f"command={command!r}: expected deny={should_deny}, got deny={_is_deny(out)}, output={out}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fail-open on bad input
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw_input", [
+    "not json at all",
+    "",
+    "null",
+    '{"tool_input": null}',
+    '{"tool_input": {"command": null}}',
+])
+def test_malformed_stdin_allows(raw_input: str):
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["_hooks", "nbconvert-guard"], input=raw_input, catch_exceptions=False
+    )
+    assert result.exit_code == 0
+    assert result.output.strip() == "", f"Expected empty stdout for input {raw_input!r}"
+
+
+# ---------------------------------------------------------------------------
+# Deny message quality
+# ---------------------------------------------------------------------------
+
+def test_deny_message_mentions_label():
+    """The permissionDecisionReason should name the blocked tool."""
+    _, out = _invoke("papermill in.ipynb out.ipynb")
+    reason: str = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "papermill" in reason
+    assert "j-cli" in reason
+
+
+def test_deny_message_mentions_nbconvert_label():
+    _, out = _invoke("jupyter nbconvert --execute foo.ipynb")
+    reason: str = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "nbconvert" in reason
+
+
+# ---------------------------------------------------------------------------
+# GUARDS constant is importable and non-empty
+# ---------------------------------------------------------------------------
+
+def test_guards_non_empty():
+    assert len(GUARDS) >= 4
+    for label, pattern in GUARDS:
+        assert isinstance(label, str)
+        assert hasattr(pattern, "search")
