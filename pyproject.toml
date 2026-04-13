@@ -19,6 +19,8 @@ dependencies = [
     "jupyter-kernel-client>=0.7.3",
     "jupyter-server-client",
     "nbformat>=5",
+    "tree-sitter>=0.22",
+    "tree-sitter-bash>=0.22",
 ]
 
 [project.optional-dependencies]
