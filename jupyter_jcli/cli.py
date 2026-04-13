@@ -64,9 +64,13 @@ from jupyter_jcli.commands.kernelspec import kernelspec  # noqa: E402
 from jupyter_jcli.commands.session import session  # noqa: E402
 from jupyter_jcli.commands.kernel_cmd import kernel  # noqa: E402
 from jupyter_jcli.commands.exec_cmd import exec_cmd  # noqa: E402
+from jupyter_jcli.commands.setup_cmd import setup  # noqa: E402
+from jupyter_jcli.commands.hooks_cmd import hooks  # noqa: E402
 
 main.add_command(healthcheck)
 main.add_command(kernelspec)
 main.add_command(session)
 main.add_command(kernel)
 main.add_command(exec_cmd, name="exec")
+main.add_command(setup)
+main.add_command(hooks, name="_hooks")
