@@ -27,7 +27,7 @@ The command is idempotent — re-running updates the hook in place without dupli
 
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`. These tools bypass j-cli and lose kernel state.
 - **`python-run-guard`** (Bash, soft deny) — fires when a command like `python foo.py`, `uv run python foo.py`, `pixi run python foo.py`, or `./foo.py` targets a `.py` file that has a paired `.ipynb` next to it. The guard surfaces a "reconsider" message explaining that running the file as a script discards kernel state and py/ipynb pair sync. The agent is expected to use `j-cli session` + `j-cli exec` instead. Commands on ordinary scripts (no paired `.ipynb`) are never intercepted.
-- **`pair-drift-guard`** (Edit/Write and NotebookEdit) — detects and auto-merges drift between `.py` / `.ipynb` pairs; hard-denies `NotebookEdit` (use the py:percent round-trip instead).
+- **`pair-drift-guard`** (Edit/Write and NotebookEdit) — detects and auto-merges drift between `.py` / `.ipynb` pairs; hard-denies `NotebookEdit` (use the py:percent round-trip instead); hard-denies edits when a merge conflict or unresolvable drift is found (shows `j-cli convert` hint to pick a side).
 
 ## Installing the git pre-commit hook
 

@@ -258,13 +258,31 @@ def _run_drift_check(tool_name: str, path: Path) -> None:
     if result.status == "in_sync":
         return  # no action needed
 
-    if result.status in ("conflict", "drift_only"):
+    if result.status == "conflict":
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         _print_decision(
-            "ask",
-            f"Pair drift detected between {py_path.name} and {ipynb_path.name}. "
-            f"Conflicting cell indices: [{idx_str}]. "
-            "Please resolve manually before proceeding.",
+            "deny",
+            f"Pair conflict between {py_path.name} and {ipynb_path.name} "
+            f"at cell(s) [{idx_str}] — both sides changed the same cell(s), "
+            "auto-merge is not possible.\n"
+            "Pick a side with j-cli convert:\n"
+            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            "   # take ipynb as truth\n"
+            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            "   # take py as truth",
+        )
+        return
+
+    if result.status == "drift_only":
+        _print_decision(
+            "deny",
+            f"No git base found; {py_path.name} and {ipynb_path.name} have diverged "
+            "and cannot be auto-merged.\n"
+            "Pick a side with j-cli convert:\n"
+            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            "   # take ipynb as truth\n"
+            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            "   # take py as truth",
         )
         return
 
