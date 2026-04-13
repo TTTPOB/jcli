@@ -134,7 +134,7 @@ class TestMerge:
         assert _has_hook(result)
 
     def test_updates_managed_entry_in_place(self, tmp_path, monkeypatch):
-        """Re-running updates the managed entry without appending a new block."""
+        """Re-running updates the managed entry in the Bash block without duplicating it."""
         monkeypatch.chdir(tmp_path)
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -158,15 +158,17 @@ class TestMerge:
         _invoke(runner, ["--local"])
         result = _read_json(target)
 
-        blocks = result["hooks"]["PreToolUse"]
-        assert len(blocks) == 1  # no new block appended
-        inner = blocks[0]["hooks"]
-        # Managed entry updated; other-hook still present
+        # Bash block: managed entry updated, other-hook preserved, no duplicate
+        bash_blocks = [b for b in result["hooks"]["PreToolUse"] if b.get("matcher") == "Bash"]
+        assert len(bash_blocks) == 1
+        inner = bash_blocks[0]["hooks"]
         managed = [e for e in inner if e.get("_jcli_managed") == "notebook-exec-guard"]
         assert len(managed) == 1
         assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
         other = [e for e in inner if e.get("command") == "other-hook"]
         assert len(other) == 1
+        # New pair-drift-guard blocks also installed
+        assert _has_hook(result)  # notebook-exec-guard still there
 
     def test_upgrade_replaces_legacy_managed_entry(self, tmp_path, monkeypatch):
         """Setup with a new version replaces a legacy-named managed entry in-place."""
@@ -195,9 +197,10 @@ class TestMerge:
         _invoke(runner, ["--local"])
         result = _read_json(target)
 
-        blocks = result["hooks"]["PreToolUse"]
-        assert len(blocks) == 1, "must not append a new block for the legacy entry"
-        inner = blocks[0]["hooks"]
+        # The Bash block must not be duplicated
+        bash_blocks = [b for b in result["hooks"]["PreToolUse"] if b.get("matcher") == "Bash"]
+        assert len(bash_blocks) == 1, "must not append a new Bash block for the legacy entry"
+        inner = bash_blocks[0]["hooks"]
         # Legacy entry replaced with current name.
         assert not any(e.get("_jcli_managed") == "nbconvert-guard" for e in inner)
         assert _has_hook(result)
@@ -285,3 +288,94 @@ class TestJsonMode:
         data = json.loads(result.output)
         assert data["status"] == "ok"
         assert "path" in data
+
+
+# ---------------------------------------------------------------------------
+# Three-block installation (new blocks for pair-drift-guard)
+# ---------------------------------------------------------------------------
+
+def _count_managed(settings: dict, val: str) -> int:
+    return sum(
+        1
+        for block in settings.get("hooks", {}).get("PreToolUse", [])
+        for entry in block.get("hooks", [])
+        if entry.get("_jcli_managed") == val
+    )
+
+
+def _has_matcher(settings: dict, matcher: str) -> bool:
+    return any(
+        b.get("matcher") == matcher
+        for b in settings.get("hooks", {}).get("PreToolUse", [])
+    )
+
+
+class TestThreeBlocks:
+    def test_all_three_blocks_installed(self, tmp_path, monkeypatch):
+        """Fresh install creates all three managed hook blocks."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = _invoke(runner, ["--local"])
+        assert result.exit_code == 0
+
+        settings = _read_json(tmp_path / ".claude" / "settings.local.json")
+
+        assert _has_hook(settings)  # notebook-exec-guard on Bash
+        assert _has_matcher(settings, "Edit|Write")
+        assert _has_matcher(settings, "NotebookEdit")
+        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+
+    def test_idempotent_three_blocks(self, tmp_path, monkeypatch):
+        """Running setup twice does not duplicate any block."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        _invoke(runner, ["--local"])
+
+        settings = _read_json(tmp_path / ".claude" / "settings.local.json")
+
+        assert _count_managed(settings, "notebook-exec-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+
+    def test_pair_drift_guard_commands(self, tmp_path, monkeypatch):
+        """pair-drift-guard entries point to the correct command."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+
+        settings = _read_json(tmp_path / ".claude" / "settings.local.json")
+        for block in settings["hooks"]["PreToolUse"]:
+            for entry in block.get("hooks", []):
+                if entry.get("_jcli_managed") in ("pair-drift-guard", "pair-drift-guard-notebook"):
+                    assert entry["command"] == "j-cli _hooks pair-drift-guard"
+
+    def test_legacy_nbconvert_guard_upgraded(self, tmp_path, monkeypatch):
+        """Legacy nbconvert-guard entry is replaced even with new pair-drift-guard blocks."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
+                             "_jcli_managed": "nbconvert-guard"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        settings = _read_json(claude_dir / "settings.local.json")
+
+        assert _count_managed(settings, "nbconvert-guard") == 0
+        assert _count_managed(settings, "notebook-exec-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 1

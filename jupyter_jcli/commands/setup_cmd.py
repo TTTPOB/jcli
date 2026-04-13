@@ -8,26 +8,56 @@ import click
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
-# The hook block written into settings.json.
-_HOOK_ENTRY = {
-    "type": "command",
-    "command": "j-cli _hooks notebook-exec-guard",
-    "_jcli_managed": "notebook-exec-guard",
-}
+# ---------------------------------------------------------------------------
+# Managed hook blocks
+#
+# Each block descriptor has:
+#   matcher   - PreToolUse matcher string
+#   entry     - the hook entry dict to install (must contain _jcli_managed key)
+#   legacy    - frozenset of old _jcli_managed values to replace on upgrade
+# ---------------------------------------------------------------------------
 
-_HOOK_BLOCK = {
-    "matcher": "Bash",
-    "hooks": [_HOOK_ENTRY],
-}
-
-# Stable marker key used for de-duplication.
 _MANAGED_KEY = "_jcli_managed"
-_MANAGED_VAL = "notebook-exec-guard"
 
-# Legacy values from older j-cli versions — recognised on upgrade so the old
-# entry is replaced in-place rather than leaving a stale duplicate.
-_LEGACY_MANAGED_VALS: frozenset[str] = frozenset({"nbconvert-guard"})
-_ALL_MANAGED_VALS: frozenset[str] = frozenset({_MANAGED_VAL}) | _LEGACY_MANAGED_VALS
+_MANAGED_BLOCKS: list[dict] = [
+    {
+        "matcher": "Bash",
+        "entry": {
+            "type": "command",
+            "command": "j-cli _hooks notebook-exec-guard",
+            "_jcli_managed": "notebook-exec-guard",
+        },
+        "legacy": frozenset({"nbconvert-guard"}),
+    },
+    {
+        "matcher": "Edit|Write",
+        "entry": {
+            "type": "command",
+            "command": "j-cli _hooks pair-drift-guard",
+            "_jcli_managed": "pair-drift-guard",
+        },
+        "legacy": frozenset(),
+    },
+    {
+        "matcher": "NotebookEdit",
+        "entry": {
+            "type": "command",
+            "command": "j-cli _hooks pair-drift-guard",
+            "_jcli_managed": "pair-drift-guard-notebook",
+        },
+        "legacy": frozenset(),
+    },
+]
+
+# All managed values across all blocks (current + legacy) — used for upgrade detection
+_ALL_MANAGED_VALS: frozenset[str] = frozenset(
+    val
+    for block in _MANAGED_BLOCKS
+    for val in (
+        {block["entry"][_MANAGED_KEY]}
+        | block["legacy"]
+    )
+)
 
 
 @click.group()
@@ -42,19 +72,20 @@ def setup():
               help="Write to ./.claude/settings.local.json (default, gitignored)")
 @pass_ctx
 def claude(ctx: Context, scope: str):
-    """Install a Claude Code PreToolUse hook that redirects nbconvert to j-cli."""
+    """Install Claude Code PreToolUse hooks: notebook-exec-guard and pair-drift-guard."""
     path = _resolve_path(scope)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     settings = _load_settings(path, ctx.use_json)
-    _merge_hook(settings)
+    for block_desc in _MANAGED_BLOCKS:
+        _merge_hook(settings, block_desc)
     _write_settings(path, settings)
 
     emit(
         {
             "status": "ok",
             "path": str(path),
-            "_human": f"Wrote Claude Code hook to {path}",
+            "_human": f"Wrote Claude Code hooks to {path}",
         },
         ctx.use_json,
     )
@@ -69,7 +100,6 @@ def _resolve_path(scope: str) -> Path:
         return Path.home() / ".claude" / "settings.json"
     if scope == "project":
         return Path.cwd() / ".claude" / "settings.json"
-    # local (default)
     return Path.cwd() / ".claude" / "settings.local.json"
 
 
@@ -84,39 +114,44 @@ def _load_settings(path: Path, use_json: bool) -> dict:
         return json.loads(text)
     except json.JSONDecodeError as exc:
         emit_error("SETTINGS_INVALID", f"{path}: {exc}", use_json)
-        raise SystemExit(1) from exc  # emit_error already calls sys.exit(1)
+        raise SystemExit(1) from exc
 
 
-def _merge_hook(settings: dict) -> None:
-    """Merge our PreToolUse hook block into settings.
+def _merge_hook(settings: dict, block_desc: dict) -> None:
+    """Merge one managed hook block into settings.
 
-    Scans all Bash PreToolUse blocks for any entry whose _jcli_managed value
-    is in _ALL_MANAGED_VALS (current name or any legacy name from older j-cli
-    versions).  The first such entry is replaced with the current _HOOK_ENTRY;
-    any additional managed entries found afterwards are dropped so that
-    upgrading from an old version never leaves a stale duplicate block.
+    For the given block descriptor, scans all PreToolUse blocks whose matcher
+    matches ``block_desc["matcher"]`` for any entry whose _jcli_managed value is
+    the current name or any legacy name. The first such entry is replaced with the
+    current entry dict; additional managed entries are dropped to prevent duplicates.
+    If no existing managed entry is found, a new block is appended.
     """
+    target_matcher: str = block_desc["matcher"]
+    current_entry: dict = block_desc["entry"]
+    current_val: str = current_entry[_MANAGED_KEY]
+    all_vals: frozenset[str] = frozenset({current_val}) | block_desc["legacy"]
+
     hooks_map: dict = settings.setdefault("hooks", {})
     pre_list: list = hooks_map.setdefault("PreToolUse", [])
 
     placed = False
     for block in pre_list:
-        if not isinstance(block, dict) or block.get("matcher") != "Bash":
+        if not isinstance(block, dict) or block.get("matcher") != target_matcher:
             continue
         inner: list = block.get("hooks", [])
         new_inner = []
         for entry in inner:
-            if isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS:
+            if isinstance(entry, dict) and entry.get(_MANAGED_KEY) in all_vals:
                 if not placed:
-                    new_inner.append(_HOOK_ENTRY)
+                    new_inner.append(current_entry)
                     placed = True
-                # else: drop — stale duplicate from a previous install / old version
+                # else: drop stale duplicate
             else:
                 new_inner.append(entry)
         block["hooks"] = new_inner
 
     if not placed:
-        pre_list.append(_HOOK_BLOCK)
+        pre_list.append({"matcher": target_matcher, "hooks": [current_entry]})
 
 
 def _write_settings(path: Path, settings: dict) -> None:
