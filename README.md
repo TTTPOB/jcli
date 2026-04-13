@@ -70,6 +70,18 @@ j-cli kernel interrupt <session_id>
 j-cli kernel restart <session_id>
 ```
 
+### `setup claude`
+
+Install a Claude Code `PreToolUse` hook that intercepts `jupyter nbconvert --execute`, `papermill`, `runipy`, and similar notebook-execution bypass tools and redirects Claude to use j-cli instead.
+
+```bash
+j-cli setup claude           # default: .claude/settings.local.json (gitignored)
+j-cli setup claude --project # .claude/settings.json (committed, team-shared)
+j-cli setup claude --user    # ~/.claude/settings.json (global, all projects)
+```
+
+The command is idempotent — re-running updates the hook in place without duplicating it.
+
 ### `exec`
 
 Execute code in a kernel session. Supports inline code, py:percent files, and Jupyter notebooks.
