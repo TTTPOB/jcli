@@ -24,6 +24,11 @@ _HOOK_BLOCK = {
 _MANAGED_KEY = "_jcli_managed"
 _MANAGED_VAL = "notebook-exec-guard"
 
+# Legacy values from older j-cli versions — recognised on upgrade so the old
+# entry is replaced in-place rather than leaving a stale duplicate.
+_LEGACY_MANAGED_VALS: frozenset[str] = frozenset({"nbconvert-guard"})
+_ALL_MANAGED_VALS: frozenset[str] = frozenset({_MANAGED_VAL}) | _LEGACY_MANAGED_VALS
+
 
 @click.group()
 def setup():
@@ -83,25 +88,35 @@ def _load_settings(path: Path, use_json: bool) -> dict:
 
 
 def _merge_hook(settings: dict) -> None:
-    """Merge our PreToolUse hook block into settings, de-duping by _jcli_managed."""
+    """Merge our PreToolUse hook block into settings.
+
+    Scans all Bash PreToolUse blocks for any entry whose _jcli_managed value
+    is in _ALL_MANAGED_VALS (current name or any legacy name from older j-cli
+    versions).  The first such entry is replaced with the current _HOOK_ENTRY;
+    any additional managed entries found afterwards are dropped so that
+    upgrading from an old version never leaves a stale duplicate block.
+    """
     hooks_map: dict = settings.setdefault("hooks", {})
     pre_list: list = hooks_map.setdefault("PreToolUse", [])
 
-    # Find an existing block whose hooks list contains our managed entry.
+    placed = False
     for block in pre_list:
-        if not isinstance(block, dict):
-            continue
-        if block.get("matcher") != "Bash":
+        if not isinstance(block, dict) or block.get("matcher") != "Bash":
             continue
         inner: list = block.get("hooks", [])
-        for i, entry in enumerate(inner):
-            if isinstance(entry, dict) and entry.get(_MANAGED_KEY) == _MANAGED_VAL:
-                # Update in-place so other entries in the same block are untouched.
-                inner[i] = _HOOK_ENTRY
-                return
+        new_inner = []
+        for entry in inner:
+            if isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS:
+                if not placed:
+                    new_inner.append(_HOOK_ENTRY)
+                    placed = True
+                # else: drop — stale duplicate from a previous install / old version
+            else:
+                new_inner.append(entry)
+        block["hooks"] = new_inner
 
-    # No existing managed entry found — append a new block.
-    pre_list.append(_HOOK_BLOCK)
+    if not placed:
+        pre_list.append(_HOOK_BLOCK)
 
 
 def _write_settings(path: Path, settings: dict) -> None:

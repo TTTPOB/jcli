@@ -168,6 +168,82 @@ class TestMerge:
         other = [e for e in inner if e.get("command") == "other-hook"]
         assert len(other) == 1
 
+    def test_upgrade_replaces_legacy_managed_entry(self, tmp_path, monkeypatch):
+        """Setup with a new version replaces a legacy-named managed entry in-place."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        # Simulate settings written by an older j-cli that used "nbconvert-guard".
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
+                             "_jcli_managed": "nbconvert-guard"},
+                            {"type": "command", "command": "other-hook"},
+                        ],
+                    }
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        result = _read_json(target)
+
+        blocks = result["hooks"]["PreToolUse"]
+        assert len(blocks) == 1, "must not append a new block for the legacy entry"
+        inner = blocks[0]["hooks"]
+        # Legacy entry replaced with current name.
+        assert not any(e.get("_jcli_managed") == "nbconvert-guard" for e in inner)
+        assert _has_hook(result)
+        managed = [e for e in inner if e.get("_jcli_managed") == "notebook-exec-guard"]
+        assert len(managed) == 1
+        assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
+        # Unrelated hook preserved.
+        assert any(e.get("command") == "other-hook" for e in inner)
+
+    def test_upgrade_deduplicates_both_old_and_new(self, tmp_path, monkeypatch):
+        """If both legacy and current entries exist (the scenario the user hit), only one survives."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{"type": "command", "command": "j-cli _hooks nbconvert-guard",
+                                   "_jcli_managed": "nbconvert-guard"}],
+                    },
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{"type": "command", "command": "j-cli _hooks notebook-exec-guard",
+                                   "_jcli_managed": "notebook-exec-guard"}],
+                    },
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        result = _read_json(target)
+
+        all_managed = [
+            e
+            for block in result["hooks"]["PreToolUse"]
+            for e in block.get("hooks", [])
+            if e.get("_jcli_managed") in ("nbconvert-guard", "notebook-exec-guard")
+        ]
+        assert len(all_managed) == 1
+        assert all_managed[0]["_jcli_managed"] == "notebook-exec-guard"
+
     def test_corrupt_json_returns_error(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         claude_dir = tmp_path / ".claude"
