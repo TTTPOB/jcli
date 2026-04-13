@@ -29,7 +29,7 @@ Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
 
 ```bash
 j-cli setup git                             # default --project scope
-j-cli setup git --project                   # scripts/git-hooks/pre-commit + core.hooksPath
+j-cli setup git --project                   # .githooks/pre-commit + core.hooksPath
 j-cli setup git --local                     # .git/hooks/pre-commit (this clone only)
 j-cli setup git --include 'src/*.py'        # only watch .py files under src/
 j-cli setup git --include 'a/*.py' --include 'b/*.py'   # multiple globs (OR logic)
@@ -38,8 +38,8 @@ j-cli setup git --include 'a/*.py' --include 'b/*.py'   # multiple globs (OR log
 **What the installer does:**
 
 - Writes a bash shim at the hook path that delegates to `j-cli _hooks pre-commit-pair-sync`
-- `--project` (default): stores the hook under `scripts/git-hooks/pre-commit` and sets
-  `git config --local core.hooksPath scripts/git-hooks`
+- `--project` (default): stores the hook under `.githooks/pre-commit` and sets
+  `git config --local core.hooksPath .githooks`
 - `--local`: writes directly to `.git/hooks/pre-commit`; does not touch `core.hooksPath`
 - Injects a managed block into `.gitignore` so `*.ipynb` files are never accidentally committed:
 

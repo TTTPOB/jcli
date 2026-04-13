@@ -208,7 +208,7 @@ def _inject_gitignore_block(gitignore_path: Path) -> None:
 )
 @click.option(
     "--project", "scope", flag_value="project", default=True,
-    help="Write to scripts/git-hooks/pre-commit and set core.hooksPath (default).",
+    help="Write to .githooks/pre-commit and set core.hooksPath (default).",
 )
 @click.option(
     "--include", "include_globs", multiple=True, metavar="GLOB",
@@ -248,7 +248,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...]) -> None:
     if scope == "local":
         hook_path = repo_root / ".git" / "hooks" / "pre-commit"
     else:
-        hook_path = repo_root / "scripts" / "git-hooks" / "pre-commit"
+        hook_path = repo_root / ".githooks" / "pre-commit"
 
     # Build --include args for shim (shell-safe)
     include_args = "".join(f" --include {shlex.quote(g)}" for g in include_globs)
@@ -277,13 +277,13 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...]) -> None:
                 cwd=str(repo_root),
             )
             old_val = old.stdout.strip() if old.returncode == 0 else ""
-            if old_val and old_val != "scripts/git-hooks":
+            if old_val and old_val != ".githooks":
                 click.echo(
                     f"warning: overrode existing core.hooksPath={old_val!r}",
                     err=True,
                 )
             subprocess.run(
-                ["git", "config", "--local", "core.hooksPath", "scripts/git-hooks"],
+                ["git", "config", "--local", "core.hooksPath", ".githooks"],
                 check=True, cwd=str(repo_root),
             )
         except (OSError, FileNotFoundError):

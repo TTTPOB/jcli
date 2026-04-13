@@ -99,7 +99,7 @@ class TestProjectScope:
         result = _invoke(runner, ["--project"])
 
         assert result.exit_code == 0
-        hook = git_repo / "scripts" / "git-hooks" / "pre-commit"
+        hook = git_repo / ".githooks" / "pre-commit"
         assert hook.exists()
         assert _is_executable(hook)
         content = hook.read_text()
@@ -109,7 +109,7 @@ class TestProjectScope:
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
         _invoke(runner, ["--project"])
-        assert _hooks_path_config(git_repo) == "scripts/git-hooks"
+        assert _hooks_path_config(git_repo) == ".githooks"
 
     def test_project_is_default_scope(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -117,9 +117,9 @@ class TestProjectScope:
         result = _invoke(runner, [])  # no --local or --project
 
         assert result.exit_code == 0
-        hook = git_repo / "scripts" / "git-hooks" / "pre-commit"
+        hook = git_repo / ".githooks" / "pre-commit"
         assert hook.exists()
-        assert _hooks_path_config(git_repo) == "scripts/git-hooks"
+        assert _hooks_path_config(git_repo) == ".githooks"
 
     def test_project_overrides_existing_hookspath_with_notice(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -132,7 +132,7 @@ class TestProjectScope:
         result = _invoke(runner, ["--project"])
 
         assert result.exit_code == 0
-        assert _hooks_path_config(git_repo) == "scripts/git-hooks"
+        assert _hooks_path_config(git_repo) == ".githooks"
         combined = (result.output or "") + (result.stderr or "")
         assert "old-hooks" in combined
 
@@ -228,7 +228,7 @@ class TestIdempotency:
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
         _invoke(runner, ["--project"])
-        hook_path = git_repo / "scripts" / "git-hooks" / "pre-commit"
+        hook_path = git_repo / ".githooks" / "pre-commit"
         first_hook = hook_path.read_bytes()
         first_gi = (git_repo / ".gitignore").read_bytes()
 
