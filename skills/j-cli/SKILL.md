@@ -23,6 +23,12 @@ j-cli setup claude --user     # writes ~/.claude/settings.json     (global, all 
 
 The command is idempotent — re-running updates the hook in place without duplicating it.
 
+**What the hooks install:**
+
+- **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`. These tools bypass j-cli and lose kernel state.
+- **`python-run-guard`** (Bash, soft deny) — fires when a command like `python foo.py`, `uv run python foo.py`, `pixi run python foo.py`, or `./foo.py` targets a `.py` file that has a paired `.ipynb` next to it. The guard surfaces a "reconsider" message explaining that running the file as a script discards kernel state and py/ipynb pair sync. The agent is expected to use `j-cli session` + `j-cli exec` instead. Commands on ordinary scripts (no paired `.ipynb`) are never intercepted.
+- **`pair-drift-guard`** (Edit/Write and NotebookEdit) — detects and auto-merges drift between `.py` / `.ipynb` pairs; hard-denies `NotebookEdit` (use the py:percent round-trip instead).
+
 ## Installing the git pre-commit hook
 
 Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
