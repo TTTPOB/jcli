@@ -1,6 +1,6 @@
 ---
 name: j-cli
-description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, write execution outputs back to notebooks, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
+description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, write execution outputs back to notebooks, inspect kernel variables, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
 ---
 
 # j-cli — Jupyter CLI for LLM Agents
@@ -181,13 +181,20 @@ j-cli -j session create --kernel python3
 
 ### `session list`
 
-List all active sessions with their kernel state.
+List all active sessions with their kernel state. By default fetches a short variable preview for each idle kernel (VARS column).
 
 ```bash
-j-cli session list
+j-cli session list            # includes VARS column (default)
+j-cli session list --no-vars  # faster, skips variable fetch
+j-cli session list --vars     # force fetch even when >10 sessions
+
 j-cli -j session list
-# JSON: {"sessions": [{"session_id": "...", "kernel_id": "...", "kernel_name": "python3", "kernel_state": "idle", "name": "..."}]}
+# JSON: {"sessions": [{"session_id": "...", "kernel_id": "...", "kernel_name": "python3",
+#   "kernel_state": "idle", "name": "...",
+#   "vars_preview": {"names": ["x", "df"], "total": 2}}]}
 ```
+
+A hint line in human output points at `j-cli vars <SESSION_ID>` for the full variable list.
 
 ### `session kill`
 
@@ -212,6 +219,33 @@ Restart a kernel (clears all state).
 ```bash
 j-cli kernel restart <session_id>
 ```
+
+### `vars`
+
+Inspect kernel variables. Use after `exec` to check what's defined and what values variables hold.
+
+```bash
+# List all global variables (NAME / TYPE / VALUE table)
+j-cli vars <session_id>
+j-cli -j vars <session_id>
+# JSON: {"session_id": "...", "source": "dap", "variables": [{"name": "x", "type": "int", "value": "42", "variables_reference": 0}]}
+
+# Inspect a single variable
+j-cli vars <session_id> --name x
+j-cli -j vars <session_id> --name x
+
+# Rich inspection (MIME-typed data; DAP kernels only, e.g. ipykernel)
+j-cli vars <session_id> --name df --rich
+
+# Longer timeout (default 10s)
+j-cli vars <session_id> --timeout 20
+```
+
+**Source**: `"dap"` when the kernel supports the Jupyter debug protocol (e.g. ipykernel); `"fallback"` when a shell-channel snippet is used instead.
+
+**Ordering caveat**: variables appear in first-definition order (CPython insertion order). Re-assigning does NOT move a variable to the end. Do NOT infer "most recently modified" from position.
+
+**No mtime**: the protocol provides no per-variable last-modified timestamp. If you need to know which cells ran, use `exec` to track state yourself or restart the kernel and re-run.
 
 ### `exec`
 

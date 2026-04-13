@@ -82,6 +82,48 @@ j-cli setup claude --user    # ~/.claude/settings.json (global, all projects)
 
 The command is idempotent — re-running updates the hook in place without duplicating it.
 
+### `vars`
+
+Inspect variables in a kernel session.
+
+```bash
+# list all variables (NAME / TYPE / VALUE table)
+j-cli vars <session_id>
+
+# inspect a single variable
+j-cli vars <session_id> --name x
+
+# rich inspection (MIME-typed data, DAP kernels only)
+j-cli vars <session_id> --name x --rich
+
+# JSON output for programmatic use
+j-cli -j vars <session_id>
+j-cli -j vars <session_id> --name x
+```
+
+**Source**: when the kernel advertises debugger support (`kernel_info_reply.supported_features` contains `"debugger"`), the DAP `inspectVariables` control-channel path is used (`source="dap"`). Otherwise a shell-channel code snippet is executed (`source="fallback"`).
+
+**Ordering caveat**: variables are returned in first-definition order (CPython dict insertion order). Re-assigning a variable does **not** move it to the end; only `del x; x = …` does. Do not infer recency from position in the list.
+
+**No mtime**: the Jupyter debug protocol does not expose per-variable last-modified timestamps. No `mtime` or `last_execution_count` field is available in the protocol.
+
+### `session list` variable preview
+
+By default, `session list` fetches a short variable preview for each idle kernel:
+
+```bash
+j-cli session list            # includes VARS column (default)
+j-cli session list --no-vars  # faster, skips variable fetch
+j-cli session list --vars     # force fetch even when >10 sessions
+```
+
+Each session row gets a `VARS` column showing the first 5 variable names. A hint line at the bottom points at `j-cli vars <SESSION_ID>` for the full list.
+
+In JSON mode (`-j`), each session object gains a `vars_preview` key:
+```json
+{"session_id": "...", "vars_preview": {"names": ["x", "df"], "total": 2}}
+```
+
 ### `exec`
 
 Execute code in a kernel session. Supports inline code, py:percent files, and Jupyter notebooks.
