@@ -11,7 +11,7 @@ import nbformat
 class Cell:
     """A single cell parsed from a file."""
     index: int
-    cell_type: str  # "code" or "markdown"
+    cell_type: str  # "code", "markdown", or "raw"
     source: str
 
 
@@ -22,6 +22,7 @@ class ParsedFile:
     cells: list[Cell] = field(default_factory=list)
     source_path: str = ""
     paired_ipynb: str | None = None
+    front_matter_raw: str | None = None  # raw text including both # --- delimiters
 
 
 def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
@@ -56,15 +57,33 @@ def find_paired_ipynb(py_path: Path) -> Path | None:
     return ipynb_path if ipynb_path.exists() else None
 
 
-def parse_py_percent(path: str) -> ParsedFile:
-    """Parse a py:percent format file into cells.
+def find_pair(path: Path) -> Path | None:
+    """Find the paired file for a .py or .ipynb path.
+
+    .py / .dummy.py -> .ipynb  (via find_paired_ipynb)
+    .ipynb -> .dummy.py (preferred) or .py
+    """
+    if path.suffix == ".ipynb":
+        stem = path.stem
+        dummy = path.parent / f"{stem}.dummy.py"
+        if dummy.exists():
+            return dummy
+        py = path.parent / f"{stem}.py"
+        if py.exists():
+            return py
+        return None
+    return find_paired_ipynb(path)
+
+
+def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
+    """Parse py:percent format text into cells (no file I/O).
 
     Extracts kernel name from YAML front matter and splits on # %% markers.
     """
-    text = Path(path).read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
 
     kernel_name = None
+    front_matter_raw: str | None = None
     content_start = 0
 
     # Extract YAML front matter between # --- markers
@@ -72,12 +91,11 @@ def parse_py_percent(path: str) -> ParsedFile:
         for i, line in enumerate(lines[1:], 1):
             if line.strip() == "# ---":
                 front_matter = "".join(lines[1:i])
-                # Simple extraction of kernelspec name
-                match = re.search(r"name:\s*(\S+)", front_matter)
-                if match:
-                    # Take the last match (kernelspec.name, not jupytext name)
-                    for m in re.finditer(r"name:\s*(\S+)", front_matter):
-                        kernel_name = m.group(1)
+                # Store raw block including both # --- delimiters
+                front_matter_raw = "".join(lines[0 : i + 1])
+                # Simple extraction of kernelspec name (take last match)
+                for m in re.finditer(r"name:\s*(\S+)", front_matter):
+                    kernel_name = m.group(1)
                 content_start = i + 1
                 break
 
@@ -97,9 +115,12 @@ def parse_py_percent(path: str) -> ParsedFile:
                     cells.append(Cell(index=cell_index, cell_type=current_type, source=source))
                     cell_index += 1
 
-            # Determine cell type
-            if "[markdown]" in stripped.lower():
+            # Determine cell type from marker tag
+            tag = stripped[4:].strip().lower()
+            if "[markdown]" in tag:
                 current_type = "markdown"
+            elif "[raw]" in tag:
+                current_type = "raw"
             else:
                 current_type = "code"
             current_lines = []
@@ -112,18 +133,29 @@ def parse_py_percent(path: str) -> ParsedFile:
         if source:
             cells.append(Cell(index=cell_index, cell_type=current_type, source=source))
 
-    # Strip leading comment markers from markdown cells
+    # Strip leading comment markers from markdown and raw cells
     for cell in cells:
-        if cell.cell_type == "markdown":
+        if cell.cell_type in ("markdown", "raw"):
             cell.source = re.sub(r"^# ?", "", cell.source, flags=re.MULTILINE)
 
-    py_path = Path(path)
     return ParsedFile(
         kernel_name=kernel_name,
         cells=cells,
-        source_path=path,
-        paired_ipynb=str(p) if (p := find_paired_ipynb(py_path)) else None,
+        source_path=source_path,
+        front_matter_raw=front_matter_raw,
     )
+
+
+def parse_py_percent(path: str) -> ParsedFile:
+    """Parse a py:percent format file into cells.
+
+    Extracts kernel name from YAML front matter and splits on # %% markers.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    parsed = parse_py_percent_text(text, source_path=path)
+    py_path = Path(path)
+    parsed.paired_ipynb = str(p) if (p := find_paired_ipynb(py_path)) else None
+    return parsed
 
 
 def parse_ipynb(path: str) -> ParsedFile:
