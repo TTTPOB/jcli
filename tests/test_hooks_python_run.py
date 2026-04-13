@@ -43,6 +43,16 @@ def _is_deny(out: dict | None) -> bool:
     "pixi run -e dev python foo.py",
     "./foo.py",
     "cd /tmp && python foo.py",
+    # Regression: gaps fixed by tree-sitter parser
+    "python -u foo.py",               # P1: -u flag before .py was missed by regex
+    "FOO=bar python foo.py",          # env-var prefix
+    "A=1 B=2 python foo.py",          # multiple env-var prefixes
+    "conda run python foo.py",        # conda runner wrapper
+    "poetry run python foo.py",       # poetry runner wrapper
+    "env python foo.py",              # env wrapper
+    "nohup python foo.py",            # nohup wrapper
+    "env FOO=bar python foo.py",      # env with inline assignment
+    "conda run -n myenv python foo.py",  # conda with -n flag
 ])
 def test_paired_intercept(command: str, tmp_path):
     (tmp_path / "foo.py").touch()
@@ -95,6 +105,9 @@ def test_unpaired_allow(command: str, tmp_path):
     "./build.sh",
     "echo 'python foo.py'",
     "ls -la",
+    # Regression: quoted strings must not produce false positives
+    'echo "python foo.py"',           # double-quoted arg is not a command
+    "bash -c 'python foo.py'",        # single-quoted string inside bash -c
 ])
 def test_non_match_allow(command: str, tmp_path):
     # Stage paired files so the guard *would* fire if the regex matched.
