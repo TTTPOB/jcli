@@ -104,31 +104,6 @@ def nbconvert_guard():
 # python-run-guard
 # ---------------------------------------------------------------------------
 
-PYTHON_RUN_GUARDS: list[tuple[str, re.Pattern[str]]] = [
-    (
-        "python script",
-        re.compile(
-            r"""
-            (?:^|[\s;&|`(])               # shell boundary
-            (?:                             # optional uv/pixi wrapper
-                uv\s+run\s+(?:-\S+(?:\s+\S+)?\s+)*?
-                |pixi\s+run\s+(?:-\S+(?:\s+\S+)?\s+)*?
-            )?
-            python\d?\s+                   # python or python3
-            (?![-])                        # not a flag (-c / -m / -u / etc.)
-            (?P<file>\S+\.py)\b           # the .py file argument
-            """,
-            re.VERBOSE,
-        ),
-    ),
-    (
-        "python shebang",
-        re.compile(
-            r"(?:^|[\s;&|`(])(?P<file>\./\S+\.py)\b",
-        ),
-    ),
-]
-
 _PYTHON_HINT = (
     "`{label}` on `{file}` would execute a py:percent file that has a paired\n"
     "notebook (`{ipynb}`). Reconsider — in most cases this is not what you want:\n"
@@ -164,13 +139,19 @@ def python_run_guard():
 
     cwd_path = Path(cwd) if cwd else Path.cwd()
 
+    from jupyter_jcli.hooks_parser import extract_script_target, iter_simple_commands, unwrap_runner
     from jupyter_jcli.parser import find_paired_ipynb
 
-    for label, pattern in PYTHON_RUN_GUARDS:
-        m = pattern.search(command)
-        if not m:
+    try:
+        simple_commands = iter_simple_commands(command)
+    except Exception:  # noqa: BLE001 — fail-open on parse error
+        sys.exit(0)
+
+    for sc in simple_commands:
+        inner = unwrap_runner(sc)
+        file_str = extract_script_target(inner)
+        if file_str is None:
             continue
-        file_str: str = m.group("file")
         try:
             file_path = Path(file_str)
             if not file_path.is_absolute():
@@ -181,12 +162,15 @@ def python_run_guard():
         if ipynb is not None:
             _print_decision(
                 "deny",
-                _PYTHON_HINT.format(label=label, file=file_str, ipynb=ipynb.name),
+                _PYTHON_HINT.format(
+                    label="python script",
+                    file=file_str,
+                    ipynb=ipynb.name,
+                ),
             )
-        # First match wins — stop after the first syntactic match regardless.
-        sys.exit(0)
+            sys.exit(0)
 
-    # No pattern matched — allow (empty stdout).
+    # No paired notebook found — allow (empty stdout).
     sys.exit(0)
 
 
