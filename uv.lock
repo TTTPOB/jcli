@@ -837,40 +837,6 @@ wheels = [
 ]
 
 [[package]]
-name = "j-cli"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "click" },
-    { name = "jupyter-kernel-client" },
-    { name = "jupyter-server-client" },
-    { name = "nbformat" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "ipykernel" },
-    { name = "jupyter-server" },
-    { name = "matplotlib" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8" },
-    { name = "ipykernel", marker = "extra == 'test'" },
-    { name = "jupyter-kernel-client", specifier = ">=0.7.3" },
-    { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
-    { name = "jupyter-server-client" },
-    { name = "matplotlib", marker = "extra == 'test'" },
-    { name = "nbformat", specifier = ">=5" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
-    { name = "pytest-asyncio", marker = "extra == 'test'" },
-]
-provides-extras = ["test"]
-
-[[package]]
 name = "jedi"
 version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -990,6 +956,40 @@ sdist = { url = "https://files.pythonhosted.org/packages/9d/c3/306d090461e4cf3cd
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e2/48/577993f1f99c552f18a0428731a755e06171f9902fa118c379eb7c04ea22/jupyter_events-0.12.0-py3-none-any.whl", hash = "sha256:6464b2fa5ad10451c3d35fabc75eab39556ae1e2853ad0c0cc31b656731a97fb", size = 19430, upload-time = "2025-02-03T17:23:38.643Z" },
 ]
+
+[[package]]
+name = "jupyter-jcli"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+    { name = "jupyter-kernel-client" },
+    { name = "jupyter-server-client" },
+    { name = "nbformat" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "ipykernel" },
+    { name = "jupyter-server" },
+    { name = "matplotlib" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8" },
+    { name = "ipykernel", marker = "extra == 'test'" },
+    { name = "jupyter-kernel-client", specifier = ">=0.7.3" },
+    { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
+    { name = "jupyter-server-client" },
+    { name = "matplotlib", marker = "extra == 'test'" },
+    { name = "nbformat", specifier = ">=5" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'test'" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "jupyter-kernel-client"
