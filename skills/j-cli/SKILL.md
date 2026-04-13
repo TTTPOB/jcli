@@ -23,6 +23,51 @@ j-cli setup claude --user     # writes ~/.claude/settings.json     (global, all 
 
 The command is idempotent — re-running updates the hook in place without duplicating it.
 
+## Installing the git pre-commit hook
+
+Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
+
+```bash
+j-cli setup git                             # default --project scope
+j-cli setup git --project                   # scripts/git-hooks/pre-commit + core.hooksPath
+j-cli setup git --local                     # .git/hooks/pre-commit (this clone only)
+j-cli setup git --include 'src/*.py'        # only watch .py files under src/
+j-cli setup git --include 'a/*.py' --include 'b/*.py'   # multiple globs (OR logic)
+```
+
+**What the installer does:**
+
+- Writes a bash shim at the hook path that delegates to `j-cli _hooks pre-commit-pair-sync`
+- `--project` (default): stores the hook under `scripts/git-hooks/pre-commit` and sets
+  `git config --local core.hooksPath scripts/git-hooks`
+- `--local`: writes directly to `.git/hooks/pre-commit`; does not touch `core.hooksPath`
+- Injects a managed block into `.gitignore` so `*.ipynb` files are never accidentally committed:
+
+```
+# >>> jcli managed (git hooks) >>>
+*.ipynb
+# <<< jcli managed (git hooks) <<<
+```
+
+The installer is idempotent — re-running updates the hook shim and `.gitignore` block in place.
+
+**Hook behaviour at commit time:**
+
+| Situation | Result |
+|-----------|--------|
+| `.ipynb` staged | Blocked — unstage it, commit only the `.py` pair |
+| Pair in sync | Silently allowed |
+| One side changed (auto-merge possible) | Merged content written back; `.py` re-staged if updated |
+| Both sides changed the **same** cell | Commit blocked — resolve manually |
+| No git base (first commit) + drift | Commit blocked — pick a side |
+
+When a conflict is detected, the hook prints the conflicting cell indices and suggests:
+
+```bash
+j-cli convert ipynb-to-py <nb.ipynb> <nb.py>   # take ipynb as truth
+j-cli convert py-to-ipynb <nb.py> <nb.ipynb>    # take py as truth
+```
+
 ## Prerequisites
 
 Before using j-cli, check if it is installed:
