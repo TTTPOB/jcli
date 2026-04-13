@@ -87,15 +87,23 @@ def vars_cmd(ctx: Context, session_id: str, name: str | None, rich: bool, timeou
         with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
             if name:
                 result = inspect_variable(kernel, name, rich=rich, timeout=timeout)
-                _emit_single(ctx, result, session_id)
             else:
                 result = list_variables(kernel, timeout=timeout)
-                _emit_list(ctx, result, session_id)
 
     except VariablesUnavailable as e:
         emit_error("VARS_UNSUPPORTED", str(e), ctx.use_json)
+        return
     except Exception as e:
         emit_error("CONNECTION_FAILED", str(e), ctx.use_json)
+        return
+
+    try:
+        if name:
+            _emit_single(ctx, result, session_id)
+        else:
+            _emit_list(ctx, result, session_id)
+    except Exception as e:
+        emit_error("INTERNAL_ERROR", str(e), ctx.use_json)
 
 
 def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
@@ -120,9 +128,9 @@ def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
     lines = [f"{'NAME':<24} {'TYPE':<20} {'VALUE':<40}"]
     lines.append("-" * 86)
     for v in variables:
-        name = v["name"][:24]
-        typ = v["type"][:20]
-        value = v["value"]
+        name = str(v["name"])[:24]
+        typ = str(v["type"])[:20]
+        value = str(v["value"])
         # Truncate long values for display
         if len(value) > 40:
             value = value[:37] + "..."
@@ -140,9 +148,9 @@ def _emit_single(ctx: Context, result: dict, session_id: str) -> None:
         return
 
     lines = [
-        f"name:  {result['name']}",
-        f"type:  {result['type']}",
-        f"value: {result['value']}",
+        f"name:  {str(result['name'])}",
+        f"type:  {str(result['type'])}",
+        f"value: {str(result['value'])}",
         f"source: {result['source']}",
     ]
     if "data" in result:

@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.vars_cmd import _emit_list
 
 
 def _create_session(runner, url, token):
@@ -154,3 +155,79 @@ class TestVarsCmdDeadSession:
             "--json", "vars", fake_sid,
         ])
         assert result.exit_code == 1
+
+
+class TestEmitListDefensiveness:
+    """Unit tests — no live kernel; guard formatter against non-string values."""
+
+    def test_emit_list_does_not_crash_on_list_value(self):
+        from jupyter_jcli.cli import Context
+
+        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        result = {
+            "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
+            "source": "fallback",
+        }
+        # Must not raise TypeError
+        _emit_list(ctx, result, "fake-session-id")
+
+    def test_emit_list_output_contains_variable_name(self):
+        from io import StringIO
+        import click
+        from jupyter_jcli.cli import Context
+
+        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        result = {
+            "variables": [{"name": "my_list", "type": "list", "value": [1, 2, 3]}],
+            "source": "fallback",
+        }
+        output_lines = []
+        with CliRunner().isolated_filesystem():
+            runner = CliRunner()
+            # Invoke through a thin wrapper to capture output
+            import click as _click
+
+            @_click.command()
+            def _cmd():
+                _emit_list(ctx, result, "fake-session-id")
+
+            r = runner.invoke(_cmd)
+        assert r.exit_code == 0
+        assert "my_list" in r.output
+        assert "CONNECTION_FAILED" not in r.output
+
+    def test_emit_list_no_connection_failed_on_bad_value(self):
+        """Rendering errors must not be labelled CONNECTION_FAILED."""
+        from jupyter_jcli.cli import Context
+
+        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        result = {
+            "variables": [{"name": "x", "type": "int", "value": 99}],
+            "source": "fallback",
+        }
+        # Should not raise; the str() cast handles the non-string int value
+        _emit_list(ctx, result, "fake-session-id")
+
+
+class TestVarsCmdListValuedVariable:
+    """End-to-end regression for the originally-reported crash."""
+
+    def test_list_variable_human_output_no_crash(self, jupyter_server):
+        runner = CliRunner()
+        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
+        sid = info["session_id"]
+        try:
+            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
+                  "lst = [1, 2, 3] * 100")
+            result = runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "vars", sid,
+            ])
+            assert result.exit_code == 0, (
+                f"Expected exit 0, got {result.exit_code}.\n"
+                f"stdout: {result.output}\nstderr: {result.output}"
+            )
+            assert "CONNECTION_FAILED" not in (result.output or "")
+            assert "lst" in result.output
+        finally:
+            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)

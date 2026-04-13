@@ -85,9 +85,9 @@ def _dap_rich_inspect_variable(wsc, name: str, *, timeout: float) -> dict:
 def _normalise_dap_variable(v: dict) -> dict:
     """Normalise a raw DAP variable dict into our canonical shape."""
     return {
-        "name": v.get("name", ""),
-        "type": v.get("type", ""),
-        "value": v.get("value", ""),
+        "name": str(v.get("name", "")),
+        "type": str(v.get("type", "")),
+        "value": str(v.get("value", "")),
         "variables_reference": v.get("variablesReference", 0),
     }
 
@@ -103,16 +103,16 @@ def _fallback_list_variables(kernel) -> list[dict]:
         # VariableDescription is a TypedDict-like object; access via dict or attr
         if isinstance(v, dict):
             result.append({
-                "name": v.get("name", ""),
-                "type": v.get("type", ""),
-                "value": v.get("value", ""),
+                "name": str(v.get("name", "")),
+                "type": str(v.get("type", "")),
+                "value": str(v.get("value", "")),
                 "variables_reference": 0,
             })
         else:
             result.append({
-                "name": getattr(v, "name", ""),
-                "type": getattr(v, "type", ""),
-                "value": getattr(v, "value", ""),
+                "name": str(getattr(v, "name", "")),
+                "type": str(getattr(v, "type", "")),
+                "value": str(getattr(v, "value", "")),
                 "variables_reference": 0,
             })
     return result
