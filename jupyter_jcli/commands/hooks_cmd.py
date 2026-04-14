@@ -5,11 +5,31 @@ import json
 import re
 import subprocess
 import sys
+from enum import Enum
 from pathlib import Path
 
 import click
 
 from jupyter_jcli._enums import DriftStatus
+
+
+class HookDecision(str, Enum):
+    """Permission decision values for Claude Code hook payloads.
+
+    Values are constrained by the Claude Code PreToolUse hook protocol.
+    Changing them requires synchronising with the Claude Code harness.
+    """
+    DENY = "deny"
+    ASK = "ask"
+    ALLOW = "allow"
+
+
+class HookEvent(str, Enum):
+    """Hook event names emitted in hook payloads.
+
+    Values are constrained by the Claude Code hook protocol.
+    """
+    PRE_TOOL_USE = "PreToolUse"
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -99,14 +119,7 @@ def nbconvert_guard():
         inner = unwrap_runner(sc)
         label = _check_exec_guard(inner)
         if label is not None:
-            decision = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": _HINT.format(label=label),
-                }
-            }
-            print(json.dumps(decision))
+            _print_decision(HookDecision.DENY, _HINT.format(label=label))
             sys.exit(0)
 
     # No match — allow (empty stdout).
@@ -174,7 +187,7 @@ def python_run_guard():
             sys.exit(0)
         if ipynb is not None:
             _print_decision(
-                "deny",
+                HookDecision.DENY,
                 _PYTHON_HINT.format(
                     label="python script",
                     file=file_str,
@@ -359,11 +372,11 @@ def _apply_merge_and_decide(
         )
 
 
-def _print_decision(decision: str, reason: str) -> None:
+def _print_decision(decision: HookDecision, reason: str) -> None:
     print(
         json.dumps({
             "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
+                "hookEventName": HookEvent.PRE_TOOL_USE,
                 "permissionDecision": decision,
                 "permissionDecisionReason": reason,
             }
