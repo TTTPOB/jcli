@@ -94,9 +94,14 @@ def jupyter_server():
             proc.wait()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def live_session(jupyter_server):
-    """A single kernel session shared across the entire test session.
+    """A kernel session shared across one test module.
+
+    Scoped to module (not session) so each test file gets a fresh kernel
+    process.  This prevents accumulated state or a stale WebSocket from one
+    module affecting the next, which would otherwise cause
+    execute_interactive to spin forever when the kernel is unresponsive.
 
     Tests that only run code and inspect results should use this fixture
     instead of creating their own session — kernel startup is expensive.
@@ -121,14 +126,14 @@ def live_session(jupyter_server):
     ])
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def live_kernel(live_session):
-    """A persistent WebSocket connection to the shared kernel.
+    """A persistent WebSocket connection to the module's kernel.
 
-    Opened once per test session and reused across all tests.  Tests that
-    want to execute code or inspect variables should use mock_kernel_connection
-    or mock_execute_code so the CLI path reuses this connection instead of
-    opening a new one for every call.
+    Opened once per test module and reused across all tests in that module.
+    Tests that want to execute code or inspect variables should use
+    mock_kernel_connection or mock_execute_code so the CLI path reuses this
+    connection instead of opening a new one for every call.
     """
     from jupyter_jcli.kernel import kernel_connection
     from jupyter_jcli.server import get_kernel_id_for_session
