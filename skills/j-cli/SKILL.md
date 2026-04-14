@@ -37,8 +37,8 @@ Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
 j-cli setup git                             # default --project scope
 j-cli setup git --project                   # .githooks/pre-commit + core.hooksPath
 j-cli setup git --local                     # .git/hooks/pre-commit (this clone only)
-j-cli setup git --include 'src/*.py'        # only watch .py files under src/
-j-cli setup git --include 'a/*.py' --include 'b/*.py'   # multiple globs (OR logic)
+j-cli setup git --include 'src/*'           # only watch .py files under src/
+j-cli setup git --include 'a/*' --include 'b/*'   # multiple globs (OR logic)
 ```
 
 **What the installer does:**
@@ -73,6 +73,37 @@ When a conflict is detected, the hook prints the conflicting cell indices and su
 j-cli convert ipynb-to-py <nb.ipynb> <nb.py>   # take ipynb as truth
 j-cli convert py-to-ipynb <nb.py> <nb.ipynb>    # take py as truth
 ```
+
+## Starting the Jupyter server
+
+Before connecting, check whether the server is already running:
+
+```bash
+j-cli healthcheck > /dev/null 2>&1 && echo "running" || echo "not running"
+```
+
+If the server is **already running**, skip to the Connection section.
+
+If it is **not running**, launch it as a fully detached process so it survives after this session ends:
+
+```bash
+nohup bash -c "$(j-cli serve-cmd --serve-backend lab)" \
+  > /tmp/jupyter_$(date +%Y%m%d_%H%M%S)_$$.log 2>&1 & disown
+```
+
+How this works:
+- `$(j-cli serve-cmd --serve-backend lab)` — captures the launch command (token is never inlined; the output contains the literal `$JCLI_JUPYTER_SERVER_TOKEN` reference)
+- `bash -c "..."` — the inner bash expands `$JCLI_JUPYTER_SERVER_TOKEN` from the environment
+- `nohup … & disown` — detaches the process from this session; it survives after Claude exits
+- Log file includes a timestamp and the launching shell's PID for easy identification
+
+After launching, wait a moment and confirm the server is up:
+
+```bash
+j-cli healthcheck
+```
+
+`--serve-backend` must be one of `lab`, `server`, or `notebook`.
 
 ## Prerequisites
 
@@ -113,7 +144,7 @@ You can also pass them as flags per-command: `-s <url>` and `-t <token>`.
 
 A typical workflow follows these steps:
 
-1. **Check connectivity** — verify the server is reachable
+1. **Check connectivity** — run `j-cli healthcheck`; if it fails the server is not running — start it first (see *Starting the Jupyter server* above)
 2. **Detect kernel spec** — if the user provides a `.py` or `.ipynb` file, use the parser module to extract the kernel name:
    ```python
    from jupyter_jcli.parser import parse_file
