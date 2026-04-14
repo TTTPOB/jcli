@@ -59,8 +59,8 @@ def vars_cmd(ctx: Context, session_id: str, name: str | None, rich: bool, timeou
     Source
     ------
     When the kernel advertises debugger support the DAP inspectVariables
-    command is used (source="dap").  Otherwise a shell-channel code snippet
-    is executed as a fallback (source="fallback").
+    command is used (source=VariableSource.DAP).  Otherwise a shell-channel
+    code snippet is executed as a fallback (source=VariableSource.FALLBACK).
     """
     if rich and not name:
         emit_error("PARSE_ERROR", "--rich requires --name", ctx.use_json)
@@ -122,7 +122,7 @@ def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
         return
 
     if not variables:
-        emit({"_human": f"No variables found (source: {source})"}, use_json=False)
+        emit({"_human": f"No variables found (source: {source.value})"}, use_json=False)
         return
 
     lines = [f"{'NAME':<24} {'TYPE':<20} {'VALUE':<40}"]
@@ -137,7 +137,7 @@ def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
         lines.append(f"{name:<24} {typ:<20} {value:<40}")
 
     lines.append("")
-    lines.append(f"source: {source}  |  {len(variables)} variable(s)")
+    lines.append(f"source: {source.value}  |  {len(variables)} variable(s)")
     lines.append(f"hint: {_ORDERING_NOTE}")
     emit({"_human": "\n".join(lines)}, use_json=False)
 
@@ -151,7 +151,7 @@ def _emit_single(ctx: Context, result: dict, session_id: str) -> None:
         f"name:  {str(result['name'])}",
         f"type:  {str(result['type'])}",
         f"value: {str(result['value'])}",
-        f"source: {result['source']}",
+        f"source: {result['source'].value}",
     ]
     if "data" in result:
         mimetypes = list(result["data"].keys())

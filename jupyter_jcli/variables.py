@@ -4,6 +4,17 @@ from __future__ import annotations
 
 import itertools
 import typing as t
+from enum import Enum
+
+
+class VariableSource(str, Enum):
+    """Which mechanism supplied the variable metadata.
+
+    Used for human-readable display only; not dispatched on.
+    """
+
+    DAP = "dap"
+    FALLBACK = "fallback"
 
 
 class VariablesUnavailable(Exception):
@@ -131,7 +142,7 @@ def list_variables(kernel, *, timeout: float = 5.0) -> dict[str, t.Any]:
     Returns:
         Dict with keys:
           - "variables": list of {"name", "type", "value", "variables_reference"}
-          - "source": "dap" or "fallback"
+          - "source": VariableSource (DAP or FALLBACK)
 
     Raises:
         VariablesUnavailable: if neither path succeeds.
@@ -151,14 +162,14 @@ def list_variables(kernel, *, timeout: float = 5.0) -> dict[str, t.Any]:
             wsc = kernel._manager.client
             raw = _dap_inspect_variables(wsc, timeout=timeout)
             variables = [_normalise_dap_variable(v) for v in raw]
-            return {"variables": variables, "source": "dap"}
+            return {"variables": variables, "source": VariableSource.DAP}
         except Exception:
             pass  # fall through to fallback
 
     # Shell-channel fallback
     try:
         variables = _fallback_list_variables(kernel)
-        return {"variables": variables, "source": "fallback"}
+        return {"variables": variables, "source": VariableSource.FALLBACK}
     except ValueError as e:
         raise VariablesUnavailable(str(e)) from e
     except Exception as e:
@@ -184,7 +195,7 @@ def inspect_variable(
     Returns:
         Dict with keys:
           - "name", "type", "value", "variables_reference"
-          - "source": "dap" or "fallback"
+          - "source": VariableSource (DAP or FALLBACK)
           - "data", "metadata" (only when rich=True and DAP succeeds)
 
     Raises:
@@ -206,7 +217,7 @@ def inspect_variable(
                 }
                 result["data"] = body.get("data", {})
                 result["metadata"] = body.get("metadata", {})
-                result["source"] = "dap"
+                result["source"] = VariableSource.DAP
                 return result
             else:
                 raw_all = _dap_inspect_variables(wsc, timeout=timeout)
@@ -218,7 +229,7 @@ def inspect_variable(
                         f"Variable '{name}' not found in kernel namespace"
                     )
                 result = _normalise_dap_variable(match)
-                result["source"] = "dap"
+                result["source"] = VariableSource.DAP
                 return result
         except VariablesUnavailable:
             raise
@@ -233,7 +244,7 @@ def inspect_variable(
             raise VariablesUnavailable(
                 f"Variable '{name}' not found in kernel namespace"
             )
-        match["source"] = "fallback"
+        match["source"] = VariableSource.FALLBACK
         return match
     except VariablesUnavailable:
         raise

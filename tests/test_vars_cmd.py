@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
 from jupyter_jcli.commands.vars_cmd import _emit_list
+from jupyter_jcli.variables import VariableSource
 
 
 def _create_session(runner, url, token):
@@ -36,7 +37,7 @@ class TestVarsCmdList:
         data = json.loads(result.output)
         assert "variables" in data
         assert "source" in data
-        assert data["source"] in ("dap", "fallback")
+        assert data["source"] in (VariableSource.DAP.value, VariableSource.FALLBACK.value)
 
     def test_user_variables_in_output(self, live_session, mock_kernel_connection):
         runner = CliRunner()
@@ -79,7 +80,7 @@ class TestVarsCmdSingleVar:
         data = json.loads(result.output)
         assert data["name"] == "_vs_x"
         assert "42" in data["value"]
-        assert data["source"] in ("dap", "fallback")
+        assert data["source"] in (VariableSource.DAP.value, VariableSource.FALLBACK.value)
 
     def test_inspect_missing_variable_exits_1(self, live_session, mock_kernel_connection):
         runner = CliRunner()
@@ -119,7 +120,7 @@ class TestEmitListDefensiveness:
         ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
         result = {
             "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
-            "source": "fallback",
+            "source": VariableSource.FALLBACK,
         }
         _emit_list(ctx, result, "fake-session-id")
 
@@ -130,7 +131,7 @@ class TestEmitListDefensiveness:
         ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
         result = {
             "variables": [{"name": "my_list", "type": "list", "value": [1, 2, 3]}],
-            "source": "fallback",
+            "source": VariableSource.FALLBACK,
         }
         with CliRunner().isolated_filesystem():
             runner = CliRunner()
@@ -151,7 +152,7 @@ class TestEmitListDefensiveness:
         ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
         result = {
             "variables": [{"name": "x", "type": "int", "value": 99}],
-            "source": "fallback",
+            "source": VariableSource.FALLBACK,
         }
         _emit_list(ctx, result, "fake-session-id")
 

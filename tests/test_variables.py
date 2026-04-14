@@ -6,6 +6,7 @@ import pytest
 
 from jupyter_jcli.variables import (
     VariablesUnavailable,
+    VariableSource,
     _fallback_list_variables,
     list_variables,
     inspect_variable,
@@ -48,7 +49,7 @@ class TestListVariables:
 
         assert "variables" in result
         assert "source" in result
-        assert result["source"] in ("dap", "fallback")
+        assert result["source"] in (VariableSource.DAP, VariableSource.FALLBACK)
         assert isinstance(result["variables"], list)
 
     def test_user_variables_present(self, live_kernel):
@@ -83,12 +84,22 @@ class TestInspectVariable:
 
         assert result["name"] == "_ti_x"
         assert "42" in result["value"]
-        assert result["source"] in ("dap", "fallback")
+        assert result["source"] in (VariableSource.DAP, VariableSource.FALLBACK)
 
     def test_inspect_missing_variable_raises(self, live_kernel):
         live_kernel.execute("_warmup = 1", timeout=30)
         with pytest.raises(VariablesUnavailable):
             inspect_variable(live_kernel, "__no_such_var__", timeout=15.0)
+
+
+class TestVariableSourceEnum:
+    """Unit tests — VariableSource enum value stability."""
+
+    def test_dap_value_equals_string(self):
+        assert VariableSource.DAP == "dap"
+
+    def test_fallback_round_trips(self):
+        assert VariableSource("fallback") is VariableSource.FALLBACK
 
 
 class TestListVariableValueFields:
