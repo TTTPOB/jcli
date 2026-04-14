@@ -5,6 +5,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from jupyter_jcli._enums import OutputType
+
 
 def strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences from text."""
@@ -26,35 +28,38 @@ def process_outputs(raw_outputs: list[dict]) -> list[dict]:
     """
     results = []
     for output in raw_outputs:
-        output_type = output.get("output_type")
+        try:
+            output_type = OutputType(output.get("output_type"))
+        except (ValueError, TypeError):
+            continue  # skip unknown output types
 
-        if output_type == "stream":
+        if output_type == OutputType.STREAM:
             text = output.get("text", "")
             if isinstance(text, list):
                 text = "".join(text)
             results.append({
-                "type": "stream",
+                "type": OutputType.STREAM,
                 "name": output.get("name", "stdout"),
                 "text": strip_ansi(str(text)),
             })
 
-        elif output_type in ("display_data", "execute_result"):
+        elif output_type in (OutputType.DISPLAY_DATA, OutputType.EXECUTE_RESULT):
             data = output.get("data", {})
             # Check image types first
             if "image/png" in data:
                 path = save_base64_image(data["image/png"], suffix=".png")
-                results.append({"type": "image", "path": path, "mime": "image/png"})
+                results.append({"type": OutputType.IMAGE, "path": path, "mime": "image/png"})
             elif "image/jpeg" in data:
                 path = save_base64_image(data["image/jpeg"], suffix=".jpg")
-                results.append({"type": "image", "path": path, "mime": "image/jpeg"})
+                results.append({"type": OutputType.IMAGE, "path": path, "mime": "image/jpeg"})
             elif "text/html" in data:
-                results.append({"type": "html", "html": data["text/html"]})
+                results.append({"type": OutputType.HTML, "html": data["text/html"]})
             elif "text/plain" in data:
                 plain = data["text/plain"]
                 if isinstance(plain, list):
                     plain = "".join(plain)
                 results.append({
-                    "type": "execute_result",
+                    "type": OutputType.EXECUTE_RESULT,
                     "text": strip_ansi(str(plain)),
                 })
             else:
@@ -63,12 +68,12 @@ def process_outputs(raw_outputs: list[dict]) -> list[dict]:
                     "keys": list(data.keys()),
                 })
 
-        elif output_type == "error":
+        elif output_type == OutputType.ERROR:
             traceback = output.get("traceback", [])
             if isinstance(traceback, list):
                 traceback = [strip_ansi(str(line)) for line in traceback]
             results.append({
-                "type": "error",
+                "type": OutputType.ERROR,
                 "ename": output.get("ename", ""),
                 "evalue": output.get("evalue", ""),
                 "traceback": traceback,
@@ -81,15 +86,15 @@ def format_outputs_human(outputs: list[dict]) -> str:
     """Format processed outputs for human-readable display."""
     parts = []
     for o in outputs:
-        if o["type"] == "stream":
+        if o["type"] == OutputType.STREAM:
             parts.append(o["text"])
-        elif o["type"] == "execute_result":
+        elif o["type"] == OutputType.EXECUTE_RESULT:
             parts.append(o["text"])
-        elif o["type"] == "image":
+        elif o["type"] == OutputType.IMAGE:
             parts.append(f"[image saved: {o['path']}]")
-        elif o["type"] == "html":
+        elif o["type"] == OutputType.HTML:
             parts.append("[HTML output]")
-        elif o["type"] == "error":
+        elif o["type"] == OutputType.ERROR:
             parts.append(f"{o['ename']}: {o['evalue']}")
             if o.get("traceback"):
                 parts.append("\n".join(o["traceback"]))
