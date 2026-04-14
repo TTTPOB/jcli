@@ -226,7 +226,7 @@ class TestAutoMergeOtherSide:
 # ---------------------------------------------------------------------------
 
 class TestConflict:
-    def test_conflict_returns_ask(self, tmp_path):
+    def test_conflict_returns_deny(self, tmp_path):
         py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         from tests.test_drift import _make_py_text, _make_ipynb_text
@@ -241,16 +241,16 @@ class TestConflict:
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "ask"
+        assert _decision(out) == "deny"
         assert "0" in _reason(out)  # cell index 0 in reason
 
-    def test_drift_only_returns_ask(self, tmp_path):
-        """No git base + unequal cells -> ask."""
+    def test_drift_only_returns_deny(self, tmp_path):
+        """No git base + unequal cells -> deny."""
         py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
         assert code == 0
-        assert _decision(out) == "ask"
+        assert _decision(out) == "deny"
 
 
 # ---------------------------------------------------------------------------

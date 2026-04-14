@@ -8,6 +8,7 @@ from pathlib import Path
 
 import nbformat
 
+from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
 
 
@@ -113,8 +114,8 @@ def _cells_from_py_text(text: str) -> list[Cell]:
 class DriftResult:
     """Result of a drift check and optional three-way merge attempt."""
 
-    status: str
-    """One of: "in_sync" | "merged" | "conflict" | "drift_only"."""
+    status: DriftStatus
+    """One of: DriftStatus.IN_SYNC | MERGED | CONFLICT | DRIFT_ONLY."""
 
     py_needs_update: bool = False
     """True when the .py file should be rewritten with merged_py_cells."""
@@ -126,7 +127,10 @@ class DriftResult:
     """Merged cell list (common to both sides after merge)."""
 
     conflict_indices: list[int] = field(default_factory=list)
-    """Cell indices with conflicts (non-empty iff status == "conflict")."""
+    """Cell indices with conflicts (non-empty iff status == DriftStatus.CONFLICT)."""
+
+    def __post_init__(self) -> None:
+        self.status = DriftStatus(self.status)
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +160,9 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
         py_sources = [c.source for c in py_now]
         ipynb_sources = [c.source for c in ipynb_now]
         if py_sources == ipynb_sources:
-            return DriftResult(status="in_sync")
+            return DriftResult(status=DriftStatus.IN_SYNC)
         return DriftResult(
-            status="drift_only",
+            status=DriftStatus.DRIFT_ONLY,
             conflict_indices=list(range(max(len(py_now), len(ipynb_now), 1))),
         )
 
@@ -170,20 +174,20 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     ipynb_changed = [c.source for c in ipynb_now] != [c.source for c in base_ipynb_cells]
 
     if not py_changed and not ipynb_changed:
-        return DriftResult(status="in_sync")
+        return DriftResult(status=DriftStatus.IN_SYNC)
 
     # Use py base as the reference for the 3-way merge
     merged, conflicts = three_way_merge(base_py_cells, py_now, ipynb_now)
 
     if conflicts:
-        return DriftResult(status="conflict", conflict_indices=conflicts)
+        return DriftResult(status=DriftStatus.CONFLICT, conflict_indices=conflicts)
 
     # Determine which files need updating
     py_needs = [c.source for c in merged] != [c.source for c in py_now]
     ipynb_needs = [c.source for c in merged] != [c.source for c in ipynb_now]
 
     return DriftResult(
-        status="merged",
+        status=DriftStatus.MERGED,
         py_needs_update=py_needs,
         ipynb_needs_update=ipynb_needs,
         merged_cells=merged,

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import click
 
+from jupyter_jcli._enums import DriftStatus
+
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
 # A match on *any* pattern causes a deny.
@@ -255,10 +257,10 @@ def _run_drift_check(tool_name: str, path: Path) -> None:
     except Exception:  # noqa: BLE001
         return
 
-    if result.status == "in_sync":
+    if result.status == DriftStatus.IN_SYNC:
         return  # no action needed
 
-    if result.status == "conflict":
+    if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         _print_decision(
             "deny",
@@ -273,7 +275,7 @@ def _run_drift_check(tool_name: str, path: Path) -> None:
         )
         return
 
-    if result.status == "drift_only":
+    if result.status == DriftStatus.DRIFT_ONLY:
         _print_decision(
             "deny",
             f"No git base found; {py_path.name} and {ipynb_path.name} have diverged "
@@ -286,7 +288,7 @@ def _run_drift_check(tool_name: str, path: Path) -> None:
         )
         return
 
-    if result.status == "merged":
+    if result.status == DriftStatus.MERGED:
         _apply_merge_and_decide(path, py_path, ipynb_path, result)
 
 
@@ -514,10 +516,10 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             )
             sys.exit(1)
 
-        if result.status == "in_sync":
+        if result.status == DriftStatus.IN_SYNC:
             continue
 
-        if result.status == "merged":
+        if result.status == DriftStatus.MERGED:
             if result.py_needs_update:
                 try:
                     from jupyter_jcli.parser import parse_py_percent, ParsedFile
@@ -558,7 +560,7 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                     sys.exit(1)
             continue
 
-        if result.status == "conflict":
+        if result.status == DriftStatus.CONFLICT:
             try:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
@@ -566,7 +568,7 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             conflicts.append((rel_path, ipynb_rel, result.conflict_indices))
             continue
 
-        if result.status == "drift_only":
+        if result.status == DriftStatus.DRIFT_ONLY:
             try:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
