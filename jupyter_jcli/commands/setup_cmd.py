@@ -83,10 +83,63 @@ def setup():
 @click.option("--project", "scope", flag_value="project", help="Write to ./.claude/settings.json")
 @click.option("--local",   "scope", flag_value="local",   default=True,
               help="Write to ./.claude/settings.local.json (default, gitignored)")
+@click.option("--remove", is_flag=True, default=False,
+              help="Remove all j-cli managed hooks from the target settings file.")
 @pass_ctx
-def claude(ctx: Context, scope: str):
+def claude(ctx: Context, scope: str, remove: bool):
     """Install Claude Code PreToolUse hooks: notebook-exec-guard, python-run-guard, and pair-drift-guard."""
     path = _resolve_path(scope)
+
+    if remove:
+        if not path.exists():
+            emit(
+                {
+                    "status": "noop",
+                    "path": str(path),
+                    "_human": f"Nothing to remove: {path} does not exist.",
+                },
+                ctx.use_json,
+            )
+            return
+
+        settings = _load_settings(path, ctx.use_json)
+        removed = _remove_claude_hooks(settings)
+
+        # Prune empty hook structures
+        if "hooks" in settings:
+            if not settings["hooks"].get("PreToolUse"):
+                settings["hooks"].pop("PreToolUse", None)
+            if not settings["hooks"]:
+                del settings["hooks"]
+
+        if settings:
+            _write_settings(path, settings)
+        else:
+            path.unlink()
+
+        if removed == 0:
+            emit(
+                {
+                    "status": "noop",
+                    "removed": 0,
+                    "path": str(path),
+                    "_human": f"No managed hooks found in {path}; nothing removed.",
+                },
+                ctx.use_json,
+            )
+        else:
+            emit(
+                {
+                    "status": "ok",
+                    "removed": removed,
+                    "path": str(path),
+                    "_human": f"Removed {removed} managed hook(s) from {path}.",
+                },
+                ctx.use_json,
+            )
+        return
+
+    # Install path
     path.parent.mkdir(parents=True, exist_ok=True)
 
     settings = _load_settings(path, ctx.use_json)
@@ -174,6 +227,40 @@ def _write_settings(path: Path, settings: dict) -> None:
     )
 
 
+def _remove_claude_hooks(settings: dict) -> int:
+    """Remove all jcli-managed entries from settings["hooks"]["PreToolUse"].
+
+    Returns the number of entries removed.  Empty PreToolUse blocks are
+    dropped; the caller is responsible for pruning empty "hooks" / top-level
+    dicts afterwards.
+    """
+    hooks_map = settings.get("hooks")
+    if not hooks_map:
+        return 0
+    pre_list = hooks_map.get("PreToolUse", [])
+    if not pre_list:
+        return 0
+
+    removed = 0
+    new_pre_list = []
+    for block in pre_list:
+        if not isinstance(block, dict):
+            new_pre_list.append(block)
+            continue
+        inner = block.get("hooks", [])
+        new_inner = [
+            entry for entry in inner
+            if not (isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS)
+        ]
+        removed += len(inner) - len(new_inner)
+        if new_inner:
+            new_pre_list.append({**block, "hooks": new_inner})
+        # else: block is empty after pruning — drop it
+
+    hooks_map["PreToolUse"] = new_pre_list
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # .gitignore managed block helpers
 # ---------------------------------------------------------------------------
@@ -206,6 +293,25 @@ def _inject_gitignore_block(gitignore_path: Path) -> None:
     gitignore_path.write_text(new_content, encoding="utf-8")
 
 
+def _clean_gitignore_block(path: Path) -> bool:
+    """Remove the jcli managed block from .gitignore.
+
+    Returns True if the block was found and removed.  Deletes the file if it
+    becomes empty; otherwise rewrites with exactly one trailing newline.
+    """
+    if not path.exists():
+        return False
+    content = path.read_text(encoding="utf-8")
+    if not _GITIGNORE_BLOCK_RE.search(content):
+        return False
+    new_content = _GITIGNORE_BLOCK_RE.sub("", content).rstrip("\n")
+    if new_content:
+        path.write_text(new_content + "\n", encoding="utf-8")
+    else:
+        path.unlink()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # setup git
 # ---------------------------------------------------------------------------
@@ -223,8 +329,12 @@ def _inject_gitignore_block(gitignore_path: Path) -> None:
     "--include", "include_globs", multiple=True, metavar="GLOB",
     help="Only sync .py files matching this glob (repeatable; written into hook shim).",
 )
+@click.option(
+    "--remove", is_flag=True, default=False,
+    help="Remove j-cli managed git hooks and the managed .gitignore block.",
+)
 @pass_ctx
-def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...]) -> None:
+def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: bool) -> None:
     """Install the pre-commit pair-sync hook and update .gitignore."""
 
     if os.name == "nt":
@@ -253,7 +363,69 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...]) -> None:
         emit_error("NOT_A_GIT_REPO", "git not found in PATH.", ctx.use_json)
         raise SystemExit(1)
 
-    # Determine hook path
+    if remove:
+        # Remove path
+        if scope == "local":
+            hook_path = repo_root / ".git" / "hooks" / "pre-commit"
+        else:
+            hook_path = repo_root / ".githooks" / "pre-commit"
+
+        hook_removed = False
+        if hook_path.exists():
+            content = hook_path.read_text(encoding="utf-8")
+            if "j-cli _hooks pre-commit-pair-sync" in content:
+                hook_path.unlink()
+                hook_removed = True
+            else:
+                click.echo(
+                    f"warning: {hook_path} is not a jcli-managed hook; skipped",
+                    err=True,
+                )
+
+        hookspath_unset = False
+        if scope == "project":
+            try:
+                current = subprocess.run(
+                    ["git", "config", "--local", "--get", "core.hooksPath"],
+                    capture_output=True, text=True, check=False,
+                    cwd=str(repo_root),
+                )
+                current_val = current.stdout.strip() if current.returncode == 0 else None
+                if current_val == ".githooks":
+                    subprocess.run(
+                        ["git", "config", "--local", "--unset", "core.hooksPath"],
+                        check=True, cwd=str(repo_root),
+                    )
+                    hookspath_unset = True
+                elif current_val:
+                    click.echo(
+                        f"warning: core.hooksPath={current_val!r} is not .githooks; left alone",
+                        err=True,
+                    )
+            except (OSError, FileNotFoundError):
+                pass
+
+        gitignore_path = repo_root / ".gitignore"
+        gitignore_cleaned = _clean_gitignore_block(gitignore_path)
+
+        noop = not hook_removed and not hookspath_unset and not gitignore_cleaned
+        emit(
+            {
+                "status": "noop" if noop else "ok",
+                "hook_removed": hook_removed,
+                "gitignore_cleaned": gitignore_cleaned,
+                "hookspath_unset": hookspath_unset,
+                "_human": (
+                    f"Removed git hook installation from {repo_root}."
+                    if not noop else
+                    f"Nothing to remove in {repo_root}."
+                ),
+            },
+            ctx.use_json,
+        )
+        return
+
+    # Install path
     if scope == "local":
         hook_path = repo_root / ".git" / "hooks" / "pre-commit"
     else:

@@ -72,15 +72,70 @@ j-cli kernel restart <session_id>
 
 ### `setup claude`
 
-Install a Claude Code `PreToolUse` hook that intercepts `jupyter nbconvert --execute`, `papermill`, `runipy`, and similar notebook-execution bypass tools and redirects Claude to use j-cli instead.
+Install Claude Code `PreToolUse` hooks that intercept notebook-execution bypass tools and pair-drift between `.py` and `.ipynb` files, redirecting Claude to use j-cli instead.
 
 ```bash
 j-cli setup claude           # default: .claude/settings.local.json (gitignored)
 j-cli setup claude --project # .claude/settings.json (committed, team-shared)
 j-cli setup claude --user    # ~/.claude/settings.json (global, all projects)
+
+# remove all j-cli managed hooks from the target file
+j-cli setup claude --remove
+j-cli setup claude --project --remove
 ```
 
-The command is idempotent — re-running updates the hook in place without duplicating it.
+The install command is idempotent — re-running updates hooks in place without duplicating them. `--remove` prunes only j-cli managed entries, preserving any unrelated user hooks. If the settings file becomes empty after removal it is deleted.
+
+### `setup git`
+
+Install a `pre-commit` hook shim that runs `j-cli _hooks pre-commit-pair-sync` and update `.gitignore` to exclude paired `.ipynb` files.
+
+```bash
+j-cli setup git              # default: .githooks/pre-commit + set core.hooksPath
+j-cli setup git --local      # .git/hooks/pre-commit (this clone only)
+j-cli setup git --include "src/*.py"  # only sync matching files
+
+# remove the managed hook and gitignore block
+j-cli setup git --remove
+j-cli setup git --local --remove
+```
+
+`--remove` deletes the hook only if it was written by j-cli, leaves `core.hooksPath` alone if it points to a non-j-cli directory, and removes the managed `.gitignore` block. Unrecognised hooks are skipped with a warning.
+
+### `setup codex` (not yet available)
+
+Codex hook support is blocked upstream: the Codex hook API currently only
+reports the tool name `bash`, which means we cannot match `NotebookEdit` or
+`Edit|Write` the way we do for Claude Code. Once Codex exposes per-tool
+names we will add `j-cli setup codex`. Track upstream progress at
+<https://developers.openai.com/codex/hooks>.
+
+### `serve-cmd`
+
+Print a copy-pasteable Jupyter launch command that references the token via an environment variable rather than inlining it.
+
+```bash
+# set env vars (token is never echoed to the terminal)
+export JCLI_JUPYTER_SERVER_URL=http://localhost:8888
+export JCLI_JUPYTER_SERVER_TOKEN=your-token
+
+j-cli serve-cmd --serve-backend lab
+# → jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \
+#       --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
+
+# override host / port / root dir
+j-cli serve-cmd --serve-backend lab --ip 0.0.0.0 --port 9000 --root-dir /work
+
+# remove --no-browser (useful for desktop Jupyter)
+j-cli serve-cmd --serve-backend notebook --browser
+
+# JSON output (for programmatic use)
+j-cli -j serve-cmd --serve-backend server
+```
+
+The hint line (`# paste this into a shell …`) is written to **stderr** so the command itself can be used safely in `$()` substitution. The token reference `"$JCLI_JUPYTER_SERVER_TOKEN"` is always a literal shell variable reference — the actual token value is never inlined.
+
+`--serve-backend` must be one of `lab`, `server`, or `notebook`.
 
 ### `vars`
 

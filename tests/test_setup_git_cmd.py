@@ -325,3 +325,138 @@ class TestJsonOutput:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["include"] == ["src/*.py"]
+
+
+# ---------------------------------------------------------------------------
+# --remove flag
+# ---------------------------------------------------------------------------
+
+class TestGitRemove:
+    def test_remove_project_unsets_hookspath(self, git_repo, monkeypatch):
+        """install --project then remove --project: hook gone, core.hooksPath unset."""
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        _invoke(runner, ["--project"])
+
+        hook = git_repo / ".githooks" / "pre-commit"
+        assert hook.exists()
+        assert _hooks_path_config(git_repo) == ".githooks"
+
+        result = _invoke(runner, ["--project", "--remove"])
+        assert result.exit_code == 0
+        assert not hook.exists()
+        assert _hooks_path_config(git_repo) is None
+
+    def test_remove_local_deletes_hook(self, git_repo, monkeypatch):
+        """install --local then remove --local: .git/hooks/pre-commit is deleted."""
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+
+        hook = git_repo / ".git" / "hooks" / "pre-commit"
+        assert hook.exists()
+
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert not hook.exists()
+
+    def test_remove_skips_non_jcli_hook(self, git_repo, monkeypatch):
+        """User's custom pre-commit is left intact; warning emitted."""
+        monkeypatch.chdir(git_repo)
+        hook = git_repo / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\necho custom hook\n", encoding="utf-8")
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert hook.exists()
+        combined = (result.output or "") + (result.stderr or "")
+        assert "not a jcli-managed hook" in combined or "skipped" in combined
+
+    def test_remove_skips_foreign_hookspath(self, git_repo, monkeypatch):
+        """core.hooksPath pointing elsewhere is left alone; warning emitted."""
+        monkeypatch.chdir(git_repo)
+        subprocess.run(
+            ["git", "config", "--local", "core.hooksPath", "custom-hooks"],
+            cwd=str(git_repo), check=True,
+        )
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--project", "--remove"])
+        assert result.exit_code == 0
+        assert _hooks_path_config(git_repo) == "custom-hooks"
+        combined = (result.output or "") + (result.stderr or "")
+        assert "custom-hooks" in combined or "left alone" in combined
+
+    def test_remove_cleans_gitignore_block(self, git_repo, monkeypatch):
+        """Managed gitignore block is removed; other entries and newlines are preserved."""
+        monkeypatch.chdir(git_repo)
+        gi = git_repo / ".gitignore"
+        gi.write_text(
+            "build/\n"
+            "# >>> jcli managed (git hooks) >>>\n"
+            "*.ipynb\n"
+            "# <<< jcli managed (git hooks) <<<\n"
+            "dist/\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+
+        content = gi.read_text()
+        assert "*.ipynb" not in content
+        assert "# >>> jcli managed" not in content
+        assert "build/" in content
+        assert "dist/" in content
+        assert content.endswith("\n")
+        assert not content.endswith("\n\n")
+
+    def test_remove_deletes_empty_gitignore(self, git_repo, monkeypatch):
+        """If .gitignore becomes empty after block removal, the file is deleted."""
+        monkeypatch.chdir(git_repo)
+        gi = git_repo / ".gitignore"
+        gi.write_text(
+            "# >>> jcli managed (git hooks) >>>\n"
+            "*.ipynb\n"
+            "# <<< jcli managed (git hooks) <<<\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert not gi.exists()
+
+    def test_remove_noop_when_nothing_installed(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--json", "setup", "git", "--local", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "noop"
+
+    def test_remove_not_a_git_repo_exits_1(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = _invoke(runner, ["--remove"])
+        assert result.exit_code == 1
+        assert "NOT_A_GIT_REPO" in result.output
+
+    def test_remove_json_output(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        _invoke(runner, ["--project"])
+        result = runner.invoke(
+            main, ["--json", "setup", "git", "--project", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "status" in data
+        assert "hook_removed" in data
+        assert "gitignore_cleaned" in data
+        assert "hookspath_unset" in data

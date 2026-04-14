@@ -390,3 +390,224 @@ class TestThreeBlocks:
         assert _count_managed(settings, "notebook-exec-guard") == 1
         assert _count_managed(settings, "pair-drift-guard") == 1
         assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+
+
+# ---------------------------------------------------------------------------
+# --remove flag
+# ---------------------------------------------------------------------------
+
+class TestRemove:
+    def test_remove_after_install_deletes_file(self, tmp_path, monkeypatch):
+        """install then remove leaves no file when the settings only had managed hooks."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        target = tmp_path / ".claude" / "settings.local.json"
+        assert target.exists()
+
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert not target.exists()
+
+    def test_remove_preserves_unrelated_hooks(self, tmp_path, monkeypatch):
+        """Unrelated user hooks survive; only managed entries are removed."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
+                             "_jcli_managed": "notebook-exec-guard"},
+                            {"type": "command", "command": "user-hook"},
+                        ],
+                    },
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert target.exists()
+
+        settings = _read_json(target)
+        pre = settings["hooks"]["PreToolUse"]
+        assert any(b.get("matcher") == "Read" for b in pre)
+        bash_entries = [
+            e for b in pre if b.get("matcher") == "Bash"
+            for e in b.get("hooks", [])
+        ]
+        assert any(e.get("command") == "user-hook" for e in bash_entries)
+        assert not any(e.get("_jcli_managed") == "notebook-exec-guard" for e in bash_entries)
+
+    def test_remove_preserves_other_top_level_keys(self, tmp_path, monkeypatch):
+        """Non-hook top-level keys (permissions, env) survive the remove operation."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "permissions": {"allow": ["Read"]},
+            "env": {"MY_VAR": "hello"},
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
+                             "_jcli_managed": "notebook-exec-guard"},
+                        ],
+                    }
+                ]
+            },
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+
+        settings = _read_json(target)
+        assert settings["permissions"] == {"allow": ["Read"]}
+        assert settings["env"] == {"MY_VAR": "hello"}
+        assert "hooks" not in settings
+
+    def test_remove_kills_legacy_nbconvert_guard(self, tmp_path, monkeypatch):
+        """Legacy _jcli_managed: 'nbconvert-guard' entry is also removed."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
+                             "_jcli_managed": "nbconvert-guard"},
+                        ],
+                    }
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+        assert not target.exists()
+
+    def test_remove_when_file_missing_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "noop"
+
+    def test_remove_when_no_managed_entries_is_noop(self, tmp_path, monkeypatch):
+        """File with only user hooks is left untouched; status is noop."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "noop"
+        assert data["removed"] == 0
+        assert target.exists()
+
+    def test_remove_respects_scope_user(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        runner = CliRunner()
+        _invoke(runner, ["--user"])
+        target = tmp_path / ".claude" / "settings.json"
+        assert target.exists()
+
+        result = _invoke(runner, ["--user", "--remove"])
+        assert result.exit_code == 0
+        assert not target.exists()
+
+    def test_remove_respects_scope_project(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        _invoke(runner, ["--project"])
+        project_target = tmp_path / ".claude" / "settings.json"
+        assert project_target.exists()
+
+        # A settings.local.json that must not be touched
+        local_target = tmp_path / ".claude" / "settings.local.json"
+        local_target.write_text(json.dumps({"env": {"X": "1"}}), encoding="utf-8")
+
+        result = _invoke(runner, ["--project", "--remove"])
+        assert result.exit_code == 0
+        assert not project_target.exists()
+        assert local_target.exists()
+
+    def test_remove_json_output(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        result = runner.invoke(
+            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "ok"
+        assert data["removed"] > 0
+        assert "path" in data
+
+    def test_remove_empty_block_pruned(self, tmp_path, monkeypatch):
+        """After removal, no empty {matcher: X, hooks: []} blocks remain."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
+                             "_jcli_managed": "notebook-exec-guard"},
+                        ],
+                    },
+                ]
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = _invoke(runner, ["--local", "--remove"])
+        assert result.exit_code == 0
+
+        settings = _read_json(target)
+        pre = settings.get("hooks", {}).get("PreToolUse", [])
+        assert not any(b.get("hooks") == [] for b in pre)
+        assert not any(b.get("matcher") == "Bash" for b in pre)
+        assert any(b.get("matcher") == "Read" for b in pre)
