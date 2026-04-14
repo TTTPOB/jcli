@@ -5,12 +5,20 @@ import os
 import re
 import shlex
 import subprocess
+from enum import Enum
 from pathlib import Path
 
 import click
 
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
+
+
+class Scope(str, Enum):
+    """Target scope for settings files written by setup commands."""
+    USER = "user"
+    PROJECT = "project"
+    LOCAL = "local"
 
 # ---------------------------------------------------------------------------
 # Managed hook blocks
@@ -79,9 +87,9 @@ def setup():
 
 
 @setup.command("claude")
-@click.option("--user",    "scope", flag_value="user",    help="Write to ~/.claude/settings.json")
-@click.option("--project", "scope", flag_value="project", help="Write to ./.claude/settings.json")
-@click.option("--local",   "scope", flag_value="local",   default=True,
+@click.option("--user",    "scope", flag_value=Scope.USER.value,    help="Write to ~/.claude/settings.json")
+@click.option("--project", "scope", flag_value=Scope.PROJECT.value, help="Write to ./.claude/settings.json")
+@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,   default=True,
               help="Write to ./.claude/settings.local.json (default, gitignored)")
 @click.option("--remove", is_flag=True, default=False,
               help="Remove all j-cli managed hooks from the target settings file.")
@@ -162,9 +170,10 @@ def claude(ctx: Context, scope: str, remove: bool):
 # ---------------------------------------------------------------------------
 
 def _resolve_path(scope: str) -> Path:
-    if scope == "user":
+    s = Scope(scope)
+    if s == Scope.USER:
         return Path.home() / ".claude" / "settings.json"
-    if scope == "project":
+    if s == Scope.PROJECT:
         return Path.cwd() / ".claude" / "settings.json"
     return Path.cwd() / ".claude" / "settings.local.json"
 
@@ -318,11 +327,11 @@ def _clean_gitignore_block(path: Path) -> bool:
 
 @setup.command("git")
 @click.option(
-    "--local", "scope", flag_value="local",
+    "--local", "scope", flag_value=Scope.LOCAL.value,
     help="Write to .git/hooks/pre-commit (this clone only).",
 )
 @click.option(
-    "--project", "scope", flag_value="project", default=True,
+    "--project", "scope", flag_value=Scope.PROJECT.value, default=True,
     help="Write to .githooks/pre-commit and set core.hooksPath (default).",
 )
 @click.option(
@@ -363,9 +372,11 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
         emit_error("NOT_A_GIT_REPO", "git not found in PATH.", ctx.use_json)
         raise SystemExit(1)
 
+    scope_e = Scope(scope)
+
     if remove:
         # Remove path
-        if scope == "local":
+        if scope_e == Scope.LOCAL:
             hook_path = repo_root / ".git" / "hooks" / "pre-commit"
         else:
             hook_path = repo_root / ".githooks" / "pre-commit"
@@ -383,7 +394,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
                 )
 
         hookspath_unset = False
-        if scope == "project":
+        if scope_e == Scope.PROJECT:
             try:
                 current = subprocess.run(
                     ["git", "config", "--local", "--get", "core.hooksPath"],
@@ -426,7 +437,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
         return
 
     # Install path
-    if scope == "local":
+    if scope_e == Scope.LOCAL:
         hook_path = repo_root / ".git" / "hooks" / "pre-commit"
     else:
         hook_path = repo_root / ".githooks" / "pre-commit"
@@ -441,7 +452,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
     )
 
     # Warn if overwriting a non-empty existing hook (--local only)
-    if scope == "local" and hook_path.exists() and hook_path.stat().st_size > 0:
+    if scope_e == Scope.LOCAL and hook_path.exists() and hook_path.stat().st_size > 0:
         click.echo(f"warning: overwrote existing hook at {hook_path}", err=True)
 
     # Write hook shim
@@ -450,7 +461,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
     os.chmod(hook_path, 0o755)
 
     # --project: configure core.hooksPath
-    if scope == "project":
+    if scope_e == Scope.PROJECT:
         try:
             old = subprocess.run(
                 ["git", "config", "--local", "--get", "core.hooksPath"],

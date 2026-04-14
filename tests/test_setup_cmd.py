@@ -7,6 +7,25 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.setup_cmd import Scope
+
+
+# ---------------------------------------------------------------------------
+# Scope enum behaviour
+# ---------------------------------------------------------------------------
+
+class TestScopeEnum:
+    def test_members_exist(self):
+        assert Scope.USER == "user"
+        assert Scope.PROJECT == "project"
+        assert Scope.LOCAL == "local"
+
+    def test_str_inheritance(self):
+        assert isinstance(Scope.USER, str)
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            Scope("bogus")
 
 
 # ---------------------------------------------------------------------------
