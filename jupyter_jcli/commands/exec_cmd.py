@@ -2,6 +2,7 @@
 
 import click
 
+from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.executor import process_outputs, format_outputs_human
@@ -51,7 +52,7 @@ def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int):
         outputs = process_outputs(raw_outputs)
 
         if ctx.use_json:
-            emit({"status": "ok", "outputs": outputs}, use_json=True)
+            emit({"status": ResponseStatus.OK, "outputs": outputs}, use_json=True)
         else:
             text = format_outputs_human(outputs)
             if text:
@@ -115,7 +116,7 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
             # Remove raw_outputs from JSON output (they're internal)
             for cr in cell_results:
                 del cr["raw_outputs"]
-            data = {"status": "ok", "cells": cell_results}
+            data = {"status": ResponseStatus.OK, "cells": cell_results}
             if notebook_updated:
                 data["notebook_updated"] = notebook_updated
             emit(data, use_json=True)

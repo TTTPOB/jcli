@@ -2,6 +2,7 @@
 
 import click
 
+from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
@@ -16,7 +17,7 @@ def healthcheck(ctx: Context):
         info = do_healthcheck(ctx.server_url, ctx.token)
         emit(
             {
-                "status": "ok",
+                "status": ResponseStatus.OK,
                 "version": info["version"],
                 "kernels_running": info["kernels_running"],
                 "_human": f"OK  Jupyter server v{info['version']}  {info['kernels_running']} kernel(s) running",

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import click
 
+from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
@@ -102,7 +103,7 @@ def claude(ctx: Context, scope: str, remove: bool):
         if not path.exists():
             emit(
                 {
-                    "status": "noop",
+                    "status": ResponseStatus.NOOP,
                     "path": str(path),
                     "_human": f"Nothing to remove: {path} does not exist.",
                 },
@@ -128,7 +129,7 @@ def claude(ctx: Context, scope: str, remove: bool):
         if removed == 0:
             emit(
                 {
-                    "status": "noop",
+                    "status": ResponseStatus.NOOP,
                     "removed": 0,
                     "path": str(path),
                     "_human": f"No managed hooks found in {path}; nothing removed.",
@@ -138,7 +139,7 @@ def claude(ctx: Context, scope: str, remove: bool):
         else:
             emit(
                 {
-                    "status": "ok",
+                    "status": ResponseStatus.OK,
                     "removed": removed,
                     "path": str(path),
                     "_human": f"Removed {removed} managed hook(s) from {path}.",
@@ -157,7 +158,7 @@ def claude(ctx: Context, scope: str, remove: bool):
 
     emit(
         {
-            "status": "ok",
+            "status": ResponseStatus.OK,
             "path": str(path),
             "_human": f"Wrote Claude Code hooks to {path}",
         },
@@ -422,7 +423,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
         noop = not hook_removed and not hookspath_unset and not gitignore_cleaned
         emit(
             {
-                "status": "noop" if noop else "ok",
+                "status": ResponseStatus.NOOP if noop else ResponseStatus.OK,
                 "hook_removed": hook_removed,
                 "gitignore_cleaned": gitignore_cleaned,
                 "hookspath_unset": hookspath_unset,
@@ -492,7 +493,7 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
 
     emit(
         {
-            "status": "ok",
+            "status": ResponseStatus.OK,
             "hook_path": str(hook_path),
             "gitignore_path": str(gitignore_path),
             "scope": scope,

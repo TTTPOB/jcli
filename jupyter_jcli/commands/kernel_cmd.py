@@ -2,6 +2,7 @@
 
 import click
 
+from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
@@ -22,7 +23,7 @@ def interrupt(ctx: Context, session_id: str):
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
         interrupt_kernel(ctx.server_url, kernel_id, ctx.token)
         emit(
-            {"status": "ok", "_human": f"Interrupted kernel {kernel_id} (session {session_id})"},
+            {"status": ResponseStatus.OK, "_human": f"Interrupted kernel {kernel_id} (session {session_id})"},
             use_json=ctx.use_json,
         )
     except Exception as e:
@@ -40,7 +41,7 @@ def restart(ctx: Context, session_id: str):
         kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
         restart_kernel(ctx.server_url, kernel_id, ctx.token)
         emit(
-            {"status": "ok", "_human": f"Restarted kernel {kernel_id} (session {session_id})"},
+            {"status": ResponseStatus.OK, "_human": f"Restarted kernel {kernel_id} (session {session_id})"},
             use_json=ctx.use_json,
         )
     except Exception as e:

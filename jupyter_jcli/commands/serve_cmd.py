@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import click
 
+from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
@@ -128,7 +129,7 @@ def serve_cmd(
     if ctx.use_json:
         emit(
             {
-                "status": "ok",
+                "status": ResponseStatus.OK,
                 "command": command,
                 "argv_template": argv_template,
                 "env_refs": ["JCLI_JUPYTER_SERVER_TOKEN"],
