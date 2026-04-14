@@ -1,33 +1,15 @@
 """Test the variables helper module directly against a live kernel."""
 
-import json
 from types import SimpleNamespace
 
 import pytest
 
-from click.testing import CliRunner
-
-from jupyter_jcli.cli import main
-from jupyter_jcli.kernel import kernel_connection
-from jupyter_jcli.server import get_kernel_id_for_session
 from jupyter_jcli.variables import (
     VariablesUnavailable,
     _fallback_list_variables,
     list_variables,
     inspect_variable,
 )
-
-
-def _create_session(runner, url, token):
-    result = runner.invoke(main, [
-        "-s", url, "-t", token, "--json",
-        "session", "create", "--kernel", "python3",
-    ])
-    return json.loads(result.output)
-
-
-def _kill_session(runner, url, token, sid):
-    runner.invoke(main, ["-s", url, "-t", token, "session", "kill", sid])
 
 
 class TestFallbackListVariablesNormalisation:
@@ -60,137 +42,63 @@ class TestFallbackListVariablesNormalisation:
 
 class TestListVariables:
 
-    def test_returns_dict_shape(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                # Warm up the kernel first, then seed variables
-                kernel.execute("x = 42; s = 'hi'; lst = [1, 2, 3]", timeout=30)
-                result = list_variables(kernel, timeout=15.0)
+    def test_returns_dict_shape(self, live_kernel):
+        live_kernel.execute("_tv_x = 42; _tv_s = 'hi'; _tv_lst = [1, 2, 3]", timeout=30)
+        result = list_variables(live_kernel, timeout=15.0)
 
-            assert "variables" in result
-            assert "source" in result
-            assert result["source"] in ("dap", "fallback")
-            assert isinstance(result["variables"], list)
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        assert "variables" in result
+        assert "source" in result
+        assert result["source"] in ("dap", "fallback")
+        assert isinstance(result["variables"], list)
 
-    def test_user_variables_present(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                kernel.execute("x = 42; s = 'hi'; lst = [1, 2, 3]", timeout=30)
-                result = list_variables(kernel, timeout=15.0)
+    def test_user_variables_present(self, live_kernel):
+        live_kernel.execute("_tv_x = 42; _tv_s = 'hi'; _tv_lst = [1, 2, 3]", timeout=30)
+        result = list_variables(live_kernel, timeout=15.0)
 
-            names = [v["name"] for v in result["variables"]]
-            assert "x" in names
-            assert "s" in names
-            assert "lst" in names
+        names = [v["name"] for v in result["variables"]]
+        assert "_tv_x" in names
+        assert "_tv_s" in names
+        assert "_tv_lst" in names
 
-            x_var = next(v for v in result["variables"] if v["name"] == "x")
-            assert "42" in x_var["value"]
-            assert "int" in x_var["type"].lower()
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        x_var = next(v for v in result["variables"] if v["name"] == "_tv_x")
+        assert "42" in x_var["value"]
+        assert "int" in x_var["type"].lower()
 
-    def test_variable_dict_fields(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                kernel.execute("x = 42", timeout=30)
-                result = list_variables(kernel, timeout=15.0)
+    def test_variable_dict_fields(self, live_kernel):
+        live_kernel.execute("_tv_field_x = 42", timeout=30)
+        result = list_variables(live_kernel, timeout=15.0)
 
-            for v in result["variables"]:
-                assert "name" in v
-                assert "type" in v
-                assert "value" in v
-                assert "variables_reference" in v
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        for v in result["variables"]:
+            assert "name" in v
+            assert "type" in v
+            assert "value" in v
+            assert "variables_reference" in v
 
 
 class TestInspectVariable:
 
-    def test_inspect_known_variable(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                kernel.execute("x = 42; s = 'hi'", timeout=30)
-                result = inspect_variable(kernel, "x", timeout=15.0)
+    def test_inspect_known_variable(self, live_kernel):
+        live_kernel.execute("_ti_x = 42; _ti_s = 'hi'", timeout=30)
+        result = inspect_variable(live_kernel, "_ti_x", timeout=15.0)
 
-            assert result["name"] == "x"
-            assert "42" in result["value"]
-            assert result["source"] in ("dap", "fallback")
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        assert result["name"] == "_ti_x"
+        assert "42" in result["value"]
+        assert result["source"] in ("dap", "fallback")
 
-    def test_inspect_missing_variable_raises(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                # Ensure kernel is warm
-                kernel.execute("_warmup = 1", timeout=30)
-                with pytest.raises(VariablesUnavailable):
-                    inspect_variable(kernel, "__no_such_var__", timeout=15.0)
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+    def test_inspect_missing_variable_raises(self, live_kernel):
+        live_kernel.execute("_warmup = 1", timeout=30)
+        with pytest.raises(VariablesUnavailable):
+            inspect_variable(live_kernel, "__no_such_var__", timeout=15.0)
 
 
 class TestListVariableValueFields:
     """Integration regression — list_variables always returns string fields."""
 
-    def test_all_fields_are_strings(self, jupyter_server):
-        runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            kernel_id = get_kernel_id_for_session(
-                jupyter_server["url"], sid, jupyter_server["token"]
-            )
-            with kernel_connection(
-                jupyter_server["url"], jupyter_server["token"], kernel_id
-            ) as kernel:
-                kernel.execute("lst = [1, 2, 3] * 100; x = 42", timeout=30)
-                result = list_variables(kernel, timeout=15.0)
+    def test_all_fields_are_strings(self, live_kernel):
+        live_kernel.execute("_tf_lst = [1, 2, 3] * 100; _tf_x = 42", timeout=30)
+        result = list_variables(live_kernel, timeout=15.0)
 
-            for v in result["variables"]:
-                assert isinstance(v["name"], str), f"name not str: {v!r}"
-                assert isinstance(v["type"], str), f"type not str: {v!r}"
-                assert isinstance(v["value"], str), f"value not str: {v!r}"
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        for v in result["variables"]:
+            assert isinstance(v["name"], str), f"name not str: {v!r}"
+            assert isinstance(v["type"], str), f"type not str: {v!r}"
+            assert isinstance(v["value"], str), f"value not str: {v!r}"

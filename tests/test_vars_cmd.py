@@ -23,126 +23,79 @@ def _kill_session(runner, url, token, sid):
     runner.invoke(main, ["-s", url, "-t", token, "session", "kill", sid])
 
 
-def _exec(runner, url, token, sid, code):
-    result = runner.invoke(main, [
-        "-s", url, "-t", token,
-        "exec", sid, "--code", code,
-    ])
-    return result
-
-
 class TestVarsCmdList:
 
-    def test_json_output_shape(self, jupyter_server):
+    def test_json_output_shape(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
-                  "x = 42; s = 'hi'")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "vars", sid,
-            ])
-            assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            assert "variables" in data
-            assert "source" in data
-            assert data["source"] in ("dap", "fallback")
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        mock_kernel_connection.execute("_vc_x = 42; _vc_s = 'hi'", timeout=30)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "vars", live_session["session_id"],
+        ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert "variables" in data
+        assert "source" in data
+        assert data["source"] in ("dap", "fallback")
 
-    def test_user_variables_in_output(self, jupyter_server):
+    def test_user_variables_in_output(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
-                  "x = 42; s = 'hi'")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "vars", sid,
-            ])
-            assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            names = [v["name"] for v in data["variables"]]
-            assert "x" in names
-            assert "s" in names
+        mock_kernel_connection.execute("_vc_x = 42; _vc_s = 'hi'", timeout=30)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "vars", live_session["session_id"],
+        ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        names = [v["name"] for v in data["variables"]]
+        assert "_vc_x" in names
+        assert "_vc_s" in names
 
-            x_var = next(v for v in data["variables"] if v["name"] == "x")
-            assert "42" in x_var["value"]
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        x_var = next(v for v in data["variables"] if v["name"] == "_vc_x")
+        assert "42" in x_var["value"]
 
-    def test_human_output_table(self, jupyter_server):
+    def test_human_output_table(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
-                  "my_var = 99")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "vars", sid,
-            ])
-            assert result.exit_code == 0, result.output
-            assert "my_var" in result.output
-            assert "99" in result.output
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        mock_kernel_connection.execute("_vc_my_var = 99", timeout=30)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "vars", live_session["session_id"],
+        ])
+        assert result.exit_code == 0, result.output
+        assert "_vc_my_var" in result.output
+        assert "99" in result.output
 
 
 class TestVarsCmdSingleVar:
 
-    def test_inspect_single_variable_json(self, jupyter_server):
+    def test_inspect_single_variable_json(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
-                  "x = 42")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "vars", sid, "--name", "x",
-            ])
-            assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            assert data["name"] == "x"
-            assert "42" in data["value"]
-            assert data["source"] in ("dap", "fallback")
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        mock_kernel_connection.execute("_vs_x = 42", timeout=30)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "vars", live_session["session_id"], "--name", "_vs_x",
+        ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["name"] == "_vs_x"
+        assert "42" in data["value"]
+        assert data["source"] in ("dap", "fallback")
 
-    def test_inspect_missing_variable_exits_1(self, jupyter_server):
+    def test_inspect_missing_variable_exits_1(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            # Warm up the kernel
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid, "pass")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "vars", sid, "--name", "__no_such_var__",
-            ])
-            assert result.exit_code == 1
-            err = json.loads(result.output if result.output else "{}")
-            # Error is written to stderr by emit_error, output may be empty
-            assert result.exit_code == 1
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "vars", live_session["session_id"], "--name", "__no_such_var__",
+        ])
+        assert result.exit_code == 1
 
-    def test_rich_requires_name(self, jupyter_server):
+    def test_rich_requires_name(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "vars", sid, "--rich",
-            ])
-            assert result.exit_code == 1
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "vars", live_session["session_id"], "--rich",
+        ])
+        assert result.exit_code == 1
 
 
 class TestVarsCmdDeadSession:
@@ -168,12 +121,10 @@ class TestEmitListDefensiveness:
             "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
             "source": "fallback",
         }
-        # Must not raise TypeError
         _emit_list(ctx, result, "fake-session-id")
 
     def test_emit_list_output_contains_variable_name(self):
-        from io import StringIO
-        import click
+        import click as _click
         from jupyter_jcli.cli import Context
 
         ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
@@ -181,11 +132,8 @@ class TestEmitListDefensiveness:
             "variables": [{"name": "my_list", "type": "list", "value": [1, 2, 3]}],
             "source": "fallback",
         }
-        output_lines = []
         with CliRunner().isolated_filesystem():
             runner = CliRunner()
-            # Invoke through a thin wrapper to capture output
-            import click as _click
 
             @_click.command()
             def _cmd():
@@ -205,29 +153,22 @@ class TestEmitListDefensiveness:
             "variables": [{"name": "x", "type": "int", "value": 99}],
             "source": "fallback",
         }
-        # Should not raise; the str() cast handles the non-string int value
         _emit_list(ctx, result, "fake-session-id")
 
 
 class TestVarsCmdListValuedVariable:
     """End-to-end regression for the originally-reported crash."""
 
-    def test_list_variable_human_output_no_crash(self, jupyter_server):
+    def test_list_variable_human_output_no_crash(self, live_session, mock_kernel_connection):
         runner = CliRunner()
-        info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
-        sid = info["session_id"]
-        try:
-            _exec(runner, jupyter_server["url"], jupyter_server["token"], sid,
-                  "lst = [1, 2, 3] * 100")
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "vars", sid,
-            ])
-            assert result.exit_code == 0, (
-                f"Expected exit 0, got {result.exit_code}.\n"
-                f"stdout: {result.output}\nstderr: {result.output}"
-            )
-            assert "CONNECTION_FAILED" not in (result.output or "")
-            assert "lst" in result.output
-        finally:
-            _kill_session(runner, jupyter_server["url"], jupyter_server["token"], sid)
+        mock_kernel_connection.execute("_vl_lst = [1, 2, 3] * 100", timeout=30)
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "vars", live_session["session_id"],
+        ])
+        assert result.exit_code == 0, (
+            f"Expected exit 0, got {result.exit_code}.\n"
+            f"stdout: {result.output}\nstderr: {result.output}"
+        )
+        assert "CONNECTION_FAILED" not in (result.output or "")
+        assert "_vl_lst" in result.output

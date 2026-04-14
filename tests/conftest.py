@@ -92,3 +92,83 @@ def jupyter_server():
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+
+
+@pytest.fixture(scope="session")
+def live_session(jupyter_server):
+    """A single kernel session shared across the entire test session.
+
+    Tests that only run code and inspect results should use this fixture
+    instead of creating their own session — kernel startup is expensive.
+    Tests that mutate kernel lifecycle (restart, interrupt) must create
+    their own private session via _create_session / _kill_session.
+    """
+    import json
+    from click.testing import CliRunner
+    from jupyter_jcli.cli import main
+
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+        "--json", "session", "create", "--kernel", "python3",
+    ])
+    data = json.loads(result.output)
+    sid = data["session_id"]
+    yield {**jupyter_server, "session_id": sid}
+    runner.invoke(main, [
+        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+        "session", "kill", sid,
+    ])
+
+
+@pytest.fixture(scope="session")
+def live_kernel(live_session):
+    """A persistent WebSocket connection to the shared kernel.
+
+    Opened once per test session and reused across all tests.  Tests that
+    want to execute code or inspect variables should use mock_kernel_connection
+    or mock_execute_code so the CLI path reuses this connection instead of
+    opening a new one for every call.
+    """
+    from jupyter_jcli.kernel import kernel_connection
+    from jupyter_jcli.server import get_kernel_id_for_session
+
+    kernel_id = get_kernel_id_for_session(
+        live_session["url"], live_session["session_id"], live_session["token"]
+    )
+    with kernel_connection(live_session["url"], live_session["token"], kernel_id) as kernel:
+        yield kernel
+
+
+@pytest.fixture
+def mock_kernel_connection(live_kernel):
+    """Patch kernel_connection so CLI commands reuse live_kernel.
+
+    Use this for tests that invoke exec --file or vars through the CLI.
+    The fixture patches the canonical source (jupyter_jcli.kernel) which
+    is where both exec_cmd and vars_cmd lazily import from.
+    """
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    @contextmanager
+    def _reuse(*args, **kwargs):
+        yield live_kernel
+
+    with patch("jupyter_jcli.kernel.kernel_connection", _reuse):
+        yield live_kernel
+
+
+@pytest.fixture
+def mock_execute_code(live_kernel):
+    """Patch execute_code so exec --code reuses live_kernel.
+
+    Use this for tests that invoke exec --code through the CLI.
+    """
+    from unittest.mock import patch
+
+    def _reuse(url, token, kid, code, timeout=300):
+        return live_kernel.execute(code, timeout=timeout)
+
+    with patch("jupyter_jcli.kernel.execute_code", side_effect=_reuse):
+        yield live_kernel
