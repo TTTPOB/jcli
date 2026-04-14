@@ -2,9 +2,40 @@
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.session import KernelState, _coerce_state
+
+
+# ---------------------------------------------------------------------------
+# KernelState enum behaviour
+# ---------------------------------------------------------------------------
+
+class TestKernelState:
+    def test_members_exist(self):
+        assert KernelState.IDLE == "idle"
+        assert KernelState.BUSY == "busy"
+        assert KernelState.STARTING == "starting"
+        assert KernelState.DEAD == "dead"
+        assert KernelState.UNKNOWN == "unknown"
+
+    def test_str_inheritance(self):
+        assert isinstance(KernelState.IDLE, str)
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            KernelState("bogus")
+
+    def test_coerce_known_value(self):
+        assert _coerce_state("idle") is KernelState.IDLE
+        assert _coerce_state("busy") is KernelState.BUSY
+
+    def test_coerce_unknown_falls_back(self):
+        assert _coerce_state("restarting") is KernelState.UNKNOWN
+        assert _coerce_state("") is KernelState.UNKNOWN
+        assert _coerce_state("some_future_state") is KernelState.UNKNOWN
 
 
 def test_session_create_and_list(jupyter_server):

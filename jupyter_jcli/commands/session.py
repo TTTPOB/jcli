@@ -3,12 +3,37 @@
 from __future__ import annotations
 
 import concurrent.futures
+from enum import Enum
 
 import click
 
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
+
+
+class KernelState(str, Enum):
+    """Jupyter kernel execution state.
+
+    Values come from the Jupyter server REST API kernel status field.
+    Unknown values from the server are normalised to UNKNOWN by
+    _coerce_state() to avoid crashing on new states added by future
+    Jupyter versions.
+    Source: https://jupyter-server.readthedocs.io/en/latest/operators/public-api.html
+    """
+    IDLE = "idle"
+    BUSY = "busy"
+    STARTING = "starting"
+    DEAD = "dead"
+    UNKNOWN = "unknown"
+
+
+def _coerce_state(raw: str) -> KernelState:
+    """Coerce a raw kernel state string to KernelState, falling back to UNKNOWN."""
+    try:
+        return KernelState(raw)
+    except ValueError:
+        return KernelState.UNKNOWN
 
 # Max sessions before we skip auto-var-fetch unless --vars is forced
 _AUTO_FETCH_LIMIT = 10
@@ -141,7 +166,9 @@ def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
 
     eligible = [
         s for s in sessions
-        if s.get("kernel_state") not in ("busy", "dead", "unknown")
+        if _coerce_state(s.get("kernel_state", "")) not in (
+            KernelState.BUSY, KernelState.DEAD, KernelState.UNKNOWN
+        )
     ]
 
     def _fetch(s: dict) -> tuple[str, dict]:
@@ -171,7 +198,9 @@ def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
         sid = s["session_id"]
         if sid in previews:
             s["vars_preview"] = previews[sid]
-        elif s.get("kernel_state") in ("busy", "dead", "unknown"):
+        elif _coerce_state(s.get("kernel_state", "")) in (
+            KernelState.BUSY, KernelState.DEAD, KernelState.UNKNOWN
+        ):
             s["vars_preview"] = {"names": [], "total": -1, "unavailable": True}
         else:
             s["vars_preview"] = {"names": [], "total": 0}
