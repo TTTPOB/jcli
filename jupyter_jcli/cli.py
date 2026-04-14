@@ -68,6 +68,7 @@ from jupyter_jcli.commands.setup_cmd import setup  # noqa: E402
 from jupyter_jcli.commands.hooks_cmd import hooks  # noqa: E402
 from jupyter_jcli.commands.convert_cmd import convert  # noqa: E402
 from jupyter_jcli.commands.vars_cmd import vars_cmd  # noqa: E402
+from jupyter_jcli.commands.serve_cmd import serve_cmd  # noqa: E402
 
 main.add_command(healthcheck)
 main.add_command(kernelspec)
@@ -78,3 +79,4 @@ main.add_command(setup)
 main.add_command(hooks, name="_hooks")
 main.add_command(convert)
 main.add_command(vars_cmd, name="vars")
+main.add_command(serve_cmd, name="serve-cmd")
