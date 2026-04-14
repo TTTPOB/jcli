@@ -2,6 +2,7 @@
 
 import re
 import shlex
+from enum import Enum
 from urllib.parse import urlparse
 
 import click
@@ -9,7 +10,12 @@ import click
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
-_ALLOWED_BACKENDS = frozenset({"lab", "server", "notebook"})
+
+class ServeBackend(str, Enum):
+    """Supported Jupyter backend subcommands."""
+    LAB = "lab"
+    SERVER = "server"
+    NOTEBOOK = "notebook"
 
 # Hostname may only contain alphanumerics, dots, hyphens, and brackets (IPv6).
 _SAFE_HOST_RE = re.compile(r"^[a-zA-Z0-9._\-\[\]]+$")
@@ -19,8 +25,9 @@ _SCHEME_PORTS = {"http": 80, "https": 443}
 
 @click.command("serve-cmd")
 @click.option(
-    "--serve-backend", required=True, metavar="NAME",
-    help="Jupyter backend: lab, server, or notebook.",
+    "--serve-backend", required=True,
+    type=click.Choice([e.value for e in ServeBackend], case_sensitive=True),
+    help="Jupyter backend to launch.",
 )
 @click.option("--ip", default=None, help="Override ServerApp.ip (default: from JCLI_JUPYTER_SERVER_URL).")
 @click.option("--port", default=None, type=int, help="Override ServerApp.port (default: from JCLI_JUPYTER_SERVER_URL).")
@@ -51,16 +58,6 @@ def serve_cmd(
     jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \\
         --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
     """
-    # Validate backend against allow-list to avoid shell injection
-    if serve_backend not in _ALLOWED_BACKENDS:
-        emit_error(
-            "PARSE_ERROR",
-            f"Invalid backend {serve_backend!r}. Must be one of: "
-            f"{', '.join(sorted(_ALLOWED_BACKENDS))}",
-            ctx.use_json,
-        )
-        return
-
     # Confirm token is available without inlining its value
     if ctx.token is None:
         emit_error(

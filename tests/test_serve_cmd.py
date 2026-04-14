@@ -6,6 +6,26 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.serve_cmd import ServeBackend
+
+
+# ---------------------------------------------------------------------------
+# ServeBackend enum behaviour
+# ---------------------------------------------------------------------------
+
+class TestServeBackendEnum:
+    def test_members_exist(self):
+        assert ServeBackend.LAB == "lab"
+        assert ServeBackend.SERVER == "server"
+        assert ServeBackend.NOTEBOOK == "notebook"
+
+    def test_str_inheritance(self):
+        assert isinstance(ServeBackend.LAB, str)
+
+    def test_invalid_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            ServeBackend("bogus")
 
 
 _DEFAULT_ENV = {
@@ -41,9 +61,9 @@ class TestArgs:
     def test_invalid_backend_errors(self):
         runner = CliRunner()
         result = _invoke(runner, ["--serve-backend", "evil"])
-        assert result.exit_code == 1
+        assert result.exit_code == 2  # click usage error
         combined = (result.output or "") + (result.stderr or "")
-        assert "PARSE_ERROR" in combined
+        assert "evil" in combined  # click names the bad value
 
     def test_lab_backend_ok(self):
         runner = CliRunner()
