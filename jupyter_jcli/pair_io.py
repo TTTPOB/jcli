@@ -6,6 +6,7 @@ from pathlib import Path
 
 import nbformat
 
+from jupyter_jcli._enums import CellType
 from jupyter_jcli.parser import Cell, ParsedFile
 
 
@@ -36,21 +37,21 @@ def emit_py_percent(parsed: ParsedFile) -> str:
         if not cell.source.strip():
             continue  # skip empty cells
 
-        if cell.cell_type == "code":
+        if cell.cell_type == CellType.CODE:
             parts.append("# %%\n")
             parts.append(cell.source)
             if not cell.source.endswith("\n"):
                 parts.append("\n")
             parts.append("\n")
 
-        elif cell.cell_type == "markdown":
+        elif cell.cell_type == CellType.MARKDOWN:
             parts.append("# %% [markdown]\n")
             for line in cell.source.splitlines():
                 parts.append(f"# {line}\n" if line else "#\n")
             parts.append("\n")
 
         else:  # raw or unknown
-            parts.append(f"# %% [{cell.cell_type}]\n")
+            parts.append(f"# %% [{cell.cell_type.value}]\n")
             for line in cell.source.splitlines():
                 parts.append(f"# {line}\n" if line else "#\n")
             parts.append("\n")
@@ -98,9 +99,9 @@ def create_ipynb_from_parsed(parsed: ParsedFile) -> "nbformat.NotebookNode":
     for cell in parsed.cells:
         if not cell.source.strip():
             continue  # skip empty cells
-        if cell.cell_type == "code":
+        if cell.cell_type == CellType.CODE:
             nb.cells.append(nbformat.v4.new_code_cell(cell.source))
-        elif cell.cell_type == "markdown":
+        elif cell.cell_type == CellType.MARKDOWN:
             nb.cells.append(nbformat.v4.new_markdown_cell(cell.source))
         else:
             nb.cells.append(nbformat.v4.new_raw_cell(cell.source))

@@ -6,13 +6,18 @@ import re
 
 import nbformat
 
+from jupyter_jcli._enums import CellType
+
 
 @dataclass
 class Cell:
     """A single cell parsed from a file."""
     index: int
-    cell_type: str  # "code", "markdown", or "raw"
+    cell_type: CellType  # CellType.CODE, MARKDOWN, or RAW
     source: str
+
+    def __post_init__(self) -> None:
+        self.cell_type = CellType(self.cell_type)
 
 
 @dataclass
@@ -102,7 +107,7 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
     # Split remaining content on # %% markers
     cells: list[Cell] = []
     current_lines: list[str] = []
-    current_type = "code"
+    current_type = CellType.CODE
     cell_index = 0
 
     for line in lines[content_start:]:
@@ -118,11 +123,11 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
             # Determine cell type from marker tag
             tag = stripped[4:].strip().lower()
             if "[markdown]" in tag:
-                current_type = "markdown"
+                current_type = CellType.MARKDOWN
             elif "[raw]" in tag:
-                current_type = "raw"
+                current_type = CellType.RAW
             else:
-                current_type = "code"
+                current_type = CellType.CODE
             current_lines = []
         else:
             current_lines.append(line)
@@ -135,7 +140,7 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
 
     # Strip leading comment markers from markdown and raw cells
     for cell in cells:
-        if cell.cell_type in ("markdown", "raw"):
+        if cell.cell_type in (CellType.MARKDOWN, CellType.RAW):
             cell.source = re.sub(r"^# ?", "", cell.source, flags=re.MULTILINE)
 
     return ParsedFile(

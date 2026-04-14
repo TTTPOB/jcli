@@ -69,11 +69,13 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
 
         parsed = parse_file(file_path)
 
+        from jupyter_jcli._enums import CellType
+
         # Determine which cells to execute
-        code_cells = [c for c in parsed.cells if c.cell_type == "code"]
+        code_cells = [c for c in parsed.cells if c.cell_type == CellType.CODE]
         if cell_spec:
             indices = parse_cell_spec(cell_spec, len(parsed.cells))
-            selected = [c for c in parsed.cells if c.index in indices and c.cell_type == "code"]
+            selected = [c for c in parsed.cells if c.index in indices and c.cell_type == CellType.CODE]
         else:
             selected = code_cells
 

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import nbformat
 
+from jupyter_jcli._enums import CellType
+
 
 def convert_to_nbformat_outputs(raw_outputs: list[dict]) -> list:
     """Convert raw kernel outputs to nbformat output objects."""
@@ -74,7 +76,7 @@ def write_outputs_to_notebook(
         if idx < 0 or idx >= len(nb.cells):
             continue
         cell = nb.cells[idx]
-        if cell.cell_type != "code":
+        if cell.cell_type != CellType.CODE:
             continue
 
         cell.outputs = convert_to_nbformat_outputs(result["raw_outputs"])
@@ -83,7 +85,7 @@ def write_outputs_to_notebook(
 
     # Clean transient fields that cause nbformat validation errors
     for cell in nb.cells:
-        if cell.cell_type == "code" and hasattr(cell, "outputs"):
+        if cell.cell_type == CellType.CODE and hasattr(cell, "outputs"):
             for output in cell.outputs:
                 if isinstance(output, dict) and "transient" in output:
                     del output["transient"]
