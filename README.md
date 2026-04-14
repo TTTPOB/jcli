@@ -7,25 +7,74 @@ j-cli enables AI agents (and humans) to remotely control Jupyter servers — exe
 ## Installation
 
 ```bash
-# from source
-uv sync
+# latest release
+uv tool install jupyter-jcli
+
+# latest dev version
+uv tool install git+https://github.com/tttpob/jcli.git
 ```
 
 Requires Python 3.10+.
 
-## Quick Start
+## Recommended Workflow
+
+### 1. Set up environment variables
+
+Use [direnv](https://direnv.net/) so the env vars are loaded automatically whenever you enter the project directory:
 
 ```bash
-# set connection (or pass via -s / -t flags)
+# .envrc
 export JCLI_JUPYTER_SERVER_URL=http://localhost:8888
 export JCLI_JUPYTER_SERVER_TOKEN=your-token
+```
 
-# check connectivity
+```bash
+direnv allow
+```
+
+### 2. Launch Jupyter
+
+```bash
+# stdout is pipe-safe — the hint line goes to stderr
+$(j-cli serve-cmd --serve-backend lab)
+```
+
+This prints (and immediately executes) a command like:
+
+```
+jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \
+    --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
+```
+
+The token value is never inlined; it is always referenced as `$JCLI_JUPYTER_SERVER_TOKEN`.
+
+### 3. Verify connectivity
+
+```bash
 j-cli healthcheck
+```
 
-# create a session and execute code
-j-cli session create --kernel python3 --name my-session
-j-cli exec <session_id> --code "print('hello world')"
+### 4. Set up hooks (once per project)
+
+Install Claude Code hooks so the AI redirects notebook edits through j-cli:
+
+```bash
+j-cli setup claude
+```
+
+Install the git `pre-commit` hook to keep `.py` / `.ipynb` pairs in sync:
+
+```bash
+j-cli setup git
+```
+
+If your notebooks live in a subdirectory, limit pair detection to that path
+(avoids false positives elsewhere in the repo). `--include` can be repeated:
+
+```bash
+j-cli setup git --include "notebooks/*"
+# or multiple directories
+j-cli setup git --include "notebooks/*" --include "experiments/*"
 ```
 
 ## Commands
