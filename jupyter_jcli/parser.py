@@ -28,6 +28,7 @@ class ParsedFile:
     source_path: str = ""
     paired_ipynb: str | None = None
     front_matter_raw: str | None = None  # raw text including both # --- delimiters
+    is_py_percent: bool = False  # True if file has front matter or # %% markers
 
 
 def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
@@ -48,8 +49,8 @@ def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
     return [int(spec)]
 
 
-def find_paired_ipynb(py_path: Path) -> Path | None:
-    """Find the paired .ipynb for a .py file.
+def ipynb_path_for_py(py_path: Path) -> Path:
+    """Compute the paired .ipynb path for a .py file (no existence check).
 
     foo.py -> foo.ipynb
     foo.dummy.py -> foo.ipynb
@@ -58,7 +59,16 @@ def find_paired_ipynb(py_path: Path) -> Path | None:
     # Handle .dummy.py pattern
     if stem.endswith(".dummy"):
         stem = stem[: -len(".dummy")]
-    ipynb_path = py_path.parent / f"{stem}.ipynb"
+    return py_path.parent / f"{stem}.ipynb"
+
+
+def find_paired_ipynb(py_path: Path) -> Path | None:
+    """Find the paired .ipynb for a .py file.
+
+    foo.py -> foo.ipynb
+    foo.dummy.py -> foo.ipynb
+    """
+    ipynb_path = ipynb_path_for_py(py_path)
     return ipynb_path if ipynb_path.exists() else None
 
 
@@ -109,10 +119,12 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
     current_lines: list[str] = []
     current_type = CellType.CODE
     cell_index = 0
+    found_percent_marker = False
 
     for line in lines[content_start:]:
         stripped = line.rstrip()
         if stripped.startswith("# %%"):
+            found_percent_marker = True
             # Save previous cell if it has content
             if current_lines:
                 source = "".join(current_lines).strip()
@@ -148,6 +160,7 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
         cells=cells,
         source_path=source_path,
         front_matter_raw=front_matter_raw,
+        is_py_percent=front_matter_raw is not None or found_percent_marker,
     )
 
 
