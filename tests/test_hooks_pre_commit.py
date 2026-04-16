@@ -267,9 +267,9 @@ class TestConflict:
 class TestDriftOnly:
     def test_drift_only_exits_1(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
-        # No commit → no git base
-        _make_py(git_repo / "nb.py", "x = 1")
-        _make_ipynb(git_repo / "nb.ipynb", "x = 99")  # different
+        # No commit → no git base; use count mismatch to stay DRIFT_ONLY
+        _make_py(git_repo / "nb.py", "x = 1", "y = 2")
+        _make_ipynb(git_repo / "nb.ipynb", "x = 99")  # count mismatch
         _git(git_repo, "git", "add", "nb.py")
 
         runner = CliRunner()
@@ -279,6 +279,21 @@ class TestDriftOnly:
         combined = _combined(result)
         assert "git base" in combined or "pick a side" in combined.lower()
         assert "j-cli convert" in combined
+
+    def test_content_diff_same_count_auto_merges(self, git_repo, monkeypatch):
+        """No git base + same count but different content -> auto-merge, exit 0."""
+        monkeypatch.chdir(git_repo)
+        _make_py(git_repo / "nb.py", "x = 1")
+        _make_ipynb(git_repo / "nb.ipynb", "x = 99")  # same count, different content
+        _git(git_repo, "git", "add", "nb.py")
+
+        runner = CliRunner()
+        result = _invoke(runner)
+
+        assert result.exit_code == 0
+        nb = nbformat.read(str(git_repo / "nb.ipynb"), as_version=4)
+        non_empty = [c for c in nb.cells if c.source.strip()]
+        assert non_empty[0].source == "x = 1"
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +338,8 @@ class TestIncludeFilter:
         monkeypatch.chdir(git_repo)
         sub = git_repo / "nb"
         sub.mkdir()
-        _make_py(sub / "script.py", "x = 1")
-        _make_ipynb(sub / "script.ipynb", "x = 99")  # drift → exit 1
+        _make_py(sub / "script.py", "x = 1", "y = 2")
+        _make_ipynb(sub / "script.ipynb", "x = 99")  # count mismatch → drift_only → exit 1
         _git(git_repo, "git", "add", "nb/script.py")
 
         runner = CliRunner()

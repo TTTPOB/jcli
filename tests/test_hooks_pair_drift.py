@@ -263,17 +263,29 @@ class TestConflict:
         assert "Pre-existing conflict" in reason or "pre-existing" in reason.lower()
         assert "git diff" in reason
 
-    def test_drift_only_returns_deny(self, tmp_path):
-        """No git base + unequal cells -> deny."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
+    def test_drift_only_count_mismatch_returns_deny(self, tmp_path):
+        """No git base + cell count mismatch -> deny."""
+        py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 99"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
         assert code == 0
         assert _decision(out) == "deny"
         reason = _reason(out)
-        # New message: "not yet committed" and "git log --oneline"
         assert "not yet committed" in reason
         assert "git log" in reason
+
+    def test_drift_only_content_diff_auto_merges(self, tmp_path):
+        """No git base + same count but different sources -> silent allow + ipynb rewritten."""
+        import nbformat as nbf
+
+        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
+        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+            code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+        assert code == 0
+        assert _decision(out) is None  # silent allow
+        nb = nbf.read(str(ipynb), as_version=4)
+        non_empty = [c.source for c in nb.cells if c.source.strip()]
+        assert non_empty == ["x = 1"]
 
 
 # ---------------------------------------------------------------------------
@@ -477,9 +489,9 @@ class TestPairDriftGuardPost:
         assert "j-cli convert" in reason
         assert _event_name(out) == "PostToolUse"
 
-    def test_drift_only_after_edit_warns(self, tmp_path):
-        """py has no git baseline after agent's edit -> warn with convert hint."""
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+    def test_drift_only_count_mismatch_after_edit_warns(self, tmp_path):
+        """py has no git baseline + count mismatch after agent's edit -> warn with convert hint."""
+        py, ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
@@ -489,6 +501,20 @@ class TestPairDriftGuardPost:
         reason = _reason(out)
         assert "no git baseline" in reason or "no baseline" in reason.lower()
         assert "j-cli convert" in reason
+        assert _event_name(out) == "PostToolUse"
+
+    def test_drift_only_content_diff_after_edit_syncs(self, tmp_path):
+        """py has no git baseline + same count, different sources -> allow + reason explains."""
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+
+        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) == "allow"
+        reason = _reason(out)
+        assert "no git baseline" in reason
+        assert "outputs preserved" in reason
         assert _event_name(out) == "PostToolUse"
 
     def test_non_paired_file_is_silent(self, tmp_path):

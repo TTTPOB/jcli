@@ -6,6 +6,7 @@ from unittest.mock import call, patch
 import nbformat
 import pytest
 
+from jupyter_jcli._enums import MergeMode
 from jupyter_jcli.drift import DriftResult, check_drift, three_way_merge
 from jupyter_jcli.parser import Cell
 
@@ -206,12 +207,15 @@ class TestCheckDrift:
         assert result.status == "in_sync"
 
     def test_no_git_base_drift_only_unequal(self, tmp_path):
-        """No git base + unequal cells -> drift_only."""
+        """No git base + same count but different sources -> merged (py wins)."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 99"])
         with self._patch_git(None, None):
             result = check_drift(py, ipynb)
-        assert result.status == "drift_only"
-        assert len(result.conflict_indices) >= 1
+        assert result.status == "merged"
+        assert result.merge_mode == MergeMode.PY_WINS_NO_BASE
+        assert result.ipynb_needs_update is True
+        assert result.py_needs_update is False
+        assert result.merged_cells[0].source == "x = 1"
 
     def test_both_changed_different_cells_merged(self, tmp_path):
         """Both sides changed different cells -> merged, both files need update."""
@@ -245,17 +249,43 @@ class TestCheckDrift:
         assert calls_by_suffix[".py"] >= 1
 
     def test_py_untracked_ipynb_only_exists(self, tmp_path):
-        """With py untracked, any source difference is DRIFT_ONLY regardless of ipynb state."""
+        """With py untracked and same cell count, different sources -> py wins (MERGED)."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 99"])
-        # Only py has no HEAD; we don't even check ipynb HEAD
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "merged"
+        assert result.merge_mode == MergeMode.PY_WINS_NO_BASE
+
+    def test_py_untracked_sources_equal_is_in_sync(self, tmp_path):
+        """With py untracked and equal sources -> IN_SYNC."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 2"])
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "in_sync"
+
+    def test_no_git_base_py_wins_py_canonical(self, tmp_path):
+        """No git base + 2 non-empty cells each, different sources -> MERGED, py wins."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 99", "y = 88"])
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "merged"
+        assert result.merge_mode == MergeMode.PY_WINS_NO_BASE
+        assert result.py_needs_update is False
+        assert result.ipynb_needs_update is True
+        assert [c.source for c in result.merged_cells] == ["x = 1", "y = 2"]
+
+    def test_no_git_base_structural_mismatch_stays_drift_only(self, tmp_path):
+        """No git base + cell count mismatch -> DRIFT_ONLY (structural divergence)."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2", "z = 3"], ["x = 99"])
         with self._patch_git(None):
             result = check_drift(py, ipynb)
         assert result.status == "drift_only"
         assert len(result.conflict_indices) >= 1
 
-    def test_py_untracked_sources_equal_is_in_sync(self, tmp_path):
-        """With py untracked and equal sources -> IN_SYNC."""
-        py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 2"])
+    def test_no_git_base_py_trailing_empty_cell_is_in_sync(self, tmp_path):
+        """No git base + py has trailing empty cell -> filtered out, still IN_SYNC."""
+        # _write_pair writes cells as-is; empty string -> empty cell in py
+        py, ipynb = _write_pair(tmp_path, ["x = 1", ""], ["x = 1"])
         with self._patch_git(None):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
