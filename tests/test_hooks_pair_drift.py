@@ -71,25 +71,63 @@ def _make_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple
 
 
 # ---------------------------------------------------------------------------
-# NotebookEdit -> always deny
+# pair-drift-guard no longer handles NotebookEdit (moved to notebook-edit-guard)
 # ---------------------------------------------------------------------------
 
-class TestNotebookEditDenied:
-    def test_notebook_edit_is_always_denied(self, tmp_path):
+class TestNotebookEditPassThrough:
+    def test_notebook_edit_is_allowed_by_pair_drift_guard(self, tmp_path):
+        """pair-drift-guard no longer intercepts NotebookEdit — that's notebook-edit-guard's job."""
         payload = {
             "tool_name": "NotebookEdit",
             "tool_input": {"notebook_path": str(tmp_path / "nb.ipynb")},
         }
         code, out = _invoke(payload)
         assert code == 0
-        assert _decision(out) == "deny"
-        assert "NotebookEdit" in _reason(out) or "py:percent" in _reason(out)
+        # pair-drift-guard should not emit a decision for NotebookEdit
+        assert _decision(out) is None
 
-    def test_notebook_edit_denied_regardless_of_file(self):
-        payload = {"tool_name": "NotebookEdit", "tool_input": {}}
-        code, out = _invoke(payload)
+
+# ---------------------------------------------------------------------------
+# Direct Edit/Write of .ipynb -> always deny (pair-drift-guard, Pre)
+# ---------------------------------------------------------------------------
+
+class TestDirectIpynbEditBlocked:
+    def test_edit_existing_ipynb_is_denied(self, tmp_path):
+        ipynb = tmp_path / "nb.ipynb"
+        ipynb.write_text("{}", encoding="utf-8")
+        code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
         assert code == 0
         assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "nb.ipynb" in reason
+        assert "py:percent" in reason or "round-trip" in reason
+
+    def test_write_new_ipynb_is_denied(self, tmp_path):
+        """Blocking creation of new .ipynb via Write is also covered."""
+        ipynb = tmp_path / "new.ipynb"
+        # file does not exist yet — Write would create it
+        code, out = _invoke({"tool_name": "Write", "tool_input": {"file_path": str(ipynb)}})
+        assert code == 0
+        assert _decision(out) == "deny"
+
+    def test_message_contains_round_trip_steps(self, tmp_path):
+        ipynb = tmp_path / "nb.ipynb"
+        ipynb.write_text("{}", encoding="utf-8")
+        _, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
+        reason = _reason(out)
+        assert "ipynb-to-py" in reason
+        assert "py-to-ipynb" in reason
+        assert "nb.py" in reason  # derived stem
+
+    def test_py_file_edit_is_not_blocked(self, tmp_path):
+        """Sanity: .py files still go through drift check, not this block."""
+        py = tmp_path / "nb.py"
+        py.write_text("x = 1\n", encoding="utf-8")
+        code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+        assert code == 0
+        # no deny from the ipynb-block path (may still be allow from drift check)
+        if _decision(out) is not None:
+            assert _decision(out) != "deny" or "ipynb" not in _reason(out).lower()[:50]
 
 
 # ---------------------------------------------------------------------------
@@ -152,49 +190,26 @@ class TestAutoMergeOtherSide:
         # merged=x=99; py needs update (x=1->x=99); py IS target -> deny
         assert _decision(out) == "deny"
         reason = _reason(out)
-        assert "nb.py" in reason or "Re-read" in reason or "re-read" in reason.lower()
+        # New message: "Someone else edited ... you did not cause it"
+        assert "Someone else edited" in reason or "Re-read" in reason or "nb.py" in reason
 
-    def test_ipynb_changed_agent_edits_ipynb_allows(self, tmp_path):
-        """ipynb drifted (x=1->x=99), agent edits ipynb.
-        Merged = x=99. ipynb already has x=99 -> no ipynb update.
-        py needs update (x=1->x=99). py is OTHER side -> allow, py written.
-        """
+    def test_direct_ipynb_edit_is_always_denied(self, tmp_path):
+        """Agent tries to Edit .ipynb directly — blocked regardless of drift state."""
         py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
 
         from tests.test_drift import _make_py_text, _make_ipynb_text
 
         base_py = _make_py_text("x = 1")
-        base_ipynb = _make_ipynb_text("x = 1")
 
-        def _git_side(path: Path) -> str | None:
-            return base_py if path.suffix == ".py" else base_ipynb
-
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.drift._get_git_base_text",
+                   side_effect=lambda p: base_py if p.suffix == ".py" else None):
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
 
         assert code == 0
-        assert _decision(out) is None  # allow — ipynb unchanged, py (other side) was synced
-
-    def test_py_changed_ipynb_is_target_deny(self, tmp_path):
-        """py drifted (x=1->x=99), agent edits ipynb (still has x=1).
-        Merged = x=99. ipynb needs update. ipynb IS target -> deny.
-        """
-        py, ipynb = _make_pair(tmp_path, ["x = 99"], ["x = 1"])
-
-        from tests.test_drift import _make_py_text, _make_ipynb_text
-
-        base_py = _make_py_text("x = 1")
-        base_ipynb = _make_ipynb_text("x = 1")
-
-        def _git_side(path: Path) -> str | None:
-            return base_py if path.suffix == ".py" else base_ipynb
-
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
-            code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
-
-        assert code == 0
-        # merged=x=99; ipynb needs update (x=1->x=99); ipynb IS target -> deny
         assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "nb.ipynb" in reason
+        assert "round-trip" in reason or "py:percent" in reason
 
     def test_py_changed_agent_edits_py_allows(self, tmp_path):
         """py drifted (x=1->x=99), agent edits py.
@@ -242,7 +257,11 @@ class TestConflict:
 
         assert code == 0
         assert _decision(out) == "deny"
-        assert "0" in _reason(out)  # cell index 0 in reason
+        reason = _reason(out)
+        assert "0" in reason  # cell index 0
+        # New message: "Pre-existing conflict" and "This drift existed before"
+        assert "Pre-existing conflict" in reason or "pre-existing" in reason.lower()
+        assert "git diff" in reason
 
     def test_drift_only_returns_deny(self, tmp_path):
         """No git base + unequal cells -> deny."""
@@ -251,6 +270,10 @@ class TestConflict:
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
         assert code == 0
         assert _decision(out) == "deny"
+        reason = _reason(out)
+        # New message: "not yet committed" and "git log --oneline"
+        assert "not yet committed" in reason
+        assert "git log" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +300,225 @@ class TestFailOpen:
 
     def test_drift_exception_allows(self, tmp_path):
         py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
-        with patch("jupyter_jcli.commands.hooks_cmd._run_drift_check", side_effect=RuntimeError("boom")):
+        with patch("jupyter_jcli.commands.hooks_cmd._run_pre_drift_check", side_effect=RuntimeError("boom")):
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
         assert code == 0
         assert _decision(out) is None  # allow (fail-open)
+
+
+# ---------------------------------------------------------------------------
+# notebook-edit-guard — always deny NotebookEdit
+# ---------------------------------------------------------------------------
+
+def _invoke_nb_edit_guard(payload: dict) -> tuple[int, dict | None]:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["_hooks", "notebook-edit-guard"],
+        input=json.dumps(payload),
+        catch_exceptions=False,
+    )
+    for line in result.output.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return result.exit_code, json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return result.exit_code, None
+
+
+class TestNotebookEditGuard:
+    def test_notebook_edit_is_denied(self, tmp_path):
+        payload = {
+            "tool_name": "NotebookEdit",
+            "tool_input": {"notebook_path": str(tmp_path / "nb.ipynb")},
+        }
+        code, out = _invoke_nb_edit_guard(payload)
+        assert code == 0
+        assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "NotebookEdit" in reason
+        assert "py:percent" in reason or "round-trip" in reason
+
+    def test_notebook_edit_denied_regardless_of_file(self):
+        payload = {"tool_name": "NotebookEdit", "tool_input": {}}
+        code, out = _invoke_nb_edit_guard(payload)
+        assert code == 0
+        assert _decision(out) == "deny"
+
+    def test_edit_tool_is_allowed(self, tmp_path):
+        """notebook-edit-guard only fires for NotebookEdit, not Edit."""
+        payload = {"tool_name": "Edit", "tool_input": {"file_path": str(tmp_path / "nb.py")}}
+        code, out = _invoke_nb_edit_guard(payload)
+        assert code == 0
+        assert _decision(out) is None  # allow
+
+    def test_malformed_stdin_allows(self):
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["_hooks", "notebook-edit-guard"], input="not json", catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        for line in result.output.splitlines():
+            if line.strip().startswith("{"):
+                assert False, f"Unexpected JSON output on bad input: {line}"
+
+    def test_message_contains_three_step_workflow(self):
+        payload = {"tool_name": "NotebookEdit", "tool_input": {}}
+        code, out = _invoke_nb_edit_guard(payload)
+        reason = _reason(out)
+        assert "ipynb-to-py" in reason
+        assert "py-to-ipynb" in reason
+
+
+# ---------------------------------------------------------------------------
+# pair-drift-guard-post — PostToolUse auto-sync
+# ---------------------------------------------------------------------------
+
+def _invoke_post(payload: dict) -> tuple[int, dict | None]:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["_hooks", "pair-drift-guard-post"],
+        input=json.dumps(payload),
+        catch_exceptions=False,
+    )
+    for line in result.output.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return result.exit_code, json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return result.exit_code, None
+
+
+def _event_name(out: dict | None) -> str | None:
+    if out is None:
+        return None
+    return out.get("hookSpecificOutput", {}).get("hookEventName")
+
+
+class TestPairDriftGuardPost:
+    """Tests for pair-drift-guard-post (PostToolUse)."""
+
+    def test_in_sync_after_edit_is_silent(self, tmp_path):
+        """Agent edits py, pair stays in sync -> no output."""
+        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+
+        from tests.test_drift import _make_py_text
+        base_py = _make_py_text("x = 1")
+
+        with patch("jupyter_jcli.drift._get_git_base_text",
+                   side_effect=lambda p: base_py if p.suffix == ".py" else None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) is None  # silent
+
+    def test_auto_syncs_ipynb_after_py_edit(self, tmp_path):
+        """Agent edits py (x=1->x=10), ipynb still has x=1 -> auto-sync ipynb."""
+        from tests.test_drift import _make_ipynb_text, _make_py_text
+
+        base_py = _make_py_text("x = 1")
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
+
+        with patch("jupyter_jcli.drift._get_git_base_text",
+                   side_effect=lambda p: base_py if p.suffix == ".py" else None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) == "allow"
+        reason = _reason(out)
+        assert "Auto-synced" in reason
+        assert "nb.py" in reason
+        assert "Pair is now in sync" in reason
+        assert _event_name(out) == "PostToolUse"
+
+        # Verify ipynb was actually updated
+        import nbformat as nbf
+        nb = nbf.read(str(ipynb), as_version=4)
+        non_empty = [c.source for c in nb.cells if c.source.strip()]
+        assert non_empty == ["x = 10"]
+
+    def test_ipynb_as_edited_file_in_post_is_silent(self, tmp_path):
+        """Post hook silently exits for .ipynb — Pre should have blocked it already."""
+        py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
+
+        from tests.test_drift import _make_py_text
+        base_py = _make_py_text("x = 1", "y = 2")
+
+        with patch("jupyter_jcli.drift._get_git_base_text",
+                   side_effect=lambda p: base_py if p.suffix == ".py" else None):
+            code, out = _invoke_post({"tool_name": "Write", "tool_input": {"file_path": str(ipynb)}})
+
+        assert code == 0
+        assert _decision(out) is None  # silent — Pre is the line of defense for ipynb
+
+    def test_conflict_after_edit_warns(self, tmp_path):
+        """Agent's edit creates a conflict -> warn with cell indices."""
+        from tests.test_drift import _make_ipynb_text, _make_py_text
+
+        base_py = _make_py_text("x = 1")
+        # py has x=10, ipynb has x=99 -> both changed same cell -> conflict
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+
+        def _git_side(path: Path) -> str | None:
+            return base_py if path.suffix == ".py" else None
+
+        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "0" in reason  # cell index
+        assert "j-cli convert" in reason
+        assert _event_name(out) == "PostToolUse"
+
+    def test_drift_only_after_edit_warns(self, tmp_path):
+        """py has no git baseline after agent's edit -> warn with convert hint."""
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+
+        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "no git baseline" in reason or "no baseline" in reason.lower()
+        assert "j-cli convert" in reason
+        assert _event_name(out) == "PostToolUse"
+
+    def test_non_paired_file_is_silent(self, tmp_path):
+        """Files without a paired counterpart are silently ignored."""
+        solo = tmp_path / "script.py"
+        solo.write_text("x = 1\n", encoding="utf-8")
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(solo)}})
+        assert code == 0
+        assert _decision(out) is None
+
+    def test_malformed_stdin_allows(self):
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["_hooks", "pair-drift-guard-post"], input="not json", catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        for line in result.output.splitlines():
+            if line.strip().startswith("{"):
+                assert False, f"Unexpected JSON output on bad input: {line}"
+
+    def test_post_exception_allows(self, tmp_path):
+        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        with patch("jupyter_jcli.commands.hooks_cmd._run_post_drift_check", side_effect=RuntimeError("boom")):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+        assert code == 0
+        assert _decision(out) is None
+
+    def test_ipynb_edit_in_post_is_silent(self, tmp_path):
+        """If .ipynb somehow reached Post (Pre should have blocked it), exit silently."""
+        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
+        assert code == 0
+        assert _decision(out) is None  # no output — Pre was the line of defense

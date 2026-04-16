@@ -30,6 +30,7 @@ class HookEvent(str, Enum):
     Values are constrained by the Claude Code hook protocol.
     """
     PRE_TOOL_USE = "PreToolUse"
+    POST_TOOL_USE = "PostToolUse"
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -201,51 +202,54 @@ def python_run_guard():
 
 
 # ---------------------------------------------------------------------------
-# pair-drift-guard
+# pair-drift-guard  (PreToolUse — detects drift that existed before agent's edit)
 # ---------------------------------------------------------------------------
 
 @hooks.command("pair-drift-guard")
 def pair_drift_guard() -> None:
-    """PreToolUse hook: detect py/ipynb pair drift and deny NotebookEdit."""
+    """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         sys.exit(0)  # fail-open
 
     try:
-        tool_name: str = payload.get("tool_name", "") or ""
         tool_input: dict = payload.get("tool_input", {}) or {}
         file_path: str = tool_input.get("file_path", "") or ""
     except (AttributeError, TypeError):
         sys.exit(0)  # fail-open
 
-    # Policy: NotebookEdit is always denied — use py:percent round-trip instead
-    if tool_name == "NotebookEdit":
-        _print_decision(
-            "deny",
-            "NotebookEdit is disabled. Edit notebooks via py:percent round-trip:\n"
-            "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
-            "  2. Edit <nb.py> with normal text tools\n"
-            "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>",
-        )
-        sys.exit(0)
-
     if not file_path:
         sys.exit(0)  # no file to check, allow
 
     path = Path(file_path)
+
+    # Block direct Edit/Write of .ipynb files — use the py:percent round-trip instead.
+    # This covers both edits to existing notebooks and attempts to create new .ipynb via Write.
+    if path.suffix == ".ipynb":
+        _print_decision(
+            HookDecision.DENY,
+            f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
+            "via the py:percent round-trip instead:\n"
+            f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
+            f"  2. Edit {path.stem}.py with Edit/Write\n"
+            f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
+            "(Outputs in the `.ipynb` are preserved through the round-trip.)",
+        )
+        sys.exit(0)
+
     if not path.exists():
         sys.exit(0)  # new file, no drift possible
 
     try:
-        _run_drift_check(tool_name, path)
+        _run_pre_drift_check(path)
     except Exception as exc:  # noqa: BLE001 — fail-open on any error
         print(f"pair-drift-guard: unexpected error: {exc}", file=sys.stderr)
         sys.exit(0)
 
 
-def _run_drift_check(tool_name: str, path: Path) -> None:
-    """Run drift check and emit a decision if action is needed."""
+def _run_pre_drift_check(path: Path) -> None:
+    """Run drift check for PreToolUse and emit a decision if action is needed."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
@@ -276,28 +280,42 @@ def _run_drift_check(tool_name: str, path: Path) -> None:
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         _print_decision(
-            "deny",
-            f"Pair conflict between {py_path.name} and {ipynb_path.name} "
-            f"at cell(s) [{idx_str}] — both sides changed the same cell(s), "
-            "auto-merge is not possible.\n"
-            "Pick a side with j-cli convert:\n"
+            HookDecision.DENY,
+            f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
+            f"at cell(s) [{idx_str}] — both sides have been edited (e.g. by a human "
+            "user in JupyterLab and via py:percent) since the last commit of `.py`, "
+            "and the edits collide on the same cell(s). This drift existed before "
+            "your tool call.\n\n"
+            f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
+            f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
+            "inspect the other side. Then pick a direction:\n"
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # take ipynb as truth\n"
+            "   # takes ipynb's cells; discards .py's edits\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # take py as truth",
+            "   # takes .py's cells; discards ipynb's edits",
         )
         return
 
     if result.status == DriftStatus.DRIFT_ONLY:
         _print_decision(
-            "deny",
-            f"No git base found; {py_path.name} and {ipynb_path.name} have diverged "
-            "and cannot be auto-merged.\n"
-            "Pick a side with j-cli convert:\n"
+            HookDecision.DENY,
+            f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
+            f"auto-merge the pair. Current sources of `{py_path.name}` and "
+            f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
+            "This usually happens right after creating a new notebook (common "
+            "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
+            "the two can drift in whitespace/cell count before the first commit).\n\n"
+            "Before picking a side:\n"
+            f"  1. Run `git log --oneline -- {py_path.name}` to confirm `.py` really "
+            "is new (no HEAD).\n"
+            "  2. Run `git status` and check who/what wrote each side most recently.\n"
+            f"  3. If `{ipynb_path.name}` has exec outputs you want to keep, take "
+            f"`{ipynb_path.name}` as truth; otherwise take `{py_path.name}`.\n\n"
+            "Then, once you've decided:\n"
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # take ipynb as truth\n"
+            "   # overwrites .py\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # take py as truth",
+            "   # overwrites .ipynb sources (outputs preserved)",
         )
         return
 
@@ -365,23 +383,222 @@ def _apply_merge_and_decide(
     if wrote_target:
         # The file the agent is about to edit was rewritten — its cached content
         # (old_string) is now stale. Deny and ask for a re-read.
+        other = ipynb_path if target == py_path else py_path
         _print_decision(
-            "deny",
-            f"Auto-merged pair drift into {target.name}. "
-            f"Re-read {target} and retry your edit.",
+            HookDecision.DENY,
+            f"Someone else edited the paired `{other.name}` before your edit — the "
+            f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
+            "so your next Edit sees the updated content. "
+            "(This drift existed before your tool call; you did not cause it.)",
         )
 
 
-def _print_decision(decision: HookDecision, reason: str) -> None:
+def _print_decision(
+    decision: HookDecision,
+    reason: str,
+    event: HookEvent = HookEvent.PRE_TOOL_USE,
+) -> None:
     print(
         json.dumps({
             "hookSpecificOutput": {
-                "hookEventName": HookEvent.PRE_TOOL_USE,
+                "hookEventName": event,
                 "permissionDecision": decision,
                 "permissionDecisionReason": reason,
             }
         })
     )
+
+
+# ---------------------------------------------------------------------------
+# notebook-edit-guard  (PreToolUse — hard-deny NotebookEdit)
+# ---------------------------------------------------------------------------
+
+@hooks.command("notebook-edit-guard")
+def notebook_edit_guard() -> None:
+    """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        sys.exit(0)  # fail-open
+
+    try:
+        tool_name: str = payload.get("tool_name", "") or ""
+    except (AttributeError, TypeError):
+        sys.exit(0)  # fail-open
+
+    if tool_name != "NotebookEdit":
+        sys.exit(0)  # not a NotebookEdit call, allow
+
+    _print_decision(
+        HookDecision.DENY,
+        "NotebookEdit is disabled in this project — edit notebooks via the "
+        "py:percent round-trip instead:\n"
+        "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
+        "  2. Edit <nb.py> with Edit/Write\n"
+        "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
+        "(The paired `.py` round-trip preserves outputs and keeps the pair "
+        "in sync via `pair-drift-guard`.)",
+    )
+    sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# pair-drift-guard-post  (PostToolUse — auto-sync pair after agent's own edit)
+# ---------------------------------------------------------------------------
+
+@hooks.command("pair-drift-guard-post")
+def pair_drift_guard_post() -> None:
+    """PostToolUse hook: auto-sync py/ipynb pair after agent's own Edit/Write."""
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        sys.exit(0)  # fail-open
+
+    try:
+        tool_input: dict = payload.get("tool_input", {}) or {}
+        file_path: str = tool_input.get("file_path", "") or ""
+    except (AttributeError, TypeError):
+        sys.exit(0)  # fail-open
+
+    if not file_path:
+        sys.exit(0)
+
+    path = Path(file_path)
+
+    # .ipynb should have been blocked by pair-drift-guard (Pre); if it somehow
+    # reached Post, there is nothing useful to sync — exit silently.
+    if path.suffix == ".ipynb":
+        sys.exit(0)
+
+    if not path.exists():
+        sys.exit(0)
+
+    try:
+        _run_post_drift_check(path)
+    except Exception as exc:  # noqa: BLE001 — fail-open on any error
+        print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+        sys.exit(0)
+
+
+def _run_post_drift_check(path: Path) -> None:
+    """Run drift check after an agent edit and sync the other side if possible."""
+    from jupyter_jcli.parser import find_pair
+
+    pair = find_pair(path)
+    if pair is None:
+        return  # not a paired file, nothing to sync
+
+    if path.suffix == ".ipynb":
+        py_path, ipynb_path = pair, path
+    else:
+        py_path, ipynb_path = path, pair
+
+    if not py_path.exists() or not ipynb_path.exists():
+        return  # one side missing, nothing to sync
+
+    try:
+        from jupyter_jcli.drift import check_drift
+        result = check_drift(py_path, ipynb_path)
+    except UnicodeDecodeError:
+        print("pair-drift-guard-post: non-UTF-8 content, skipping", file=sys.stderr)
+        return
+    except Exception:  # noqa: BLE001
+        return
+
+    if result.status == DriftStatus.IN_SYNC:
+        return  # pair already in sync — silent
+
+    if result.status == DriftStatus.MERGED:
+        _sync_pair_after_edit(path, py_path, ipynb_path, result)
+        return
+
+    if result.status == DriftStatus.CONFLICT:
+        idx_str = ", ".join(str(i) for i in result.conflict_indices)
+        other = ipynb_path if path == py_path else py_path
+        _print_decision(
+            HookDecision.DENY,
+            f"Your edit to `{path.name}` and an independent edit to `{other.name}` "
+            f"both changed cell(s) [{idx_str}] — the changes collide and cannot be "
+            "auto-merged. (The edit to `"
+            + other.name
+            + "` may have arrived concurrently or was already present before your edit.)\n\n"
+            f"Run `git diff -- {py_path.name}` to see the `.py` side, open "
+            f"`{other.name}` to inspect the other side, then pick a direction:\n"
+            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            "   # take ipynb; discard .py edits on those cells\n"
+            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            "   # take .py; discard ipynb edits on those cells",
+            event=HookEvent.POST_TOOL_USE,
+        )
+        return
+
+    if result.status == DriftStatus.DRIFT_ONLY:
+        if path == py_path:
+            convert_hint = (
+                f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            )
+        else:
+            convert_hint = (
+                f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            )
+        _print_decision(
+            HookDecision.DENY,
+            f"Pair is drifted and `{py_path.name}` has no git baseline, so jcli "
+            "can't auto-merge. Since you just edited "
+            f"`{path.name}`, if that represents your current intent run:\n"
+            f"{convert_hint}\n"
+            "Be aware this overwrites the other file's independent content.",
+            event=HookEvent.POST_TOOL_USE,
+        )
+
+
+def _sync_pair_after_edit(
+    edited: Path,
+    py_path: Path,
+    ipynb_path: Path,
+    result,  # DriftResult
+) -> None:
+    """Write the merge result to the OTHER side (not the one the agent just edited)."""
+    from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
+    from jupyter_jcli.parser import ParsedFile, parse_py_percent
+
+    synced = False
+
+    if result.ipynb_needs_update and ipynb_path != edited:
+        try:
+            update_ipynb_sources(ipynb_path, result.merged_cells)
+            synced = True
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"pair-drift-guard-post: could not write {ipynb_path.name}: {exc}",
+                file=sys.stderr,
+            )
+
+    if result.py_needs_update and py_path != edited:
+        try:
+            py_parsed = parse_py_percent(str(py_path))
+            merged_parsed = ParsedFile(
+                kernel_name=py_parsed.kernel_name,
+                cells=result.merged_cells,
+                source_path=py_parsed.source_path,
+                front_matter_raw=py_parsed.front_matter_raw,
+            )
+            py_path.write_text(emit_py_percent(merged_parsed), encoding="utf-8")
+            synced = True
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"pair-drift-guard-post: could not write {py_path.name}: {exc}",
+                file=sys.stderr,
+            )
+
+    if synced:
+        other = ipynb_path if edited == py_path else py_path
+        _print_decision(
+            HookDecision.ALLOW,
+            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+            "Pair is now in sync.",
+            event=HookEvent.POST_TOOL_USE,
+        )
 
 
 # ---------------------------------------------------------------------------

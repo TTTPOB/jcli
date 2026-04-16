@@ -22,7 +22,9 @@ class TestHookEnums:
 
     def test_hook_event_members(self):
         assert HookEvent.PRE_TOOL_USE == "PreToolUse"
+        assert HookEvent.POST_TOOL_USE == "PostToolUse"
         assert isinstance(HookEvent.PRE_TOOL_USE, str)
+        assert isinstance(HookEvent.POST_TOOL_USE, str)
 
     def test_invalid_decision_raises(self):
         with pytest.raises(ValueError):
