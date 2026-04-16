@@ -25,7 +25,8 @@ class Scope(str, Enum):
 # Managed hook blocks
 #
 # Each block descriptor has:
-#   matcher   - PreToolUse matcher string
+#   event     - hook event type ("PreToolUse" or "PostToolUse")
+#   matcher   - tool matcher string
 #   entry     - the hook entry dict to install (must contain _jcli_managed key)
 #   legacy    - frozenset of old _jcli_managed values to replace on upgrade
 # ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ _MANAGED_KEY = "_jcli_managed"
 
 _MANAGED_BLOCKS: list[dict] = [
     {
+        "event": "PreToolUse",
         "matcher": "Bash",
         "entry": {
             "type": "command",
@@ -43,6 +45,7 @@ _MANAGED_BLOCKS: list[dict] = [
         "legacy": frozenset({"nbconvert-guard"}),
     },
     {
+        "event": "PreToolUse",
         "matcher": "Edit|Write",
         "entry": {
             "type": "command",
@@ -52,15 +55,27 @@ _MANAGED_BLOCKS: list[dict] = [
         "legacy": frozenset(),
     },
     {
+        "event": "PreToolUse",
         "matcher": "NotebookEdit",
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks pair-drift-guard",
-            "_jcli_managed": "pair-drift-guard-notebook",
+            "command": "j-cli _hooks notebook-edit-guard",
+            "_jcli_managed": "notebook-edit-guard",
+        },
+        "legacy": frozenset({"pair-drift-guard-notebook"}),
+    },
+    {
+        "event": "PostToolUse",
+        "matcher": "Edit|Write",
+        "entry": {
+            "type": "command",
+            "command": "j-cli _hooks pair-drift-guard-post",
+            "_jcli_managed": "pair-drift-guard-post",
         },
         "legacy": frozenset(),
     },
     {
+        "event": "PreToolUse",
         "matcher": "Bash",
         "entry": {
             "type": "command",
@@ -96,7 +111,7 @@ def setup():
               help="Remove all j-cli managed hooks from the target settings file.")
 @pass_ctx
 def claude(ctx: Context, scope: str, remove: bool):
-    """Install Claude Code PreToolUse hooks: notebook-exec-guard, python-run-guard, and pair-drift-guard."""
+    """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard, notebook-edit-guard, and pair-drift-guard-post."""
     path = _resolve_path(scope)
 
     if remove:
@@ -116,8 +131,9 @@ def claude(ctx: Context, scope: str, remove: bool):
 
         # Prune empty hook structures
         if "hooks" in settings:
-            if not settings["hooks"].get("PreToolUse"):
-                settings["hooks"].pop("PreToolUse", None)
+            for _event_key in list(settings["hooks"].keys()):
+                if not settings["hooks"].get(_event_key):
+                    settings["hooks"].pop(_event_key, None)
             if not settings["hooks"]:
                 del settings["hooks"]
 
@@ -196,22 +212,23 @@ def _load_settings(path: Path, use_json: bool) -> dict:
 def _merge_hook(settings: dict, block_desc: dict) -> None:
     """Merge one managed hook block into settings.
 
-    For the given block descriptor, scans all PreToolUse blocks whose matcher
+    For the given block descriptor, scans all event-type blocks whose matcher
     matches ``block_desc["matcher"]`` for any entry whose _jcli_managed value is
     the current name or any legacy name. The first such entry is replaced with the
     current entry dict; additional managed entries are dropped to prevent duplicates.
     If no existing managed entry is found, a new block is appended.
     """
+    target_event: str = block_desc.get("event", "PreToolUse")
     target_matcher: str = block_desc["matcher"]
     current_entry: dict = block_desc["entry"]
     current_val: str = current_entry[_MANAGED_KEY]
     all_vals: frozenset[str] = frozenset({current_val}) | block_desc["legacy"]
 
     hooks_map: dict = settings.setdefault("hooks", {})
-    pre_list: list = hooks_map.setdefault("PreToolUse", [])
+    event_list: list = hooks_map.setdefault(target_event, [])
 
     placed = False
-    for block in pre_list:
+    for block in event_list:
         if not isinstance(block, dict) or block.get("matcher") != target_matcher:
             continue
         inner: list = block.get("hooks", [])
@@ -227,7 +244,7 @@ def _merge_hook(settings: dict, block_desc: dict) -> None:
         block["hooks"] = new_inner
 
     if not placed:
-        pre_list.append({"matcher": target_matcher, "hooks": [current_entry]})
+        event_list.append({"matcher": target_matcher, "hooks": [current_entry]})
 
 
 def _write_settings(path: Path, settings: dict) -> None:
@@ -238,36 +255,38 @@ def _write_settings(path: Path, settings: dict) -> None:
 
 
 def _remove_claude_hooks(settings: dict) -> int:
-    """Remove all jcli-managed entries from settings["hooks"]["PreToolUse"].
+    """Remove all jcli-managed entries from settings["hooks"] (all event types).
 
-    Returns the number of entries removed.  Empty PreToolUse blocks are
+    Returns the number of entries removed.  Empty event-type blocks are
     dropped; the caller is responsible for pruning empty "hooks" / top-level
     dicts afterwards.
     """
     hooks_map = settings.get("hooks")
     if not hooks_map:
         return 0
-    pre_list = hooks_map.get("PreToolUse", [])
-    if not pre_list:
-        return 0
 
     removed = 0
-    new_pre_list = []
-    for block in pre_list:
-        if not isinstance(block, dict):
-            new_pre_list.append(block)
+    for event_key in list(hooks_map.keys()):
+        event_list = hooks_map.get(event_key)
+        if not event_list:
             continue
-        inner = block.get("hooks", [])
-        new_inner = [
-            entry for entry in inner
-            if not (isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS)
-        ]
-        removed += len(inner) - len(new_inner)
-        if new_inner:
-            new_pre_list.append({**block, "hooks": new_inner})
-        # else: block is empty after pruning — drop it
 
-    hooks_map["PreToolUse"] = new_pre_list
+        new_event_list = []
+        for block in event_list:
+            if not isinstance(block, dict):
+                new_event_list.append(block)
+                continue
+            inner = block.get("hooks", [])
+            new_inner = [
+                entry for entry in inner
+                if not (isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS)
+            ]
+            removed += len(inner) - len(new_inner)
+            if new_inner:
+                new_event_list.append({**block, "hooks": new_inner})
+            # else: block is empty after pruning — drop it
+        hooks_map[event_key] = new_event_list
+
     return removed
 
 

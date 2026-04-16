@@ -323,24 +323,38 @@ class TestJsonMode:
 # ---------------------------------------------------------------------------
 
 def _count_managed(settings: dict, val: str) -> int:
-    return sum(
-        1
-        for block in settings.get("hooks", {}).get("PreToolUse", [])
-        for entry in block.get("hooks", [])
-        if entry.get("_jcli_managed") == val
-    )
+    """Count managed entries across all event types (PreToolUse, PostToolUse, …)."""
+    total = 0
+    for event_key in ("PreToolUse", "PostToolUse"):
+        for block in settings.get("hooks", {}).get(event_key, []):
+            for entry in block.get("hooks", []):
+                if entry.get("_jcli_managed") == val:
+                    total += 1
+    return total
 
 
-def _has_matcher(settings: dict, matcher: str) -> bool:
+def _has_matcher_pre(settings: dict, matcher: str) -> bool:
     return any(
         b.get("matcher") == matcher
         for b in settings.get("hooks", {}).get("PreToolUse", [])
     )
 
 
+def _has_matcher_post(settings: dict, matcher: str) -> bool:
+    return any(
+        b.get("matcher") == matcher
+        for b in settings.get("hooks", {}).get("PostToolUse", [])
+    )
+
+
+# Keep backward compat alias used by older tests
+def _has_matcher(settings: dict, matcher: str) -> bool:
+    return _has_matcher_pre(settings, matcher)
+
+
 class TestThreeBlocks:
-    def test_all_three_blocks_installed(self, tmp_path, monkeypatch):
-        """Fresh install creates all four managed hook blocks."""
+    def test_all_blocks_installed(self, tmp_path, monkeypatch):
+        """Fresh install creates all managed hook blocks (Pre + Post)."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = _invoke(runner, ["--local"])
@@ -348,14 +362,20 @@ class TestThreeBlocks:
 
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
 
-        assert _has_hook(settings)  # notebook-exec-guard on Bash
-        assert _has_matcher(settings, "Edit|Write")
-        assert _has_matcher(settings, "NotebookEdit")
+        # PreToolUse blocks
+        assert _has_hook(settings)                        # notebook-exec-guard on Bash
+        assert _has_matcher_pre(settings, "Edit|Write")   # pair-drift-guard
+        assert _has_matcher_pre(settings, "NotebookEdit") # notebook-edit-guard
         assert _count_managed(settings, "pair-drift-guard") == 1
-        assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+        assert _count_managed(settings, "notebook-edit-guard") == 1
         assert _count_managed(settings, "python-run-guard") == 1
+        # PostToolUse blocks
+        assert _has_matcher_post(settings, "Edit|Write")  # pair-drift-guard-post
+        assert _count_managed(settings, "pair-drift-guard-post") == 1
+        # Old notebook tag must not exist
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 0
 
-    def test_idempotent_three_blocks(self, tmp_path, monkeypatch):
+    def test_idempotent_all_blocks(self, tmp_path, monkeypatch):
         """Running setup twice does not duplicate any block."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
@@ -366,23 +386,65 @@ class TestThreeBlocks:
 
         assert _count_managed(settings, "notebook-exec-guard") == 1
         assert _count_managed(settings, "pair-drift-guard") == 1
-        assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+        assert _count_managed(settings, "notebook-edit-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-post") == 1
         assert _count_managed(settings, "python-run-guard") == 1
+        # Stale old tag must not appear
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 0
 
-    def test_pair_drift_guard_commands(self, tmp_path, monkeypatch):
-        """pair-drift-guard entries point to the correct command."""
+    def test_hook_commands_correct(self, tmp_path, monkeypatch):
+        """Each managed entry points to the right j-cli subcommand."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         _invoke(runner, ["--local"])
 
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
-        for block in settings["hooks"]["PreToolUse"]:
-            for entry in block.get("hooks", []):
-                if entry.get("_jcli_managed") in ("pair-drift-guard", "pair-drift-guard-notebook"):
-                    assert entry["command"] == "j-cli _hooks pair-drift-guard"
+        expected = {
+            "pair-drift-guard":      "j-cli _hooks pair-drift-guard",
+            "notebook-edit-guard":   "j-cli _hooks notebook-edit-guard",
+            "pair-drift-guard-post": "j-cli _hooks pair-drift-guard-post",
+        }
+        for event_key in ("PreToolUse", "PostToolUse"):
+            for block in settings.get("hooks", {}).get(event_key, []):
+                for entry in block.get("hooks", []):
+                    tag = entry.get("_jcli_managed", "")
+                    if tag in expected:
+                        assert entry["command"] == expected[tag], (
+                            f"{tag} should run {expected[tag]!r}, got {entry['command']!r}"
+                        )
+
+    def test_legacy_pair_drift_guard_notebook_upgraded(self, tmp_path, monkeypatch):
+        """Old pair-drift-guard-notebook tag is replaced by notebook-edit-guard on upgrade."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "NotebookEdit",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks pair-drift-guard",
+                             "_jcli_managed": "pair-drift-guard-notebook"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        settings = _read_json(claude_dir / "settings.local.json")
+
+        # Old tag gone, replaced by new independent hook
+        assert _count_managed(settings, "pair-drift-guard-notebook") == 0
+        assert _count_managed(settings, "notebook-edit-guard") == 1
+        # New post hook also added
+        assert _count_managed(settings, "pair-drift-guard-post") == 1
 
     def test_legacy_nbconvert_guard_upgraded(self, tmp_path, monkeypatch):
-        """Legacy nbconvert-guard entry is replaced even with new pair-drift-guard blocks."""
+        """Legacy nbconvert-guard entry is replaced even with new hook blocks."""
         monkeypatch.chdir(tmp_path)
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -408,7 +470,8 @@ class TestThreeBlocks:
         assert _count_managed(settings, "nbconvert-guard") == 0
         assert _count_managed(settings, "notebook-exec-guard") == 1
         assert _count_managed(settings, "pair-drift-guard") == 1
-        assert _count_managed(settings, "pair-drift-guard-notebook") == 1
+        assert _count_managed(settings, "notebook-edit-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-post") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -629,4 +692,48 @@ class TestRemove:
         pre = settings.get("hooks", {}).get("PreToolUse", [])
         assert not any(b.get("hooks") == [] for b in pre)
         assert not any(b.get("matcher") == "Bash" for b in pre)
+        assert any(b.get("matcher") == "Read" for b in pre)
+
+    def test_remove_also_clears_post_tool_use(self, tmp_path, monkeypatch):
+        """--remove removes PostToolUse managed hooks, not just PreToolUse."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Edit|Write",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks pair-drift-guard-post",
+                             "_jcli_managed": "pair-drift-guard-post"},
+                        ],
+                    },
+                ],
+                "PreToolUse": [
+                    {
+                        "matcher": "Read",
+                        "hooks": [{"type": "command", "command": "echo read"}],
+                    },
+                ],
+            }
+        }
+        target = claude_dir / "settings.local.json"
+        target.write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "ok"
+        assert data["removed"] == 1
+
+        settings = _read_json(target)
+        # PostToolUse block is gone (empty after removal)
+        post = settings.get("hooks", {}).get("PostToolUse", [])
+        assert post == []
+        # PreToolUse Read hook still present
+        pre = settings.get("hooks", {}).get("PreToolUse", [])
         assert any(b.get("matcher") == "Read" for b in pre)
