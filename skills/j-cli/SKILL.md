@@ -27,7 +27,9 @@ The command is idempotent — re-running updates the hook in place without dupli
 
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`. These tools bypass j-cli and lose kernel state.
 - **`python-run-guard`** (Bash, soft deny) — fires when a command like `python foo.py`, `uv run python foo.py`, `pixi run python foo.py`, or `./foo.py` targets a `.py` file that has a paired `.ipynb` next to it. The guard surfaces a "reconsider" message explaining that running the file as a script discards kernel state and py/ipynb pair sync. The agent is expected to use `j-cli session` + `j-cli exec` instead. Commands on ordinary scripts (no paired `.ipynb`) are never intercepted.
-- **`pair-drift-guard`** (Edit/Write and NotebookEdit) — detects and auto-merges drift between `.py` / `.ipynb` pairs; hard-denies `NotebookEdit` (use the py:percent round-trip instead); hard-denies edits when a merge conflict or unresolvable drift is found (shows `j-cli convert` hint to pick a side).
+- **`pair-drift-guard`** **(PreToolUse, Edit/Write)** — detects drift that was already present before your edit (e.g. a human teammate edited the `.ipynb` in JupyterLab). Auto-merges trivial cases and asks you to re-read the target file; otherwise explains the conflict and what to inspect before picking a side. `.ipynb` is by design gitignored; `.py` history is the only merge baseline.
+- **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when the merge is trivial; warns only when your edit collided with a pre-existing change on the paired side.
+- **`notebook-edit-guard`** **(PreToolUse, NotebookEdit)** — hard-denies direct `NotebookEdit` calls; always use the py:percent round-trip instead.
 
 ## Installing the git pre-commit hook
 
@@ -65,7 +67,7 @@ The installer is idempotent — re-running updates the hook shim and `.gitignore
 | Pair in sync | Silently allowed |
 | One side changed (auto-merge possible) | Merged content written back; `.py` re-staged if updated |
 | Both sides changed the **same** cell | Commit blocked — resolve manually |
-| No git base (first commit) + drift | Commit blocked — pick a side |
+| `.py` not yet committed — no baseline + drift | Commit blocked — pick a side first, then commit |
 
 When a conflict is detected, the hook prints the conflicting cell indices and suggests:
 
@@ -403,8 +405,18 @@ The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exi
 - **Exists** → source-only update (outputs, execution counts, metadata preserved)
 - **Does not exist** → new notebook created from the py cells
 
-> **Policy**: The `NotebookEdit` tool is disabled by the `pair-drift-guard` hook installed
-> via `j-cli setup claude`. Always go through the py:percent round-trip instead.
+> **Policy**: The `NotebookEdit` tool is disabled by the `notebook-edit-guard` hook
+> installed via `j-cli setup claude`. Always go through the py:percent round-trip instead.
+
+### Drift guards at a glance
+
+`.ipynb` is gitignored by design — only `.py` history is the merge baseline.
+
+| Who triggers | Hook | When | Meaning | Next step |
+|---|---|---|---|---|
+| Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
+| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write | Your edit may have diverged the pair | If auto-synced: nothing to do. If warned: pick a side with `j-cli convert` |
+| Agent | `notebook-edit-guard` | Pre NotebookEdit | Hard deny; use py:percent round-trip | Follow the three-step convert workflow above |
 
 ## Error Handling
 
