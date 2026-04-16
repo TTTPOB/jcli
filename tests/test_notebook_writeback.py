@@ -94,27 +94,21 @@ class TestPyPercentWriteback:
         assert any("20" in str(o) for o in updated_nb.cells[1].outputs)
         assert any("30" in str(o) for o in updated_nb.cells[2].outputs)
 
-    def test_no_writeback_without_paired_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+    def test_no_writeback_for_plain_script(self, live_session, mock_kernel_connection, tmp_path):
+        """Plain Python scripts (no # %% markers, no front matter) never create a notebook."""
         runner = CliRunner()
         py_file = tmp_path / "standalone.py"
-        py_file.write_text(textwrap.dedent("""\
-            # ---
-            # jupyter:
-            #   kernelspec:
-            #     name: python3
-            # ---
-
-            # %%
-            print("no paired notebook")
-        """))
+        py_file.write_text('print("no paired notebook")\n')
 
         result = runner.invoke(main, [
             "-s", live_session["url"], "-t", live_session["token"],
-            "exec", live_session["session_id"], "--file", str(py_file), "--cell", "0",
+            "exec", live_session["session_id"], "--file", str(py_file),
         ])
         assert result.exit_code == 0
         assert "no paired notebook" in result.output
         assert "Notebook updated" not in result.output
+        assert "Notebook created" not in result.output
+        assert not (tmp_path / "standalone.ipynb").exists()
 
 
 class TestIpynbWriteback:
