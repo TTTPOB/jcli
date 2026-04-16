@@ -63,6 +63,7 @@ def _make_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple
     py.write_text("".join(lines), encoding="utf-8")
 
     nb = nbformat.v4.new_notebook()
+    nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
     for src in ipynb_src:
         nb.cells.append(nbformat.v4.new_code_cell(src))
     ipynb.write_text(nbformat.writes(nb), encoding="utf-8")
@@ -274,18 +275,15 @@ class TestConflict:
         assert "not yet committed" in reason
         assert "git log" in reason
 
-    def test_drift_only_content_diff_auto_merges(self, tmp_path):
-        """No git base + same count but different sources -> silent allow + ipynb rewritten."""
-        import nbformat as nbf
-
+    def test_drift_only_content_diff_returns_deny(self, tmp_path):
+        """No git base + different sources -> deny (DRIFT_ONLY, pick a side)."""
         py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
         assert code == 0
-        assert _decision(out) is None  # silent allow
-        nb = nbf.read(str(ipynb), as_version=4)
-        non_empty = [c.source for c in nb.cells if c.source.strip()]
-        assert non_empty == ["x = 1"]
+        assert _decision(out) == "deny"
+        reason = _reason(out)
+        assert "not yet committed" in reason or "baseline" in reason.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -503,18 +501,18 @@ class TestPairDriftGuardPost:
         assert "j-cli convert" in reason
         assert _event_name(out) == "PostToolUse"
 
-    def test_drift_only_content_diff_after_edit_syncs(self, tmp_path):
-        """py has no git baseline + same count, different sources -> allow + reason explains."""
+    def test_drift_only_content_diff_after_edit_warns(self, tmp_path):
+        """py has no git baseline + different sources -> deny (DRIFT_ONLY, pick a side)."""
         py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "allow"
+        assert _decision(out) == "deny"
         reason = _reason(out)
-        assert "no git baseline" in reason
-        assert "outputs preserved" in reason
+        assert "no git baseline" in reason.lower() or "baseline" in reason.lower()
+        assert "j-cli convert" in reason
         assert _event_name(out) == "PostToolUse"
 
     def test_non_paired_file_is_silent(self, tmp_path):

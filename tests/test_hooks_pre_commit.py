@@ -280,8 +280,8 @@ class TestDriftOnly:
         assert "git base" in combined or "pick a side" in combined.lower()
         assert "j-cli convert" in combined
 
-    def test_content_diff_same_count_auto_merges(self, git_repo, monkeypatch):
-        """No git base + same count but different content -> auto-merge, exit 0."""
+    def test_content_diff_same_count_is_drift_only(self, git_repo, monkeypatch):
+        """No git base + different content (any count) -> DRIFT_ONLY, exit 1."""
         monkeypatch.chdir(git_repo)
         _make_py(git_repo / "nb.py", "x = 1")
         _make_ipynb(git_repo / "nb.ipynb", "x = 99")  # same count, different content
@@ -290,10 +290,9 @@ class TestDriftOnly:
         runner = CliRunner()
         result = _invoke(runner)
 
-        assert result.exit_code == 0
-        nb = nbformat.read(str(git_repo / "nb.ipynb"), as_version=4)
-        non_empty = [c for c in nb.cells if c.source.strip()]
-        assert non_empty[0].source == "x = 1"
+        assert result.exit_code == 1
+        combined = _combined(result)
+        assert "git base" in combined or "pick a side" in combined.lower()
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from jupyter_jcli._enums import DriftStatus, MergeMode
+from jupyter_jcli._enums import DriftStatus
 
 
 class HookDecision(str, Enum):
@@ -292,7 +292,8 @@ def _run_pre_drift_check(path: Path) -> None:
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
             "   # takes ipynb's cells; discards .py's edits\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # takes .py's cells; discards ipynb's edits",
+            "   # takes .py's cells; discards ipynb's edits"
+            + _diff_section(result.diff_text, py_path.name),
         )
         return
 
@@ -315,7 +316,8 @@ def _run_pre_drift_check(path: Path) -> None:
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
             "   # overwrites .py\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # overwrites .ipynb sources (outputs preserved)",
+            "   # overwrites .ipynb sources (outputs preserved)"
+            + _diff_section(result.diff_text, py_path.name),
         )
         return
 
@@ -373,18 +375,10 @@ def _apply_merge_and_decide(
                 if ipynb_path == target:
                     wrote_target = True
                 else:
-                    if result.merge_mode == MergeMode.PY_WINS_NO_BASE:
-                        print(
-                            f"pair-drift-guard-pre: no git baseline for {py_path.name}; "
-                            f"treated .py as canonical and rewrote {ipynb_path.name} "
-                            "source cells (outputs preserved).",
-                            file=sys.stderr,
-                        )
-                    else:
-                        print(
-                            f"pair-drift-guard: auto-synced {ipynb_path.name} with merged content",
-                            file=sys.stderr,
-                        )
+                    print(
+                        f"pair-drift-guard: auto-synced {ipynb_path.name} with merged content",
+                        file=sys.stderr,
+                    )
         except Exception as exc:  # noqa: BLE001
             print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
 
@@ -415,6 +409,19 @@ def _print_decision(
             }
         })
     )
+
+
+_MAX_DIFF_CHARS = 6000
+
+
+def _diff_section(diff_text: str, py_name: str = "") -> str:
+    """Format diff_text for appending to a hook reason (truncated to _MAX_DIFF_CHARS)."""
+    if not diff_text:
+        return ""
+    if len(diff_text) > _MAX_DIFF_CHARS:
+        hint = f"\n... (truncated; run: git diff -- {py_name})" if py_name else "\n... (truncated)"
+        diff_text = diff_text[:_MAX_DIFF_CHARS] + hint
+    return "\n\n" + diff_text
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +542,8 @@ def _run_post_drift_check(path: Path) -> None:
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
             "   # take ipynb; discard .py edits on those cells\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # take .py; discard ipynb edits on those cells",
+            "   # take .py; discard ipynb edits on those cells"
+            + _diff_section(result.diff_text, py_path.name),
             event=HookEvent.POST_TOOL_USE,
         )
         return
@@ -555,7 +563,8 @@ def _run_post_drift_check(path: Path) -> None:
             "can't auto-merge. Since you just edited "
             f"`{path.name}`, if that represents your current intent run:\n"
             f"{convert_hint}\n"
-            "Be aware this overwrites the other file's independent content.",
+            "Be aware this overwrites the other file's independent content."
+            + _diff_section(result.diff_text, py_path.name),
             event=HookEvent.POST_TOOL_USE,
         )
 
@@ -601,24 +610,12 @@ def _sync_pair_after_edit(
 
     if synced:
         other = ipynb_path if edited == py_path else py_path
-        if result.merge_mode == MergeMode.PY_WINS_NO_BASE:
-            _print_decision(
-                HookDecision.ALLOW,
-                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-                f"`{py_path.name}` has no git baseline, so jcli took `{py_path.name}` as "
-                f"canonical and overwrote `{ipynb_path.name}` source cells (outputs preserved). "
-                f"If `{ipynb_path.name}` had independent JupyterLab edits not in "
-                f"`{py_path.name}`, those source changes were discarded — run "
-                "`j-cli convert ipynb-to-py` before the next edit if that was not intended.",
-                event=HookEvent.POST_TOOL_USE,
-            )
-        else:
-            _print_decision(
-                HookDecision.ALLOW,
-                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-                "Pair is now in sync.",
-                event=HookEvent.POST_TOOL_USE,
-            )
+        _print_decision(
+            HookDecision.ALLOW,
+            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+            "Pair is now in sync.",
+            event=HookEvent.POST_TOOL_USE,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -701,8 +698,8 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
 
     updated_py: list[str] = []
     updated_ipynb: list[str] = []
-    conflicts: list[tuple[str, str, list[int]]] = []
-    drifts: list[tuple[str, str]] = []
+    conflicts: list[tuple[str, str, list[int], str]] = []
+    drifts: list[tuple[str, str, str]] = []
 
     for rel_path in staged_py_rel:
         py_path = repo_root / rel_path
@@ -815,7 +812,7 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
                 ipynb_rel = str(ipynb_path)
-            conflicts.append((rel_path, ipynb_rel, result.conflict_indices))
+            conflicts.append((rel_path, ipynb_rel, result.conflict_indices, result.diff_text))
             continue
 
         if result.status == DriftStatus.DRIFT_ONLY:
@@ -823,7 +820,7 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
                 ipynb_rel = str(ipynb_path)
-            drifts.append((rel_path, ipynb_rel))
+            drifts.append((rel_path, ipynb_rel, result.diff_text))
 
     # ------------------------------------------------------------------
     # Step 6: report and exit
@@ -834,12 +831,14 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             "resolve manually or pick a side via j-cli convert:",
             file=sys.stderr,
         )
-        for py_rel, ipynb_rel, indices in conflicts:
+        for py_rel, ipynb_rel, indices, diff_text in conflicts:
             idx_str = ", ".join(str(i) for i in indices)
             print(
                 f"  {py_rel} ↔ {ipynb_rel}  [conflict cells: {idx_str}]",
                 file=sys.stderr,
             )
+            if diff_text:
+                print(_diff_section(diff_text, py_rel).lstrip("\n"), file=sys.stderr)
         print(
             "  j-cli convert ipynb-to-py <nb.ipynb> <nb.py>  "
             "OR  j-cli convert py-to-ipynb <nb.py> <nb.ipynb>",
@@ -853,8 +852,10 @@ def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             "pick a side via j-cli convert:",
             file=sys.stderr,
         )
-        for py_rel, ipynb_rel in drifts:
+        for py_rel, ipynb_rel, diff_text in drifts:
             print(f"  {py_rel} ↔ {ipynb_rel}", file=sys.stderr)
+            if diff_text:
+                print(_diff_section(diff_text, py_rel).lstrip("\n"), file=sys.stderr)
         print(
             "  j-cli convert ipynb-to-py <nb.ipynb> <nb.py>  "
             "OR  j-cli convert py-to-ipynb <nb.py> <nb.ipynb>",
