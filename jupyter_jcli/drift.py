@@ -141,9 +141,13 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     """Check whether a py/ipynb pair has drifted and attempt auto-merge.
 
     Strategy:
-    - Both files tracked in git → per-cell 3-way merge against HEAD blobs.
-    - Either file untracked (no HEAD blob) → drift-only: compare current cells;
-      equal → in_sync, unequal → drift_only (treated as conflict by caller).
+    - ``.py`` tracked in git → per-cell 3-way merge:
+      base=py_HEAD, ours=py_now, theirs=ipynb_now.
+    - ``.py`` untracked (no HEAD blob) → drift-only: compare current cells;
+      equal → in_sync, unequal → drift_only (no baseline for auto-merge).
+
+    Note: ``.ipynb`` is by design gitignored and never has a HEAD blob; only
+    ``.py`` is used as the merge baseline.
 
     Raises any exception encountered (caller is responsible for fail-open).
     """
@@ -153,10 +157,9 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     ipynb_now = [c for c in parse_ipynb(str(ipynb_path)).cells if c.source.strip()]
 
     base_py_text = _get_git_base_text(py_path)
-    base_ipynb_text = _get_git_base_text(ipynb_path)
 
-    if base_py_text is None or base_ipynb_text is None:
-        # Drift-only mode: compare sources
+    if base_py_text is None:
+        # No baseline — compare sources only
         py_sources = [c.source for c in py_now]
         ipynb_sources = [c.source for c in ipynb_now]
         if py_sources == ipynb_sources:
@@ -167,16 +170,8 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
         )
 
     base_py_cells = _cells_from_py_text(base_py_text)
-    base_ipynb_cells = _cells_from_ipynb_text(base_ipynb_text)
 
-    # Determine which side changed relative to base
-    py_changed = [c.source for c in py_now] != [c.source for c in base_py_cells]
-    ipynb_changed = [c.source for c in ipynb_now] != [c.source for c in base_ipynb_cells]
-
-    if not py_changed and not ipynb_changed:
-        return DriftResult(status=DriftStatus.IN_SYNC)
-
-    # Use py base as the reference for the 3-way merge
+    # Three-way merge: base=py_HEAD, ours=py_now, theirs=ipynb_now
     merged, conflicts = three_way_merge(base_py_cells, py_now, ipynb_now)
 
     if conflicts:
@@ -185,6 +180,9 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     # Determine which files need updating
     py_needs = [c.source for c in merged] != [c.source for c in py_now]
     ipynb_needs = [c.source for c in merged] != [c.source for c in ipynb_now]
+
+    if not py_needs and not ipynb_needs:
+        return DriftResult(status=DriftStatus.IN_SYNC)
 
     return DriftResult(
         status=DriftStatus.MERGED,

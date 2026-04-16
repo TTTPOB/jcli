@@ -1,7 +1,7 @@
 """Tests for jupyter_jcli.drift."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import nbformat
 import pytest
@@ -138,8 +138,12 @@ class TestThreeWayMerge:
 class TestCheckDrift:
     """Tests for check_drift() using mocked _get_git_base_text."""
 
-    def _patch_git(self, py_base: str | None, ipynb_base: str | None):
-        """Return a patch context for _get_git_base_text."""
+    def _patch_git(self, py_base: str | None, ipynb_base: str | None = None):
+        """Return a patch context for _get_git_base_text.
+
+        Only the py_base is used by check_drift; ipynb_base is accepted for
+        backward compatibility in tests but is never consulted by the new logic.
+        """
         def _side_effect(path: Path) -> str | None:
             if path.suffix == ".py":
                 return py_base
@@ -219,3 +223,39 @@ class TestCheckDrift:
         assert result.status == "merged"
         assert result.merged_cells[0].source == "x = 10"
         assert result.merged_cells[1].source == "y = 20"
+
+    def test_ipynb_head_never_consulted(self, tmp_path):
+        """.ipynb is gitignored by design; check_drift must never query its HEAD."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 99"])
+        base_py = _make_py_text("x = 1")
+
+        calls_by_suffix: dict[str, int] = {".py": 0, ".ipynb": 0}
+
+        def _side_effect(path: Path) -> str | None:
+            calls_by_suffix[path.suffix] = calls_by_suffix.get(path.suffix, 0) + 1
+            return base_py if path.suffix == ".py" else None
+
+        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_side_effect):
+            check_drift(py, ipynb)
+
+        assert calls_by_suffix[".ipynb"] == 0, (
+            "check_drift must not query the .ipynb git HEAD — "
+            ".ipynb is always gitignored in jcli projects"
+        )
+        assert calls_by_suffix[".py"] >= 1
+
+    def test_py_untracked_ipynb_only_exists(self, tmp_path):
+        """With py untracked, any source difference is DRIFT_ONLY regardless of ipynb state."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 99"])
+        # Only py has no HEAD; we don't even check ipynb HEAD
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "drift_only"
+        assert len(result.conflict_indices) >= 1
+
+    def test_py_untracked_sources_equal_is_in_sync(self, tmp_path):
+        """With py untracked and equal sources -> IN_SYNC."""
+        py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 2"])
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "in_sync"
