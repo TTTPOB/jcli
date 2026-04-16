@@ -10,6 +10,46 @@ import shutil
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Workaround: Python 3.10 selectors.EpollSelector.select() is not interrupted
+# when a registered socket fd is closed from another thread.  WSKernelClient
+# creates a non-daemon connection_thread that calls run_forever() with no
+# ping_timeout, so the internal Dispatcher uses sel.select(10) — the thread
+# can block for up to 10 s after stop_channels() is called.  Because the
+# thread is non-daemon, Python will wait for it at process exit, causing the
+# test suite to hang for ~10–20 s after the last test.
+#
+# Fix: patch _run_websocket to pass ping_timeout=2 so the Dispatcher uses
+# sel.select(2) instead.  The thread will exit within ≤2 s of close(), well
+# within the REQUEST_TIMEOUT join window (10 s).  Python 3.12 handles the
+# close() interruption correctly and is unaffected by this patch.
+# ---------------------------------------------------------------------------
+try:
+    from jupyter_kernel_client.wsclient import WSKernelClient
+
+    def _fast_run_websocket(self):
+        if self.kernel_socket is None:
+            self.log.error("No websocket defined.")
+            return
+        try:
+            self.kernel_socket.run_forever(
+                ping_interval=self.ping_interval,
+                reconnect=self.reconnect_interval,
+                ping_timeout=2,  # keeps sel.select() timeout short so close() unblocks quickly
+            )
+        except ValueError as e:
+            self.log.error(
+                "Unable to open websocket connection with %s",
+                self.kernel_socket.url,
+                exc_info=e,
+            )
+        except BaseException as e:
+            self.log.error("Websocket listener thread stopped.", exc_info=e)
+
+    WSKernelClient._run_websocket = _fast_run_websocket
+except ImportError:
+    pass
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
