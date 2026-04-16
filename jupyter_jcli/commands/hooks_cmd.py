@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli._enums import DriftStatus, MergeMode
 
 
 class HookDecision(str, Enum):
@@ -373,10 +373,18 @@ def _apply_merge_and_decide(
                 if ipynb_path == target:
                     wrote_target = True
                 else:
-                    print(
-                        f"pair-drift-guard: auto-synced {ipynb_path.name} with merged content",
-                        file=sys.stderr,
-                    )
+                    if result.merge_mode == MergeMode.PY_WINS_NO_BASE:
+                        print(
+                            f"pair-drift-guard-pre: no git baseline for {py_path.name}; "
+                            f"treated .py as canonical and rewrote {ipynb_path.name} "
+                            "source cells (outputs preserved).",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"pair-drift-guard: auto-synced {ipynb_path.name} with merged content",
+                            file=sys.stderr,
+                        )
         except Exception as exc:  # noqa: BLE001
             print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
 
@@ -593,12 +601,24 @@ def _sync_pair_after_edit(
 
     if synced:
         other = ipynb_path if edited == py_path else py_path
-        _print_decision(
-            HookDecision.ALLOW,
-            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-            "Pair is now in sync.",
-            event=HookEvent.POST_TOOL_USE,
-        )
+        if result.merge_mode == MergeMode.PY_WINS_NO_BASE:
+            _print_decision(
+                HookDecision.ALLOW,
+                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+                f"`{py_path.name}` has no git baseline, so jcli took `{py_path.name}` as "
+                f"canonical and overwrote `{ipynb_path.name}` source cells (outputs preserved). "
+                f"If `{ipynb_path.name}` had independent JupyterLab edits not in "
+                f"`{py_path.name}`, those source changes were discarded — run "
+                "`j-cli convert ipynb-to-py` before the next edit if that was not intended.",
+                event=HookEvent.POST_TOOL_USE,
+            )
+        else:
+            _print_decision(
+                HookDecision.ALLOW,
+                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+                "Pair is now in sync.",
+                event=HookEvent.POST_TOOL_USE,
+            )
 
 
 # ---------------------------------------------------------------------------
