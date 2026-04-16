@@ -255,7 +255,7 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 | `3:` | Cell 3 to end |
 | `:5` | Cells 0 through 4 |
 
-**Notebook writeback**: When executing from a file, outputs are automatically written back to the paired `.ipynb` file. For `analysis.py`, j-cli looks for `analysis.ipynb` in the same directory.
+**Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically. Plain Python scripts without markers are executed normally without creating a notebook.
 
 ## Py:Percent Format
 
