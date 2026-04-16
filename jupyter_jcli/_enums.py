@@ -50,7 +50,6 @@ class OutputType(str, Enum):
 class MergeMode(str, Enum):
     """How a DriftResult with status=MERGED was produced."""
     THREE_WAY = "three_way"
-    PY_WINS_NO_BASE = "py_wins_no_base"
 
 
 class ResponseStatus(str, Enum):

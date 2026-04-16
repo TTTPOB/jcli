@@ -13,7 +13,7 @@ from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
 
 
 # ---------------------------------------------------------------------------
-# Three-way merge
+# Three-way merge (kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 def three_way_merge(
@@ -21,7 +21,7 @@ def three_way_merge(
     ours: list[Cell],
     theirs: list[Cell],
 ) -> tuple[list[Cell], list[int]]:
-    """Per-cell three-way merge.
+    """Per-cell three-way merge (position-aligned, cell count must match).
 
     Returns (merged_cells, conflict_indices).
     If conflict_indices is non-empty, merged_cells contains placeholders at
@@ -47,7 +47,6 @@ def three_way_merge(
         elif not ours_changed and theirs_changed:
             merged.append(Cell(index=i, cell_type=t.cell_type, source=t.source))
         else:
-            # Both changed — conflict
             conflicts.append(i)
             merged.append(Cell(index=i, cell_type=b.cell_type, source=b.source))
 
@@ -132,6 +131,14 @@ class DriftResult:
     merge_mode: MergeMode = MergeMode.THREE_WAY
     """How the merge was produced (only meaningful when status == MERGED)."""
 
+    diff_text: str = ""
+    """Diff content for agent consumption.
+
+    For CONFLICT: git merge-file output with <<<<<<< / ======= / >>>>>>> markers.
+    For DRIFT_ONLY: unified diff between py and ipynb (no common baseline).
+    Empty for IN_SYNC and MERGED.
+    """
+
     def __post_init__(self) -> None:
         self.status = DriftStatus(self.status)
         self.merge_mode = MergeMode(self.merge_mode)
@@ -145,67 +152,57 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     """Check whether a py/ipynb pair has drifted and attempt auto-merge.
 
     Strategy:
-    - ``.py`` tracked in git → per-cell 3-way merge:
-      base=py_HEAD, ours=py_now, theirs=ipynb_now.
-    - ``.py`` untracked (no HEAD blob) → drift-only: compare current cells;
-      equal → in_sync, unequal → drift_only (no baseline for auto-merge).
+    - Both sides are normalized to py:percent text via canonicalize + emit.
+    - ``.py`` tracked in git → `git merge-file` three-way text merge:
+      base=py_HEAD (canonicalized), ours=py_now (canonicalized),
+      theirs=ipynb_now (emitted). Myers diff handles insertions and deletions.
+    - ``.py`` untracked (no HEAD blob) → 2-way comparison only; any difference
+      is DRIFT_ONLY with a unified diff — no side wins automatically.
 
     Note: ``.ipynb`` is by design gitignored and never has a HEAD blob; only
     ``.py`` is used as the merge baseline.
 
     Raises any exception encountered (caller is responsible for fail-open).
     """
-    from jupyter_jcli.parser import parse_ipynb, parse_py_percent
+    from jupyter_jcli.canonicalize import canonicalize_py_text
+    from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_diff
+    from jupyter_jcli.pair_io import emit_py_percent
+    from jupyter_jcli.parser import parse_ipynb
+    from jupyter_jcli.text_merge import merge_three_way
 
-    py_now = parse_py_percent(str(py_path)).cells
-    ipynb_now = [c for c in parse_ipynb(str(ipynb_path)).cells if c.source.strip()]
+    ours_text = canonicalize_py_text(py_path.read_text(encoding="utf-8"))
+    theirs_text = emit_py_percent(parse_ipynb(str(ipynb_path)))
 
-    base_py_text = _get_git_base_text(py_path)
+    base_raw = _get_git_base_text(py_path)
 
-    if base_py_text is None:
-        # No baseline — filter py the same way ipynb_now is already filtered.
-        py_filtered = [c for c in py_now if c.source.strip()]
-
-        py_sources = [c.source for c in py_filtered]
-        ipynb_sources = [c.source for c in ipynb_now]
-
-        if py_sources == ipynb_sources:
+    if base_raw is None:
+        if ours_text == theirs_text:
             return DriftResult(status=DriftStatus.IN_SYNC)
-
-        if len(py_filtered) == len(ipynb_now):
-            # Same cell count, different sources — take .py as canonical.
-            return DriftResult(
-                status=DriftStatus.MERGED,
-                py_needs_update=False,
-                ipynb_needs_update=True,
-                merged_cells=py_filtered,
-                merge_mode=MergeMode.PY_WINS_NO_BASE,
-            )
-
-        # Cell count mismatch — structural divergence; require human intervention.
         return DriftResult(
             status=DriftStatus.DRIFT_ONLY,
-            conflict_indices=list(range(max(len(py_filtered), len(ipynb_now), 1))),
+            diff_text=render_no_baseline_diff(ours_text, theirs_text),
         )
 
-    base_py_cells = _cells_from_py_text(base_py_text)
+    base_text = canonicalize_py_text(base_raw)
+    merge = merge_three_way(base_text, ours_text, theirs_text)
 
-    # Three-way merge: base=py_HEAD, ours=py_now, theirs=ipynb_now
-    merged, conflicts = three_way_merge(base_py_cells, py_now, ipynb_now)
+    py_needs = merge.text != ours_text
+    ipynb_needs = merge.text != theirs_text
 
-    if conflicts:
-        return DriftResult(status=DriftStatus.CONFLICT, conflict_indices=conflicts)
-
-    # Determine which files need updating
-    py_needs = [c.source for c in merged] != [c.source for c in py_now]
-    ipynb_needs = [c.source for c in merged] != [c.source for c in ipynb_now]
-
-    if not py_needs and not ipynb_needs:
-        return DriftResult(status=DriftStatus.IN_SYNC)
+    if not merge.has_conflict:
+        if not py_needs and not ipynb_needs:
+            return DriftResult(status=DriftStatus.IN_SYNC)
+        merged_cells = parse_py_percent_text(merge.text).cells
+        return DriftResult(
+            status=DriftStatus.MERGED,
+            merge_mode=MergeMode.THREE_WAY,
+            merged_cells=merged_cells,
+            py_needs_update=py_needs,
+            ipynb_needs_update=ipynb_needs,
+        )
 
     return DriftResult(
-        status=DriftStatus.MERGED,
-        py_needs_update=py_needs,
-        ipynb_needs_update=ipynb_needs,
-        merged_cells=merged,
+        status=DriftStatus.CONFLICT,
+        diff_text=merge.text,
+        conflict_indices=locate_conflict_cells(merge.text),
     )

@@ -59,11 +59,9 @@ class TestDriftStatus:
 class TestMergeMode:
     def test_members_exist(self):
         assert MergeMode.THREE_WAY
-        assert MergeMode.PY_WINS_NO_BASE
 
     def test_str_inheritance(self):
         assert MergeMode.THREE_WAY == "three_way"
-        assert MergeMode.PY_WINS_NO_BASE == "py_wins_no_base"
         assert isinstance(MergeMode.THREE_WAY, str)
 
     def test_json_serializable(self):
@@ -75,12 +73,6 @@ class TestMergeMode:
 
     def test_coerce_from_string(self):
         assert MergeMode("three_way") is MergeMode.THREE_WAY
-        assert MergeMode("py_wins_no_base") is MergeMode.PY_WINS_NO_BASE
-
-    def test_drift_result_coerces_merge_mode(self):
-        from jupyter_jcli.drift import DriftResult
-        r = DriftResult(status="merged", merge_mode="py_wins_no_base")
-        assert r.merge_mode is MergeMode.PY_WINS_NO_BASE
 
     def test_drift_result_defaults_to_three_way(self):
         from jupyter_jcli.drift import DriftResult
