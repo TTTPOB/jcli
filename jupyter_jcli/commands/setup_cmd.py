@@ -49,10 +49,10 @@ _MANAGED_BLOCKS: list[dict] = [
         "matcher": "Edit|Write",
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks pair-drift-guard",
-            "_jcli_managed": "pair-drift-guard",
+            "command": "j-cli _hooks pair-drift-guard-pre",
+            "_jcli_managed": "pair-drift-guard-pre",
         },
-        "legacy": frozenset(),
+        "legacy": frozenset({"pair-drift-guard"}),
     },
     {
         "event": "PreToolUse",
@@ -111,7 +111,7 @@ def setup():
               help="Remove all j-cli managed hooks from the target settings file.")
 @pass_ctx
 def claude(ctx: Context, scope: str, remove: bool):
-    """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard, notebook-edit-guard, and pair-drift-guard-post."""
+    """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
     path = _resolve_path(scope)
 
     if remove:

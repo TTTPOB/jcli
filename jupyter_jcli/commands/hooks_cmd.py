@@ -202,11 +202,11 @@ def python_run_guard():
 
 
 # ---------------------------------------------------------------------------
-# pair-drift-guard  (PreToolUse — detects drift that existed before agent's edit)
+# pair-drift-guard-pre  (PreToolUse — detects drift that existed before agent's edit)
 # ---------------------------------------------------------------------------
 
-@hooks.command("pair-drift-guard")
-def pair_drift_guard() -> None:
+@hooks.command("pair-drift-guard-pre")
+def pair_drift_guard_pre() -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
     try:
         payload = json.load(sys.stdin)
@@ -244,7 +244,7 @@ def pair_drift_guard() -> None:
     try:
         _run_pre_drift_check(path)
     except Exception as exc:  # noqa: BLE001 — fail-open on any error
-        print(f"pair-drift-guard: unexpected error: {exc}", file=sys.stderr)
+        print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
         sys.exit(0)
 
 
@@ -269,7 +269,7 @@ def _run_pre_drift_check(path: Path) -> None:
         from jupyter_jcli.drift import check_drift
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
-        print("pair-drift-guard: non-UTF-8 content, skipping drift check", file=sys.stderr)
+        print("pair-drift-guard-pre: non-UTF-8 content, skipping drift check", file=sys.stderr)
         return
     except Exception:  # noqa: BLE001
         return
@@ -360,11 +360,11 @@ def _apply_merge_and_decide(
                     wrote_target = True
                 else:
                     print(
-                        f"pair-drift-guard: auto-synced {py_path.name} with merged content",
+                        f"pair-drift-guard-pre: auto-synced {py_path.name} with merged content",
                         file=sys.stderr,
                     )
         except Exception as exc:  # noqa: BLE001
-            print(f"pair-drift-guard: could not write {py_path.name}: {exc}", file=sys.stderr)
+            print(f"pair-drift-guard-pre: could not write {py_path.name}: {exc}", file=sys.stderr)
 
     if result.ipynb_needs_update:
         try:
@@ -378,7 +378,7 @@ def _apply_merge_and_decide(
                         file=sys.stderr,
                     )
         except Exception as exc:  # noqa: BLE001
-            print(f"pair-drift-guard: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
+            print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
 
     if wrote_target:
         # The file the agent is about to edit was rewritten — its cached content
@@ -437,7 +437,7 @@ def notebook_edit_guard() -> None:
         "  2. Edit <nb.py> with Edit/Write\n"
         "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
         "(The paired `.py` round-trip preserves outputs and keeps the pair "
-        "in sync via `pair-drift-guard`.)",
+        "in sync via `pair-drift-guard-pre`.)",
     )
     sys.exit(0)
 
@@ -465,7 +465,7 @@ def pair_drift_guard_post() -> None:
 
     path = Path(file_path)
 
-    # .ipynb should have been blocked by pair-drift-guard (Pre); if it somehow
+    # .ipynb should have been blocked by pair-drift-guard-pre; if it somehow
     # reached Post, there is nothing useful to sync — exit silently.
     if path.suffix == ".ipynb":
         sys.exit(0)

@@ -191,7 +191,7 @@ class TestMerge:
         assert any(e.get("command") == "other-hook" for e in all_entries)
         # python-run-guard also installed (may be a separate Bash block)
         assert _count_managed(result, "python-run-guard") == 1
-        # pair-drift-guard blocks also installed
+        # pair-drift-guard-pre blocks also installed
         assert _has_hook(result)
 
     def test_upgrade_replaces_legacy_managed_entry(self, tmp_path, monkeypatch):
@@ -319,7 +319,7 @@ class TestJsonMode:
 
 
 # ---------------------------------------------------------------------------
-# Three-block installation (new blocks for pair-drift-guard)
+# Three-block installation (new blocks for pair-drift-guard-pre)
 # ---------------------------------------------------------------------------
 
 def _count_managed(settings: dict, val: str) -> int:
@@ -364,15 +364,16 @@ class TestThreeBlocks:
 
         # PreToolUse blocks
         assert _has_hook(settings)                        # notebook-exec-guard on Bash
-        assert _has_matcher_pre(settings, "Edit|Write")   # pair-drift-guard
+        assert _has_matcher_pre(settings, "Edit|Write")   # pair-drift-guard-pre
         assert _has_matcher_pre(settings, "NotebookEdit") # notebook-edit-guard
-        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-pre") == 1
         assert _count_managed(settings, "notebook-edit-guard") == 1
         assert _count_managed(settings, "python-run-guard") == 1
         # PostToolUse blocks
         assert _has_matcher_post(settings, "Edit|Write")  # pair-drift-guard-post
         assert _count_managed(settings, "pair-drift-guard-post") == 1
-        # Old notebook tag must not exist
+        # Old tags must not exist
+        assert _count_managed(settings, "pair-drift-guard") == 0
         assert _count_managed(settings, "pair-drift-guard-notebook") == 0
 
     def test_idempotent_all_blocks(self, tmp_path, monkeypatch):
@@ -385,11 +386,12 @@ class TestThreeBlocks:
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
 
         assert _count_managed(settings, "notebook-exec-guard") == 1
-        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-pre") == 1
         assert _count_managed(settings, "notebook-edit-guard") == 1
         assert _count_managed(settings, "pair-drift-guard-post") == 1
         assert _count_managed(settings, "python-run-guard") == 1
-        # Stale old tag must not appear
+        # Stale old tags must not appear
+        assert _count_managed(settings, "pair-drift-guard") == 0
         assert _count_managed(settings, "pair-drift-guard-notebook") == 0
 
     def test_hook_commands_correct(self, tmp_path, monkeypatch):
@@ -400,7 +402,7 @@ class TestThreeBlocks:
 
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
         expected = {
-            "pair-drift-guard":      "j-cli _hooks pair-drift-guard",
+            "pair-drift-guard-pre":  "j-cli _hooks pair-drift-guard-pre",
             "notebook-edit-guard":   "j-cli _hooks notebook-edit-guard",
             "pair-drift-guard-post": "j-cli _hooks pair-drift-guard-post",
         }
@@ -443,6 +445,39 @@ class TestThreeBlocks:
         # New post hook also added
         assert _count_managed(settings, "pair-drift-guard-post") == 1
 
+    def test_legacy_pair_drift_guard_upgraded_to_pre(self, tmp_path, monkeypatch):
+        """Old pair-drift-guard tag is replaced by pair-drift-guard-pre on upgrade."""
+        monkeypatch.chdir(tmp_path)
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Edit|Write",
+                        "hooks": [
+                            {"type": "command", "command": "j-cli _hooks pair-drift-guard",
+                             "_jcli_managed": "pair-drift-guard"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        runner = CliRunner()
+        _invoke(runner, ["--local"])
+        settings = _read_json(claude_dir / "settings.local.json")
+
+        # Old tag gone, replaced by pair-drift-guard-pre (exactly once)
+        assert _count_managed(settings, "pair-drift-guard") == 0
+        assert _count_managed(settings, "pair-drift-guard-pre") == 1
+        # Verify the command was updated too
+        for block in settings.get("hooks", {}).get("PreToolUse", []):
+            for entry in block.get("hooks", []):
+                if entry.get("_jcli_managed") == "pair-drift-guard-pre":
+                    assert entry["command"] == "j-cli _hooks pair-drift-guard-pre"
+
     def test_legacy_nbconvert_guard_upgraded(self, tmp_path, monkeypatch):
         """Legacy nbconvert-guard entry is replaced even with new hook blocks."""
         monkeypatch.chdir(tmp_path)
@@ -469,7 +504,7 @@ class TestThreeBlocks:
 
         assert _count_managed(settings, "nbconvert-guard") == 0
         assert _count_managed(settings, "notebook-exec-guard") == 1
-        assert _count_managed(settings, "pair-drift-guard") == 1
+        assert _count_managed(settings, "pair-drift-guard-pre") == 1
         assert _count_managed(settings, "notebook-edit-guard") == 1
         assert _count_managed(settings, "pair-drift-guard-post") == 1
 

@@ -1,4 +1,4 @@
-"""Tests for `j-cli _hooks pair-drift-guard`."""
+"""Tests for `j-cli _hooks pair-drift-guard-pre`."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from jupyter_jcli.drift import DriftResult
 # ---------------------------------------------------------------------------
 
 def _invoke(payload: dict) -> tuple[int, dict | None]:
-    """Invoke pair-drift-guard with the given payload. Returns (exit_code, json_out).
+    """Invoke pair-drift-guard-pre with the given payload. Returns (exit_code, json_out).
 
     Parses the first valid JSON object from output; non-JSON lines (stderr notices
     mixed in by CliRunner) are skipped.
@@ -27,7 +27,7 @@ def _invoke(payload: dict) -> tuple[int, dict | None]:
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["_hooks", "pair-drift-guard"],
+        ["_hooks", "pair-drift-guard-pre"],
         input=json.dumps(payload),
         catch_exceptions=False,
     )
@@ -71,24 +71,24 @@ def _make_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple
 
 
 # ---------------------------------------------------------------------------
-# pair-drift-guard no longer handles NotebookEdit (moved to notebook-edit-guard)
+# pair-drift-guard-pre no longer handles NotebookEdit (moved to notebook-edit-guard)
 # ---------------------------------------------------------------------------
 
 class TestNotebookEditPassThrough:
-    def test_notebook_edit_is_allowed_by_pair_drift_guard(self, tmp_path):
-        """pair-drift-guard no longer intercepts NotebookEdit — that's notebook-edit-guard's job."""
+    def test_notebook_edit_is_allowed_by_pair_drift_guard_pre(self, tmp_path):
+        """pair-drift-guard-pre no longer intercepts NotebookEdit — that's notebook-edit-guard's job."""
         payload = {
             "tool_name": "NotebookEdit",
             "tool_input": {"notebook_path": str(tmp_path / "nb.ipynb")},
         }
         code, out = _invoke(payload)
         assert code == 0
-        # pair-drift-guard should not emit a decision for NotebookEdit
+        # pair-drift-guard-pre should not emit a decision for NotebookEdit
         assert _decision(out) is None
 
 
 # ---------------------------------------------------------------------------
-# Direct Edit/Write of .ipynb -> always deny (pair-drift-guard, Pre)
+# Direct Edit/Write of .ipynb -> always deny (pair-drift-guard-pre)
 # ---------------------------------------------------------------------------
 
 class TestDirectIpynbEditBlocked:
@@ -290,7 +290,7 @@ class TestFailOpen:
     def test_malformed_stdin_allows(self, raw_input: str):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["_hooks", "pair-drift-guard"], input=raw_input, catch_exceptions=False
+            main, ["_hooks", "pair-drift-guard-pre"], input=raw_input, catch_exceptions=False
         )
         assert result.exit_code == 0
         # No JSON decision emitted — only plain text notices allowed
