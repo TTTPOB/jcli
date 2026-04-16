@@ -121,7 +121,7 @@ j-cli kernel restart <session_id>
 
 ### `setup claude`
 
-Install Claude Code `PreToolUse` hooks that intercept notebook-execution bypass tools and pair-drift between `.py` and `.ipynb` files, redirecting Claude to use j-cli instead.
+Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Claude to use j-cli instead.
 
 ```bash
 j-cli setup claude           # default: .claude/settings.local.json (gitignored)
