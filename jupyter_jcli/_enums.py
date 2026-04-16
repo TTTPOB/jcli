@@ -47,6 +47,12 @@ class OutputType(str, Enum):
     HTML = "html"
 
 
+class MergeMode(str, Enum):
+    """How a DriftResult with status=MERGED was produced."""
+    THREE_WAY = "three_way"
+    PY_WINS_NO_BASE = "py_wins_no_base"
+
+
 class ResponseStatus(str, Enum):
     """Status field emitted in JSON responses by all j-cli commands."""
     OK = "ok"
