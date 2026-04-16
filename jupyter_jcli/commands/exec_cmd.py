@@ -1,5 +1,7 @@
 """jcli exec — execute code or cells from files."""
 
+from pathlib import Path
+
 import click
 
 from jupyter_jcli._enums import ResponseStatus
@@ -106,6 +108,19 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
                     if text:
                         all_outputs_human.append(text)
 
+        # Auto-create paired .ipynb for py:percent files that have no pair yet
+        notebook_created = None
+        if parsed.paired_ipynb is None and parsed.is_py_percent and file_path.endswith(".py"):
+            from jupyter_jcli.parser import ipynb_path_for_py
+            from jupyter_jcli.pair_io import create_ipynb_from_parsed
+            import nbformat as _nbformat
+
+            target = ipynb_path_for_py(Path(file_path))
+            nb = create_ipynb_from_parsed(parsed)
+            _nbformat.write(nb, str(target))
+            parsed.paired_ipynb = str(target)
+            notebook_created = str(target)
+
         # Write back to notebook
         notebook_updated = None
         ipynb_path = parsed.paired_ipynb
@@ -117,10 +132,14 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
             for cr in cell_results:
                 del cr["raw_outputs"]
             data = {"status": ResponseStatus.OK, "cells": cell_results}
+            if notebook_created:
+                data["notebook_created"] = notebook_created
             if notebook_updated:
                 data["notebook_updated"] = notebook_updated
             emit(data, use_json=True)
         else:
+            if notebook_created:
+                all_outputs_human.append(f"\nNotebook created: {notebook_created}")
             if notebook_updated:
                 all_outputs_human.append(f"\nNotebook updated: {notebook_updated}")
             emit({"_human": "\n".join(all_outputs_human)}, use_json=False)
