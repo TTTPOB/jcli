@@ -8,7 +8,7 @@ from pathlib import Path
 
 import nbformat
 
-from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
 
 
@@ -129,8 +129,12 @@ class DriftResult:
     conflict_indices: list[int] = field(default_factory=list)
     """Cell indices with conflicts (non-empty iff status == DriftStatus.CONFLICT)."""
 
+    merge_mode: MergeMode = MergeMode.THREE_WAY
+    """How the merge was produced (only meaningful when status == MERGED)."""
+
     def __post_init__(self) -> None:
         self.status = DriftStatus(self.status)
+        self.merge_mode = MergeMode(self.merge_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +163,29 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     base_py_text = _get_git_base_text(py_path)
 
     if base_py_text is None:
-        # No baseline — compare sources only
-        py_sources = [c.source for c in py_now]
+        # No baseline — filter py the same way ipynb_now is already filtered.
+        py_filtered = [c for c in py_now if c.source.strip()]
+
+        py_sources = [c.source for c in py_filtered]
         ipynb_sources = [c.source for c in ipynb_now]
+
         if py_sources == ipynb_sources:
             return DriftResult(status=DriftStatus.IN_SYNC)
+
+        if len(py_filtered) == len(ipynb_now):
+            # Same cell count, different sources — take .py as canonical.
+            return DriftResult(
+                status=DriftStatus.MERGED,
+                py_needs_update=False,
+                ipynb_needs_update=True,
+                merged_cells=py_filtered,
+                merge_mode=MergeMode.PY_WINS_NO_BASE,
+            )
+
+        # Cell count mismatch — structural divergence; require human intervention.
         return DriftResult(
             status=DriftStatus.DRIFT_ONLY,
-            conflict_indices=list(range(max(len(py_now), len(ipynb_now), 1))),
+            conflict_indices=list(range(max(len(py_filtered), len(ipynb_now), 1))),
         )
 
     base_py_cells = _cells_from_py_text(base_py_text)
