@@ -103,6 +103,28 @@ class TestEmitPyPercent:
         parsed2 = parse_py_percent_text(text)
         assert parsed2.kernel_name == "python3"
 
+    def test_synthesized_header_includes_display_name_and_language(self):
+        """When ParsedFile carries display_name and language, they appear in the
+        synthesized header in alphabetical order (display_name, language, name)."""
+        from jupyter_jcli.parser import ParsedFile
+        parsed = ParsedFile(
+            kernel_name="ir",
+            kernel_display_name="R 4.2",
+            kernel_language="R",
+            cells=[Cell(0, "code", "1 + 1")],
+        )
+        text = emit_py_percent(parsed)
+        assert "display_name: R 4.2" in text
+        assert "language: R" in text
+        assert "name: ir" in text
+        # alphabetical order: display_name before language before name
+        assert text.index("display_name") < text.index("language") < text.index("name: ir")
+        # round-trip
+        parsed2 = parse_py_percent_text(text)
+        assert parsed2.kernel_name == "ir"
+        assert parsed2.kernel_display_name == "R 4.2"
+        assert parsed2.kernel_language == "R"
+
     def test_no_header_when_no_kernel(self):
         parsed = _parsed(None, ("code", "x = 1"))
         text = emit_py_percent(parsed)

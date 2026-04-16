@@ -29,6 +29,8 @@ class ParsedFile:
     paired_ipynb: str | None = None
     front_matter_raw: str | None = None  # raw text including both # --- delimiters
     is_py_percent: bool = False  # True if file has front matter or # %% markers
+    kernel_display_name: str | None = None  # kernelspec display_name (e.g. "Python 3")
+    kernel_language: str | None = None  # kernelspec language (e.g. "python")
 
 
 def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
@@ -98,6 +100,8 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
     lines = text.splitlines(keepends=True)
 
     kernel_name = None
+    kernel_display_name = None
+    kernel_language = None
     front_matter_raw: str | None = None
     content_start = 0
 
@@ -108,9 +112,17 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
                 front_matter = "".join(lines[1:i])
                 # Store raw block including both # --- delimiters
                 front_matter_raw = "".join(lines[0 : i + 1])
-                # Simple extraction of kernelspec name (take last match)
-                for m in re.finditer(r"name:\s*(\S+)", front_matter):
+                # Extract kernelspec fields (anchored to line start to avoid
+                # matching "name:" as a substring of "display_name:")
+                m = re.search(r"^#\s+name:\s*(\S+)", front_matter, re.MULTILINE)
+                if m:
                     kernel_name = m.group(1)
+                m = re.search(r"^#\s+display_name:\s*(.+?)\s*$", front_matter, re.MULTILINE)
+                if m:
+                    kernel_display_name = m.group(1)
+                m = re.search(r"^#\s+language:\s*(\S+)", front_matter, re.MULTILINE)
+                if m:
+                    kernel_language = m.group(1)
                 content_start = i + 1
                 break
 
@@ -161,6 +173,8 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
         source_path=source_path,
         front_matter_raw=front_matter_raw,
         is_py_percent=front_matter_raw is not None or found_percent_marker,
+        kernel_display_name=kernel_display_name,
+        kernel_language=kernel_language,
     )
 
 
@@ -179,7 +193,10 @@ def parse_py_percent(path: str) -> ParsedFile:
 def parse_ipynb(path: str) -> ParsedFile:
     """Parse a .ipynb file into cells."""
     nb = nbformat.read(path, as_version=4)
-    kernel_name = nb.metadata.get("kernelspec", {}).get("name")
+    ks = nb.metadata.get("kernelspec", {})
+    kernel_name = ks.get("name")
+    kernel_display_name = ks.get("display_name") or None
+    kernel_language = ks.get("language") or None
 
     cells = []
     for i, cell in enumerate(nb.cells):
@@ -194,6 +211,8 @@ def parse_ipynb(path: str) -> ParsedFile:
         cells=cells,
         source_path=path,
         paired_ipynb=path,  # ipynb writes back to itself
+        kernel_display_name=kernel_display_name,
+        kernel_language=kernel_language,
     )
 
 

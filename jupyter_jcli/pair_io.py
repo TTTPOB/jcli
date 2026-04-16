@@ -28,6 +28,10 @@ def emit_py_percent(parsed: ParsedFile) -> str:
         parts.append("# ---\n")
         parts.append("# jupyter:\n")
         parts.append("#   kernelspec:\n")
+        if parsed.kernel_display_name is not None:
+            parts.append(f"#     display_name: {parsed.kernel_display_name}\n")
+        if parsed.kernel_language is not None:
+            parts.append(f"#     language: {parsed.kernel_language}\n")
         parts.append(f"#     name: {parsed.kernel_name}\n")
         parts.append("# ---\n")
         parts.append("\n")
@@ -110,8 +114,8 @@ def create_ipynb_from_parsed(parsed: ParsedFile) -> "nbformat.NotebookNode":
     if parsed.kernel_name:
         nb.metadata["kernelspec"] = {
             "name": parsed.kernel_name,
-            "display_name": parsed.kernel_name,
-            "language": "python",
+            "display_name": parsed.kernel_display_name or parsed.kernel_name,
+            "language": parsed.kernel_language or "python",
         }
 
     for cell in parsed.cells:

@@ -171,7 +171,7 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     from jupyter_jcli.text_merge import merge_three_way
 
     ours_text = canonicalize_py_text(py_path.read_text(encoding="utf-8"))
-    theirs_text = emit_py_percent(parse_ipynb(str(ipynb_path)))
+    theirs_text = canonicalize_py_text(emit_py_percent(parse_ipynb(str(ipynb_path))))
 
     base_raw = _get_git_base_text(py_path)
 
