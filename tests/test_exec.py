@@ -155,3 +155,139 @@ class TestExecFile:
         ])
         assert result.exit_code == 0
         assert "from ipynb" in result.output
+
+
+class TestExecAutoCreatesIpynb:
+    """Test that exec auto-creates a paired .ipynb for py:percent files.
+
+    Uses mock_kernel_connection so the CLI path reuses the persistent WebSocket.
+    """
+
+    def test_percent_marker_creates_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+        """py:percent file with # %% marker auto-creates .ipynb with outputs."""
+        import nbformat
+        runner = CliRunner()
+        script = tmp_path / "new.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            print("auto created")
+
+            # %%
+            2 + 2
+        """))
+        expected_nb = tmp_path / "new.ipynb"
+        assert not expected_nb.exists()
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        assert "auto created" in result.output
+        assert expected_nb.exists(), "paired .ipynb should have been created"
+        assert "Notebook created" in result.output
+
+        nb = nbformat.read(str(expected_nb), as_version=4)
+        assert len(nb.cells) == 2
+        # First cell should have stream output with "auto created"
+        outputs = nb.cells[0].outputs
+        assert any("auto created" in o.get("text", "") for o in outputs)
+
+    def test_front_matter_only_creates_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+        """py:percent file with only front matter (no # %%) also auto-creates .ipynb."""
+        import nbformat
+        runner = CliRunner()
+        script = tmp_path / "fm_only.py"
+        script.write_text(textwrap.dedent("""\
+            # ---
+            # jupyter:
+            #   kernelspec:
+            #     name: python3
+            # ---
+            print("front matter only")
+        """))
+        expected_nb = tmp_path / "fm_only.ipynb"
+        assert not expected_nb.exists()
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        assert expected_nb.exists(), "paired .ipynb should have been created"
+
+    def test_plain_script_no_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+        """Plain .py with no markers and no front matter does NOT create .ipynb."""
+        runner = CliRunner()
+        script = tmp_path / "plain.py"
+        script.write_text('print("plain script")\n')
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        assert "plain script" in result.output
+        assert not (tmp_path / "plain.ipynb").exists(), "plain script must NOT create .ipynb"
+
+    def test_dummy_py_targets_correct_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+        """foo.dummy.py should create foo.ipynb, not foo.dummy.ipynb."""
+        runner = CliRunner()
+        script = tmp_path / "analysis.dummy.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            print("dummy pair")
+        """))
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        assert (tmp_path / "analysis.ipynb").exists(), "should create analysis.ipynb"
+        assert not (tmp_path / "analysis.dummy.ipynb").exists()
+
+    def test_existing_ipynb_not_replaced(self, live_session, mock_kernel_connection, tmp_path):
+        """If foo.ipynb already exists, exec uses the existing path (no auto-create)."""
+        import nbformat
+        runner = CliRunner()
+        script = tmp_path / "existing.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            print("existing pair")
+        """))
+        # Pre-create the paired notebook
+        nb = nbformat.v4.new_notebook()
+        nb.cells = [nbformat.v4.new_code_cell("print('existing pair')")]
+        nb_path = tmp_path / "existing.ipynb"
+        nbformat.write(nb, nb_path)
+        mtime_before = nb_path.stat().st_mtime
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        # Should update, not create
+        assert "notebook_created" not in data
+        assert data.get("notebook_updated") == str(nb_path)
+
+    def test_json_output_includes_notebook_created(self, live_session, mock_kernel_connection, tmp_path):
+        """--json output includes notebook_created field when auto-creation triggers."""
+        runner = CliRunner()
+        script = tmp_path / "json_test.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            x = 99
+        """))
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--file", str(script),
+        ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "ok"
+        assert "notebook_created" in data
+        assert data["notebook_created"].endswith("json_test.ipynb")
