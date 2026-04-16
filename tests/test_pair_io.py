@@ -149,7 +149,32 @@ def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
 
 
 class TestUpdateIpynbSources:
-    def test_updates_source_preserves_outputs(self, tmp_path):
+    def test_updates_source_preserves_outputs_on_unchanged_cell(self, tmp_path):
+        """Cells whose source is unchanged keep their outputs (hash match)."""
+        nb = _make_ipynb([
+            ("code", "x = 1", ["1\n"]),
+            ("code", "y = 2", ["2\n"]),
+        ])
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        # Same sources -> outputs should be preserved
+        new_cells = [
+            Cell(0, "code", "x = 1"),
+            Cell(1, "code", "y = 2"),
+        ]
+        update_ipynb_sources(p, new_cells)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].source == "x = 1"
+        assert nb2.cells[1].source == "y = 2"
+        assert nb2.cells[0].execution_count == 1
+        assert nb2.cells[1].execution_count == 1
+        assert nb2.cells[0].outputs[0]["text"] == "1\n"
+        assert nb2.cells[1].outputs[0]["text"] == "2\n"
+
+    def test_changed_cell_loses_outputs(self, tmp_path):
+        """Cells with changed source lose their outputs (no hash match)."""
         nb = _make_ipynb([
             ("code", "x = 1", ["1\n"]),
             ("code", "y = 2", ["2\n"]),
@@ -158,50 +183,52 @@ class TestUpdateIpynbSources:
         nbformat.write(nb, str(p))
 
         new_cells = [
-            Cell(0, "code", "x = 10"),
-            Cell(1, "code", "y = 20"),
+            Cell(0, "code", "x = 10"),  # changed
+            Cell(1, "code", "y = 2"),   # unchanged
         ]
         update_ipynb_sources(p, new_cells)
 
         nb2 = nbformat.read(str(p), as_version=4)
         assert nb2.cells[0].source == "x = 10"
-        assert nb2.cells[1].source == "y = 20"
-        # Outputs/execution_count unchanged
-        assert nb2.cells[0].execution_count == 1
-        assert nb2.cells[1].execution_count == 1
-        assert nb2.cells[0].outputs[0]["text"] == "1\n"
-        assert nb2.cells[1].outputs[0]["text"] == "2\n"
+        assert nb2.cells[0].outputs == []  # lost outputs (source changed)
+        assert nb2.cells[1].source == "y = 2"
+        assert nb2.cells[1].outputs[0]["text"] == "2\n"  # preserved
 
-    def test_raises_on_count_mismatch(self, tmp_path):
-        nb = _make_ipynb([
-            ("code", "x = 1", []),
-            ("code", "y = 2", []),
-        ])
-        p = tmp_path / "nb.ipynb"
-        nbformat.write(nb, str(p))
-
-        with pytest.raises(ValueError, match="Cell count mismatch"):
-            update_ipynb_sources(p, [Cell(0, "code", "x = 10")])
-
-    def test_skips_empty_ipynb_cells(self, tmp_path):
-        """Empty cells in ipynb are skipped; non-empty ones are updated positionally."""
-        nb = nbformat.v4.new_notebook()
-        nb.cells.append(nbformat.v4.new_code_cell("x = 1"))
-        nb.cells.append(nbformat.v4.new_code_cell(""))  # empty
-        nb.cells.append(nbformat.v4.new_code_cell("y = 2"))
+    def test_supports_count_change_insert(self, tmp_path):
+        """Inserting a new cell (count grows) works without error."""
+        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
 
         new_cells = [
-            Cell(0, "code", "x = 10"),
-            Cell(1, "code", "y = 20"),
+            Cell(0, "code", "x = 1"),   # same -> outputs preserved
+            Cell(1, "code", "y = 2"),   # new cell
         ]
         update_ipynb_sources(p, new_cells)
 
         nb2 = nbformat.read(str(p), as_version=4)
-        assert nb2.cells[0].source == "x = 10"
-        assert nb2.cells[1].source == ""  # empty cell unchanged
-        assert nb2.cells[2].source == "y = 20"
+        assert len(nb2.cells) == 2
+        assert nb2.cells[0].source == "x = 1"
+        assert nb2.cells[0].outputs[0]["text"] == "1\n"
+        assert nb2.cells[1].source == "y = 2"
+        assert nb2.cells[1].outputs == []
+
+    def test_supports_count_change_delete(self, tmp_path):
+        """Deleting a cell (count shrinks) works without error."""
+        nb = _make_ipynb([
+            ("code", "x = 1", ["1\n"]),
+            ("code", "y = 2", ["2\n"]),
+        ])
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        new_cells = [Cell(0, "code", "x = 1")]  # only first cell remains
+        update_ipynb_sources(p, new_cells)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert len(nb2.cells) == 1
+        assert nb2.cells[0].source == "x = 1"
+        assert nb2.cells[0].outputs[0]["text"] == "1\n"
 
 
 # ---------------------------------------------------------------------------

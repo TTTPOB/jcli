@@ -65,11 +65,11 @@ The installer is idempotent — re-running updates the hook shim and `.gitignore
 |-----------|--------|
 | `.ipynb` staged | Blocked — unstage it, commit only the `.py` pair |
 | Pair in sync | Silently allowed |
-| One side changed (auto-merge possible) | Merged content written back; `.py` re-staged if updated |
-| Both sides changed the **same** cell | Commit blocked — resolve manually |
-| `.py` not yet committed — no baseline + drift | Commit blocked — pick a side first, then commit |
+| One side changed (auto-merge possible) | `git merge-file` 3-way merge; merged content written back; `.py` re-staged if updated |
+| Both sides changed the **same** cell | Commit blocked — conflict markers printed; resolve manually |
+| `.py` not yet committed — no baseline + any drift | Commit blocked — 2-way diff printed; pick a side first, then commit |
 
-When a conflict is detected, the hook prints the conflicting cell indices and suggests:
+When a conflict or drift is detected, the hook prints a diff (3-way conflict markers or unified diff) and suggests:
 
 ```bash
 j-cli convert ipynb-to-py <nb.ipynb> <nb.py>   # take ipynb as truth

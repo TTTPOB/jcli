@@ -60,25 +60,43 @@ def emit_py_percent(parsed: ParsedFile) -> str:
 
 
 def update_ipynb_sources(ipynb_path: Path, cells: list[Cell]) -> None:
-    """Update cell.source in an .ipynb file, preserving outputs and metadata.
+    """Rewrite .ipynb so its non-empty cells equal `cells`.
 
-    Matches the provided cells to non-empty ipynb cells positionally.
-    Raises ValueError if the count of non-empty ipynb cells differs from len(cells).
+    Outputs are preserved for cells whose source exactly matches an old
+    non-empty cell (matched by MD5 of source). Changed or new cells start
+    with empty outputs — they should be re-run via j-cli exec.
     """
+    import hashlib
+
+    def _src_hash(source: str) -> str:
+        return hashlib.md5(source.encode()).hexdigest()
+
     nb = nbformat.read(str(ipynb_path), as_version=4)
+    old_nonempty = [c for c in nb.cells if c.source.strip()]
 
-    # Map: position among non-empty cells -> nb.cells index
-    nonempty_indices = [i for i, c in enumerate(nb.cells) if c.source.strip()]
+    # Build hash -> (outputs, execution_count) from old non-empty cells.
+    # First occurrence wins (avoids duplicate-source ambiguity).
+    old_by_hash: dict[str, tuple] = {}
+    for c in old_nonempty:
+        key = _src_hash(c.source)
+        if key not in old_by_hash:
+            old_by_hash[key] = (c.get("outputs", []), c.get("execution_count"))
 
-    if len(nonempty_indices) != len(cells):
-        raise ValueError(
-            f"Cell count mismatch: py has {len(cells)} non-empty cells, "
-            f"ipynb has {len(nonempty_indices)} non-empty cells"
-        )
+    new_cells = []
+    for cell in cells:
+        if cell.cell_type == CellType.CODE:
+            nc = nbformat.v4.new_code_cell(cell.source)
+            key = _src_hash(cell.source)
+            if key in old_by_hash:
+                nc["outputs"] = old_by_hash[key][0]
+                nc["execution_count"] = old_by_hash[key][1]
+        elif cell.cell_type == CellType.MARKDOWN:
+            nc = nbformat.v4.new_markdown_cell(cell.source)
+        else:
+            nc = nbformat.v4.new_raw_cell(cell.source)
+        new_cells.append(nc)
 
-    for nb_idx, new_cell in zip(nonempty_indices, cells):
-        nb.cells[nb_idx].source = new_cell.source
-
+    nb.cells = new_cells
     nbformat.write(nb, str(ipynb_path))
 
 
