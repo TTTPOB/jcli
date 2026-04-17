@@ -399,16 +399,19 @@ def _print_decision(
     decision: HookDecision,
     reason: str,
     event: HookEvent = HookEvent.PRE_TOOL_USE,
+    logger=None,
 ) -> None:
-    print(
-        json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": event,
-                "permissionDecision": decision,
-                "permissionDecisionReason": reason,
-            }
-        })
-    )
+    payload = {
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        }
+    }
+    raw = json.dumps(payload)
+    if logger is not None:
+        logger.set_stdout(raw, payload)
+    print(raw)
 
 
 _MAX_DIFF_CHARS = 6000
