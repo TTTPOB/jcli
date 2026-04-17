@@ -12,9 +12,9 @@ import nbformat
 import pytest
 from click.testing import CliRunner
 
-from jupyter_jcli import pair_baseline
 from jupyter_jcli.cli import main
 from jupyter_jcli.drift import DriftResult
+from jupyter_jcli import pair_baseline
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +676,67 @@ class TestPreToPostChain:
         assert "Auto-synced" in _additional_context(post_out)
         nb_after = nbformat.read(str(ipynb), as_version=4)
         assert [cell.source for cell in nb_after.cells if cell.source.strip()] == ["x = 40"]
+
+
+class TestGcPairSyncRefsCLI:
+    def test_dry_run_reports_without_deleting(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        assert pair_baseline.write_baseline(py, py.read_text(encoding="utf-8")) is True
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 2"), encoding="utf-8")
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "new head", env=_git_env(200))
+
+        runner = CliRunner()
+        monkeypatch.chdir(git_repo)
+        result = runner.invoke(main, ["_hooks", "gc-pair-sync-refs", "--dry-run"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "would-remove" in (result.stderr or result.output)
+        assert "removed 1, kept 0" in (result.stderr or result.output)
+        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        assert refs.stdout.strip() != ""
+
+    def test_cli_removes_orphan_ref(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
+        _git(git_repo, "commit", "--allow-empty", "-m", "init", env=_git_env(100))
+        ghost_path = git_repo / "ghost.py"
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        assert pair_baseline.write_baseline(ghost_path, "# %%\nx = 1\n") is True
+
+        runner = CliRunner()
+        monkeypatch.chdir(git_repo)
+        result = runner.invoke(main, ["_hooks", "gc-pair-sync-refs"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "remove" in (result.stderr or result.output)
+        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        assert refs.stdout.strip() == ""
+
+    def test_cli_removes_stale_head_older_ref(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        assert pair_baseline.write_baseline(py, py.read_text(encoding="utf-8")) is True
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 5"), encoding="utf-8")
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "head newer", env=_git_env(200))
+
+        runner = CliRunner()
+        monkeypatch.chdir(git_repo)
+        result = runner.invoke(main, ["_hooks", "gc-pair-sync-refs"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "removed 1, kept 0" in (result.stderr or result.output)
+        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        assert refs.stdout.strip() == ""
 
 
 # ---------------------------------------------------------------------------

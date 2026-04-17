@@ -279,6 +279,11 @@ done — log files accumulate in `/tmp` and are not rotated.
 Override the log directory with `JCLI_DEBUG_LOG_DIR=/path/to/dir` if `/tmp` is
 not writable or you want the logs elsewhere.
 
+If `refs/jcli/pair-sync/*` accumulates over time, clean stale entries with:
+
+    j-cli _hooks gc-pair-sync-refs
+    j-cli _hooks gc-pair-sync-refs --dry-run
+
 ## Py:Percent Format
 
 j-cli supports the [py:percent](https://jupytext.readthedocs.io/en/latest/formats-scripts.html#the-percent-format) format — plain Python files with cell markers:

@@ -962,3 +962,30 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             f"{', '.join(updated_ipynb)}",
             file=sys.stderr,
         )
+
+
+@hooks.command("gc-pair-sync-refs")
+@click.option("--dry-run", is_flag=True, default=False, help="Report stale refs without deleting them.")
+def gc_pair_sync_refs(dry_run: bool) -> None:
+    """Delete stale sticky pair-sync refs under refs/jcli/pair-sync."""
+    from jupyter_jcli import pair_baseline
+
+    repo_root = pair_baseline._git_root(Path.cwd())
+    if repo_root is None:
+        print("gc-pair-sync-refs: not in a git repo, skipping", file=sys.stderr)
+        sys.exit(0)
+
+    refs = pair_baseline.list_all_refs(repo_root)
+    for ref_info in refs:
+        status, reason = pair_baseline._classify_ref(repo_root, ref_info)
+        rel_display = ref_info.rel_posix_path or "<unknown>"
+        if status == "keep":
+            print(f"keep\t{rel_display}\t{reason}", file=sys.stderr)
+        elif dry_run:
+            print(f"would-remove\t{rel_display}\t{reason}", file=sys.stderr)
+        else:
+            print(f"remove\t{rel_display}\t{reason}", file=sys.stderr)
+
+    removed, kept = pair_baseline.gc_stale_refs(repo_root, dry_run)
+    print(f"removed {removed}, kept {kept}", file=sys.stderr)
+    sys.exit(0)
