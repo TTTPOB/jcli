@@ -343,8 +343,10 @@ def _apply_merge_and_decide(
     logger=None,
 ) -> None:
     """Write merged content and emit allow/deny based on which file changed."""
+    from jupyter_jcli.canonicalize import canonicalize_py_text
+    from jupyter_jcli import pair_baseline
     from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
-    from jupyter_jcli.parser import parse_py_percent
+    from jupyter_jcli.parser import ParsedFile, parse_py_percent
 
     try:
         target_before = target.read_bytes()
@@ -352,20 +354,35 @@ def _apply_merge_and_decide(
         return
 
     wrote_target = False
+    synced = False
+    merged_py_text: str | None = None
+    canonical_merged_py: str | None = None
 
-    if result.py_needs_update:
+    def _prepare_merged_py() -> tuple[str | None, str | None]:
         try:
             py_parsed = parse_py_percent(str(py_path))
-            from jupyter_jcli.parser import ParsedFile
             merged_parsed = ParsedFile(
                 kernel_name=py_parsed.kernel_name,
                 cells=result.merged_cells,
                 source_path=py_parsed.source_path,
                 front_matter_raw=py_parsed.front_matter_raw,
             )
-            new_text = emit_py_percent(merged_parsed)
+            merged_text = emit_py_percent(merged_parsed)
+            return merged_text, canonicalize_py_text(merged_text)
+        except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
+            return None, None
+
+    if result.py_needs_update:
+        try:
+            if merged_py_text is None:
+                merged_py_text, canonical_merged_py = _prepare_merged_py()
+            if merged_py_text is None:
+                raise RuntimeError("could not prepare merged py text")
             if py_path.read_bytes() == target_before or py_path != target:
-                py_path.write_text(new_text, encoding="utf-8")
+                py_path.write_text(merged_py_text, encoding="utf-8")
+                synced = True
                 if py_path == target:
                     wrote_target = True
                 else:
@@ -382,6 +399,7 @@ def _apply_merge_and_decide(
         try:
             if target.read_bytes() == target_before or ipynb_path != target:
                 update_ipynb_sources(ipynb_path, result.merged_cells)
+                synced = True
                 if ipynb_path == target:
                     wrote_target = True
                 else:
@@ -393,6 +411,12 @@ def _apply_merge_and_decide(
             if logger is not None:
                 logger.record_exception(exc)
             print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
+
+    if synced:
+        if canonical_merged_py is None:
+            _, canonical_merged_py = _prepare_merged_py()
+    if synced and canonical_merged_py is not None:
+        pair_baseline.write_baseline(py_path, canonical_merged_py)
 
     if wrote_target:
         other = ipynb_path if target == py_path else py_path
@@ -607,10 +631,30 @@ def _sync_pair_after_edit(
     logger=None,
 ) -> None:
     """Write the merge result to the OTHER side (not the one the agent just edited)."""
+    from jupyter_jcli.canonicalize import canonicalize_py_text
+    from jupyter_jcli import pair_baseline
     from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
     from jupyter_jcli.parser import ParsedFile, parse_py_percent
 
     synced = False
+    merged_py_text: str | None = None
+    canonical_merged_py: str | None = None
+
+    def _prepare_merged_py() -> tuple[str | None, str | None]:
+        try:
+            py_parsed = parse_py_percent(str(py_path))
+            merged_parsed = ParsedFile(
+                kernel_name=py_parsed.kernel_name,
+                cells=result.merged_cells,
+                source_path=py_parsed.source_path,
+                front_matter_raw=py_parsed.front_matter_raw,
+            )
+            merged_text = emit_py_percent(merged_parsed)
+            return merged_text, canonicalize_py_text(merged_text)
+        except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
+            return None, None
 
     if result.ipynb_needs_update and ipynb_path != edited:
         try:
@@ -626,14 +670,11 @@ def _sync_pair_after_edit(
 
     if result.py_needs_update and py_path != edited:
         try:
-            py_parsed = parse_py_percent(str(py_path))
-            merged_parsed = ParsedFile(
-                kernel_name=py_parsed.kernel_name,
-                cells=result.merged_cells,
-                source_path=py_parsed.source_path,
-                front_matter_raw=py_parsed.front_matter_raw,
-            )
-            py_path.write_text(emit_py_percent(merged_parsed), encoding="utf-8")
+            if merged_py_text is None:
+                merged_py_text, canonical_merged_py = _prepare_merged_py()
+            if merged_py_text is None:
+                raise RuntimeError("could not prepare merged py text")
+            py_path.write_text(merged_py_text, encoding="utf-8")
             synced = True
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
@@ -643,6 +684,11 @@ def _sync_pair_after_edit(
                 file=sys.stderr,
             )
 
+    if synced:
+        if canonical_merged_py is None:
+            _, canonical_merged_py = _prepare_merged_py()
+    if synced and canonical_merged_py is not None:
+        pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced:
         other = ipynb_path if edited == py_path else py_path
         _emit_decision(

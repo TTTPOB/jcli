@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ import nbformat
 import pytest
 from click.testing import CliRunner
 
+from jupyter_jcli import pair_baseline
 from jupyter_jcli.cli import main
 from jupyter_jcli.drift import DriftResult
 
@@ -75,6 +78,43 @@ def _make_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple
     ipynb.write_text(nbformat.writes(nb), encoding="utf-8")
 
     return py, ipynb
+
+
+def _git(repo: Path, *args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        check=check,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _git_env(ts: int) -> dict[str, str]:
+    env = os.environ.copy()
+    stamp = f"@{ts} +0000"
+    env["GIT_AUTHOR_DATE"] = stamp
+    env["GIT_COMMITTER_DATE"] = stamp
+    return env
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +590,92 @@ class TestPairDriftGuardPost:
         code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
         assert code == 0
         assert _decision(out) is None  # no output — Pre was the line of defense
+
+
+# ---------------------------------------------------------------------------
+# pair baseline integration — real git repo, no drift mock
+# ---------------------------------------------------------------------------
+
+class TestConsecutiveEdits:
+    def test_post_uses_sticky_ref_to_avoid_false_conflict(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
+        py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 10"), encoding="utf-8")
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        code1, out1 = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code1 == 0
+        assert "Auto-synced" in _additional_context(out1)
+        first_ref = _git(
+            git_repo,
+            "log",
+            "-1",
+            "--format=%ct",
+            pair_baseline._ref_name("nb.py"),
+        ).stdout.strip()
+        nb1 = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in nb1.cells if cell.source.strip()] == ["x = 10"]
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 10", "x = 20"), encoding="utf-8")
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@160 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@160 +0000")
+        code2, out2 = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code2 == 0
+        assert "Auto-synced" in _additional_context(out2)
+        second_ref = _git(
+            git_repo,
+            "log",
+            "-1",
+            "--format=%ct",
+            pair_baseline._ref_name("nb.py"),
+        ).stdout.strip()
+        nb2 = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in nb2.cells if cell.source.strip()] == ["x = 20"]
+        assert int(second_ref) >= int(first_ref)
+
+
+class TestPreToPostChain:
+    def test_pre_merge_updates_ref_so_following_post_does_not_conflict(
+        self,
+        git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 10"), encoding="utf-8")
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        code0, out0 = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+        assert code0 == 0
+        assert "Auto-synced" in _additional_context(out0)
+
+        nb = nbformat.read(str(ipynb), as_version=4)
+        nb.cells[0].source = "x = 30"
+        nbformat.write(nb, str(ipynb))
+
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@170 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@170 +0000")
+        pre_code, pre_out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+        assert pre_code == 0
+        assert _decision(pre_out) == "deny"
+        assert "Re-read" in _reason(pre_out) or "Someone else edited" in _reason(pre_out)
+        assert "x = 30" in py.read_text(encoding="utf-8")
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 30", "x = 40"), encoding="utf-8")
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@180 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@180 +0000")
+        post_code, post_out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert post_code == 0
+        assert "Auto-synced" in _additional_context(post_out)
+        nb_after = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in nb_after.cells if cell.source.strip()] == ["x = 40"]
 
 
 # ---------------------------------------------------------------------------
