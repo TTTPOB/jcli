@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import nbformat
 
 from jupyter_jcli._enums import DriftStatus, MergeMode
+from jupyter_jcli import pair_baseline
 from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
 
 
@@ -58,36 +58,8 @@ def three_way_merge(
 # ---------------------------------------------------------------------------
 
 def _get_git_base_text(path: Path) -> str | None:
-    """Return the git HEAD content of *path* as a string, or None.
-
-    Returns None if the file is untracked, the repo has no HEAD, git is not
-    available, or any other error occurs.
-    """
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
-            cwd=str(path.parent),
-        )
-        if top.returncode != 0:
-            return None
-        git_root = Path(top.stdout.strip())
-
-        try:
-            rel = path.resolve().relative_to(git_root.resolve())
-        except ValueError:
-            return None
-
-        show = subprocess.run(
-            ["git", "show", f"HEAD:{rel.as_posix()}"],
-            capture_output=True, check=False,
-            cwd=str(git_root),
-        )
-        if show.returncode != 0:
-            return None
-        return show.stdout.decode("utf-8")
-    except (OSError, FileNotFoundError):
-        return None
+    """Return the freshest available git-backed baseline for *path*."""
+    return pair_baseline.read_baseline(path)
 
 
 def _cells_from_ipynb_text(text: str) -> list[Cell]:
