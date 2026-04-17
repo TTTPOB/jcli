@@ -257,6 +257,10 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 
 **Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically. Plain Python scripts without markers are executed normally without creating a notebook.
 
+**Convert baseline refresh**: When `j-cli convert` syncs a canonical managed pair (`foo.py` ↔ `foo.ipynb`, or `foo.dummy.py` ↔ `foo.ipynb`) inside a git repo, it also refreshes the sticky pair baseline under `refs/jcli/pair-sync/*`. This lets later drift checks compare against the last successful pair sync instead of falling back to an older `HEAD`.
+
+If you convert to a non-canonical output path such as `foo.py -> custom.ipynb` or `nb.ipynb -> custom.py`, j-cli treats that as an export/conversion only and does **not** refresh the sticky baseline.
+
 ## Troubleshooting Hooks
 
 If a hook appears to run but produces no visible effect (silent `exit 0` with no
