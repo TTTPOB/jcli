@@ -5,33 +5,18 @@ import json
 import re
 import subprocess
 import sys
-from enum import Enum
 from pathlib import Path
 
 import click
 
 from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
-
-
-class HookDecision(str, Enum):
-    """Permission decision values for Claude Code hook payloads.
-
-    Values are constrained by the Claude Code PreToolUse hook protocol.
-    Changing them requires synchronising with the Claude Code harness.
-    """
-    DENY = "deny"
-    ASK = "ask"
-    ALLOW = "allow"
-
-
-class HookEvent(str, Enum):
-    """Hook event names emitted in hook payloads.
-
-    Values are constrained by the Claude Code hook protocol.
-    """
-    PRE_TOOL_USE = "PreToolUse"
-    POST_TOOL_USE = "PostToolUse"
+from jupyter_jcli.hook_decision import (
+    HookDecision,
+    PostToolUseContext,
+    PreToolUseDecision,
+    PreToolUseOutcome,
+)
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -125,7 +110,7 @@ def nbconvert_guard(debug: bool):
             inner = unwrap_runner(sc)
             label = _check_exec_guard(inner)
             if label is not None:
-                _print_decision(HookDecision.DENY, _HINT.format(label=label), logger=log)
+                _emit_decision(PreToolUseDecision(PreToolUseOutcome.DENY, _HINT.format(label=label)), logger=log)
                 sys.exit(0)
 
         sys.exit(0)
@@ -197,12 +182,14 @@ def python_run_guard(debug: bool):
                 log.record_exception(exc)
                 sys.exit(0)
             if ipynb is not None:
-                _print_decision(
-                    HookDecision.DENY,
-                    _PYTHON_HINT.format(
-                        label="python script",
-                        file=file_str,
-                        ipynb=ipynb.name,
+                _emit_decision(
+                    PreToolUseDecision(
+                        PreToolUseOutcome.DENY,
+                        _PYTHON_HINT.format(
+                            label="python script",
+                            file=file_str,
+                            ipynb=ipynb.name,
+                        ),
                     ),
                     logger=log,
                 )
@@ -239,14 +226,16 @@ def pair_drift_guard_pre(debug: bool) -> None:
         path = Path(file_path)
 
         if path.suffix == ".ipynb":
-            _print_decision(
-                HookDecision.DENY,
-                f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
-                "via the py:percent round-trip instead:\n"
-                f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
-                f"  2. Edit {path.stem}.py with Edit/Write\n"
-                f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
-                "(Outputs in the `.ipynb` are preserved through the round-trip.)",
+            _emit_decision(
+                PreToolUseDecision(
+                    PreToolUseOutcome.DENY,
+                    f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
+                    "via the py:percent round-trip instead:\n"
+                    f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
+                    f"  2. Edit {path.stem}.py with Edit/Write\n"
+                    f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
+                    "(Outputs in the `.ipynb` are preserved through the round-trip.)",
+                ),
                 logger=log,
             )
             sys.exit(0)
@@ -294,46 +283,50 @@ def _run_pre_drift_check(path: Path, logger=None) -> None:
 
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
-        _print_decision(
-            HookDecision.DENY,
-            f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
-            f"at cell(s) [{idx_str}] — both sides have been edited (e.g. by a human "
-            "user in JupyterLab and via py:percent) since the last commit of `.py`, "
-            "and the edits collide on the same cell(s). This drift existed before "
-            "your tool call.\n\n"
-            f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
-            f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
-            "inspect the other side. Then pick a direction:\n"
-            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # takes ipynb's cells; discards .py's edits\n"
-            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # takes .py's cells; discards ipynb's edits"
-            + _diff_section(result.diff_text, py_path.name),
+        _emit_decision(
+            PreToolUseDecision(
+                PreToolUseOutcome.DENY,
+                f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
+                f"at cell(s) [{idx_str}] — both sides have been edited (e.g. by a human "
+                "user in JupyterLab and via py:percent) since the last commit of `.py`, "
+                "and the edits collide on the same cell(s). This drift existed before "
+                "your tool call.\n\n"
+                f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
+                f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
+                "inspect the other side. Then pick a direction:\n"
+                f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+                "   # takes ipynb's cells; discards .py's edits\n"
+                f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+                "   # takes .py's cells; discards ipynb's edits"
+                + _diff_section(result.diff_text, py_path.name),
+            ),
             logger=logger,
         )
         return
 
     if result.status == DriftStatus.DRIFT_ONLY:
-        _print_decision(
-            HookDecision.DENY,
-            f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
-            f"auto-merge the pair. Current sources of `{py_path.name}` and "
-            f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
-            "This usually happens right after creating a new notebook (common "
-            "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
-            "the two can drift in whitespace/cell count before the first commit).\n\n"
-            "Before picking a side:\n"
-            f"  1. Run `git log --oneline -- {py_path.name}` to confirm `.py` really "
-            "is new (no HEAD).\n"
-            "  2. Run `git status` and check who/what wrote each side most recently.\n"
-            f"  3. If `{ipynb_path.name}` has exec outputs you want to keep, take "
-            f"`{ipynb_path.name}` as truth; otherwise take `{py_path.name}`.\n\n"
-            "Then, once you've decided:\n"
-            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # overwrites .py\n"
-            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # overwrites .ipynb sources (outputs preserved)"
-            + _diff_section(result.diff_text, py_path.name),
+        _emit_decision(
+            PreToolUseDecision(
+                PreToolUseOutcome.DENY,
+                f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
+                f"auto-merge the pair. Current sources of `{py_path.name}` and "
+                f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
+                "This usually happens right after creating a new notebook (common "
+                "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
+                "the two can drift in whitespace/cell count before the first commit).\n\n"
+                "Before picking a side:\n"
+                f"  1. Run `git log --oneline -- {py_path.name}` to confirm `.py` really "
+                "is new (no HEAD).\n"
+                "  2. Run `git status` and check who/what wrote each side most recently.\n"
+                f"  3. If `{ipynb_path.name}` has exec outputs you want to keep, take "
+                f"`{ipynb_path.name}` as truth; otherwise take `{py_path.name}`.\n\n"
+                "Then, once you've decided:\n"
+                f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+                "   # overwrites .py\n"
+                f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+                "   # overwrites .ipynb sources (outputs preserved)"
+                + _diff_section(result.diff_text, py_path.name),
+            ),
             logger=logger,
         )
         return
@@ -403,33 +396,39 @@ def _apply_merge_and_decide(
 
     if wrote_target:
         other = ipynb_path if target == py_path else py_path
-        _print_decision(
-            HookDecision.DENY,
-            f"Someone else edited the paired `{other.name}` before your edit — the "
-            f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
-            "so your next Edit sees the updated content. "
-            "(This drift existed before your tool call; you did not cause it.)",
+        _emit_decision(
+            PreToolUseDecision(
+                PreToolUseOutcome.DENY,
+                f"Someone else edited the paired `{other.name}` before your edit — the "
+                f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
+                "so your next Edit sees the updated content. "
+                "(This drift existed before your tool call; you did not cause it.)",
+            ),
             logger=logger,
         )
 
 
-def _print_decision(
-    decision: HookDecision,
-    reason: str,
-    event: HookEvent = HookEvent.PRE_TOOL_USE,
-    logger=None,
-) -> None:
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "permissionDecision": decision,
-            "permissionDecisionReason": reason,
-        }
-    }
+def _emit_decision(decision: HookDecision, *, logger=None) -> None:
+    payload = decision.to_payload()
     raw = json.dumps(payload)
     if logger is not None:
         logger.set_stdout(raw, payload)
     print(raw)
+
+
+def _post_drift_notice(drift_reason: str) -> str:
+    """Rewrap a drift reason as a post-hoc notification to Claude.
+
+    The edit has already been applied; we can only inform Claude that
+    the paired file is now out of sync because someone changed it
+    behind our back.
+    """
+    return (
+        "Paired notebook drift detected after edit — the other side may "
+        "have been modified by a human or another agent.\n\n"
+        f"{drift_reason}\n\n"
+        "Run `j-cli convert` to reconcile before further edits."
+    )
 
 
 _MAX_DIFF_CHARS = 6000
@@ -469,15 +468,17 @@ def notebook_edit_guard(debug: bool) -> None:
         if tool_name != "NotebookEdit":
             sys.exit(0)
 
-        _print_decision(
-            HookDecision.DENY,
-            "NotebookEdit is disabled in this project — edit notebooks via the "
-            "py:percent round-trip instead:\n"
-            "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
-            "  2. Edit <nb.py> with Edit/Write\n"
-            "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
-            "(The paired `.py` round-trip preserves outputs and keeps the pair "
-            "in sync via `pair-drift-guard-pre`.)",
+        _emit_decision(
+            PreToolUseDecision(
+                PreToolUseOutcome.DENY,
+                "NotebookEdit is disabled in this project — edit notebooks via the "
+                "py:percent round-trip instead:\n"
+                "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
+                "  2. Edit <nb.py> with Edit/Write\n"
+                "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
+                "(The paired `.py` round-trip preserves outputs and keeps the pair "
+                "in sync via `pair-drift-guard-pre`.)",
+            ),
             logger=log,
         )
         sys.exit(0)
@@ -561,8 +562,7 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         other = ipynb_path if path == py_path else py_path
-        _print_decision(
-            HookDecision.DENY,
+        drift_reason = (
             f"Your edit to `{path.name}` and an independent edit to `{other.name}` "
             f"both changed cell(s) [{idx_str}] — the changes collide and cannot be "
             "auto-merged. (The edit to `"
@@ -574,10 +574,9 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
             "   # take ipynb; discard .py edits on those cells\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
             "   # take .py; discard ipynb edits on those cells"
-            + _diff_section(result.diff_text, py_path.name),
-            event=HookEvent.POST_TOOL_USE,
-            logger=logger,
+            + _diff_section(result.diff_text, py_path.name)
         )
+        _emit_decision(PostToolUseContext(_post_drift_notice(drift_reason)), logger=logger)
         return
 
     if result.status == DriftStatus.DRIFT_ONLY:
@@ -589,17 +588,15 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
             convert_hint = (
                 f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
             )
-        _print_decision(
-            HookDecision.DENY,
+        drift_reason = (
             f"Pair is drifted and `{py_path.name}` has no git baseline, so jcli "
             "can't auto-merge. Since you just edited "
             f"`{path.name}`, if that represents your current intent run:\n"
             f"{convert_hint}\n"
             "Be aware this overwrites the other file's independent content."
-            + _diff_section(result.diff_text, py_path.name),
-            event=HookEvent.POST_TOOL_USE,
-            logger=logger,
+            + _diff_section(result.diff_text, py_path.name)
         )
+        _emit_decision(PostToolUseContext(_post_drift_notice(drift_reason)), logger=logger)
 
 
 def _sync_pair_after_edit(
@@ -648,11 +645,11 @@ def _sync_pair_after_edit(
 
     if synced:
         other = ipynb_path if edited == py_path else py_path
-        _print_decision(
-            HookDecision.ALLOW,
-            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-            "Pair is now in sync.",
-            event=HookEvent.POST_TOOL_USE,
+        _emit_decision(
+            PostToolUseContext(
+                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+                "Pair is now in sync."
+            ),
             logger=logger,
         )
 

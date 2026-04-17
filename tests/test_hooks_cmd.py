@@ -7,33 +7,6 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from jupyter_jcli.commands.hooks_cmd import HookDecision, HookEvent
-
-
-# ---------------------------------------------------------------------------
-# HookDecision / HookEvent enum behaviour
-# ---------------------------------------------------------------------------
-
-class TestHookEnums:
-    def test_hook_decision_members(self):
-        assert HookDecision.DENY == "deny"
-        assert HookDecision.ASK == "ask"
-        assert HookDecision.ALLOW == "allow"
-        assert isinstance(HookDecision.DENY, str)
-
-    def test_hook_event_members(self):
-        assert HookEvent.PRE_TOOL_USE == "PreToolUse"
-        assert HookEvent.POST_TOOL_USE == "PostToolUse"
-        assert isinstance(HookEvent.PRE_TOOL_USE, str)
-        assert isinstance(HookEvent.POST_TOOL_USE, str)
-
-    def test_invalid_decision_raises(self):
-        with pytest.raises(ValueError):
-            HookDecision("bogus")
-
-    def test_invalid_event_raises(self):
-        with pytest.raises(ValueError):
-            HookEvent("bogus")
 
 
 # ---------------------------------------------------------------------------

@@ -53,6 +53,12 @@ def _reason(out: dict | None) -> str:
     return out.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
 
+def _additional_context(out: dict | None) -> str:
+    if out is None:
+        return ""
+    return out.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
 def _make_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple[Path, Path]:
     py = tmp_path / "nb.py"
     ipynb = tmp_path / "nb.ipynb"
@@ -439,11 +445,11 @@ class TestPairDriftGuardPost:
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "allow"
-        reason = _reason(out)
-        assert "Auto-synced" in reason
-        assert "nb.py" in reason
-        assert "Pair is now in sync" in reason
+        assert _decision(out) is None
+        ctx = _additional_context(out)
+        assert "Auto-synced" in ctx
+        assert "nb.py" in ctx
+        assert "Pair is now in sync" in ctx
         assert _event_name(out) == "PostToolUse"
 
         # Verify ipynb was actually updated
@@ -481,10 +487,10 @@ class TestPairDriftGuardPost:
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "deny"
-        reason = _reason(out)
-        assert "0" in reason  # cell index
-        assert "j-cli convert" in reason
+        assert _decision(out) is None
+        ctx = _additional_context(out)
+        assert "0" in ctx  # cell index
+        assert "j-cli convert" in ctx
         assert _event_name(out) == "PostToolUse"
 
     def test_drift_only_count_mismatch_after_edit_warns(self, tmp_path):
@@ -495,24 +501,22 @@ class TestPairDriftGuardPost:
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "deny"
-        reason = _reason(out)
-        assert "no git baseline" in reason or "no baseline" in reason.lower()
-        assert "j-cli convert" in reason
+        assert _decision(out) is None
+        ctx = _additional_context(out)
+        assert "j-cli convert" in ctx
         assert _event_name(out) == "PostToolUse"
 
     def test_drift_only_content_diff_after_edit_warns(self, tmp_path):
-        """py has no git baseline + different sources -> deny (DRIFT_ONLY, pick a side)."""
+        """py has no git baseline + different sources -> context notification (DRIFT_ONLY, pick a side)."""
         py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
 
         assert code == 0
-        assert _decision(out) == "deny"
-        reason = _reason(out)
-        assert "no git baseline" in reason.lower() or "baseline" in reason.lower()
-        assert "j-cli convert" in reason
+        assert _decision(out) is None
+        ctx = _additional_context(out)
+        assert "j-cli convert" in ctx
         assert _event_name(out) == "PostToolUse"
 
     def test_non_paired_file_is_silent(self, tmp_path):
@@ -589,3 +593,63 @@ class TestPairDriftGuardPreDebug:
         data = json.loads(logs[0].read_text())
         assert data["hook"] == "notebook-edit-guard"
         assert data["stdout_parsed"]["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# ---------------------------------------------------------------------------
+# PostToolUse wire schema — assert additionalContext, no permissionDecision
+# ---------------------------------------------------------------------------
+
+class TestPostToolUseSchema:
+    """PostToolUse hook must emit additionalContext, never permissionDecision."""
+
+    def test_conflict_post_schema(self, tmp_path):
+        from tests.test_drift import _make_py_text
+        base_py = _make_py_text("x = 1")
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+
+        def _git_side(path: Path) -> str | None:
+            return base_py if path.suffix == ".py" else None
+
+        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "drift detected" in hso["additionalContext"]
+        assert "j-cli convert" in hso["additionalContext"]
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
+
+    def test_drift_only_post_schema(self, tmp_path):
+        py, ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
+
+        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "drift detected" in hso["additionalContext"]
+        assert "j-cli convert" in hso["additionalContext"]
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
+
+    def test_auto_synced_post_schema(self, tmp_path):
+        from tests.test_drift import _make_py_text
+        base_py = _make_py_text("x = 1")
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
+
+        with patch("jupyter_jcli.drift._get_git_base_text",
+                   side_effect=lambda p: base_py if p.suffix == ".py" else None):
+            code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "Auto-synced" in hso["additionalContext"]
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
