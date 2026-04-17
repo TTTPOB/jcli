@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 
 from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
 
 
 class HookDecision(str, Enum):
@@ -95,36 +96,39 @@ def _check_exec_guard(sc) -> str | None:
 
 
 @hooks.command("notebook-exec-guard")
-def nbconvert_guard():
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.")
+def nbconvert_guard(debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        # Fail-open — malformed stdin must not brick the harness.
-        sys.exit(0)
-
-    command: str = ""
-    try:
-        command = payload.get("tool_input", {}).get("command", "") or ""
-    except (AttributeError, TypeError):
-        sys.exit(0)
-
-    from jupyter_jcli.hooks_parser import iter_simple_commands, unwrap_runner
-
-    try:
-        simple_commands = iter_simple_commands(command)
-    except Exception:  # noqa: BLE001 — fail-open on parse error
-        sys.exit(0)
-
-    for sc in simple_commands:
-        inner = unwrap_runner(sc)
-        label = _check_exec_guard(inner)
-        if label is not None:
-            _print_decision(HookDecision.DENY, _HINT.format(label=label))
+    with HookDebugLogger("notebook-exec-guard", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
             sys.exit(0)
 
-    # No match — allow (empty stdout).
-    sys.exit(0)
+        command: str = ""
+        try:
+            command = payload.get("tool_input", {}).get("command", "") or ""
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
+
+        from jupyter_jcli.hooks_parser import iter_simple_commands, unwrap_runner
+
+        try:
+            simple_commands = iter_simple_commands(command)
+        except Exception as exc:  # noqa: BLE001
+            log.record_exception(exc)
+            sys.exit(0)
+
+        for sc in simple_commands:
+            inner = unwrap_runner(sc)
+            label = _check_exec_guard(inner)
+            if label is not None:
+                _print_decision(HookDecision.DENY, _HINT.format(label=label), logger=log)
+                sys.exit(0)
+
+        sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -149,56 +153,62 @@ _PYTHON_HINT = (
 
 
 @hooks.command("python-run-guard")
-def python_run_guard():
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.")
+def python_run_guard(debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)  # fail-open
-
-    command: str = ""
-    cwd: str = ""
-    try:
-        command = payload.get("tool_input", {}).get("command", "") or ""
-        cwd = payload.get("cwd", "") or ""
-    except (AttributeError, TypeError):
-        sys.exit(0)  # fail-open
-
-    cwd_path = Path(cwd) if cwd else Path.cwd()
-
-    from jupyter_jcli.hooks_parser import extract_script_target, iter_simple_commands, unwrap_runner
-    from jupyter_jcli.parser import find_paired_ipynb
-
-    try:
-        simple_commands = iter_simple_commands(command)
-    except Exception:  # noqa: BLE001 — fail-open on parse error
-        sys.exit(0)
-
-    for sc in simple_commands:
-        inner = unwrap_runner(sc)
-        file_str = extract_script_target(inner)
-        if file_str is None:
-            continue
+    with HookDebugLogger("python-run-guard", enabled=debug) as log:
         try:
-            file_path = Path(file_str)
-            if not file_path.is_absolute():
-                file_path = cwd_path / file_path
-            ipynb = find_paired_ipynb(file_path)
-        except Exception:  # noqa: BLE001 — fail-open on filesystem errors
-            sys.exit(0)
-        if ipynb is not None:
-            _print_decision(
-                HookDecision.DENY,
-                _PYTHON_HINT.format(
-                    label="python script",
-                    file=file_str,
-                    ipynb=ipynb.name,
-                ),
-            )
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
             sys.exit(0)
 
-    # No paired notebook found — allow (empty stdout).
-    sys.exit(0)
+        command: str = ""
+        cwd: str = ""
+        try:
+            command = payload.get("tool_input", {}).get("command", "") or ""
+            cwd = payload.get("cwd", "") or ""
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
+
+        cwd_path = Path(cwd) if cwd else Path.cwd()
+
+        from jupyter_jcli.hooks_parser import extract_script_target, iter_simple_commands, unwrap_runner
+        from jupyter_jcli.parser import find_paired_ipynb
+
+        try:
+            simple_commands = iter_simple_commands(command)
+        except Exception as exc:  # noqa: BLE001
+            log.record_exception(exc)
+            sys.exit(0)
+
+        for sc in simple_commands:
+            inner = unwrap_runner(sc)
+            file_str = extract_script_target(inner)
+            if file_str is None:
+                continue
+            try:
+                file_path = Path(file_str)
+                if not file_path.is_absolute():
+                    file_path = cwd_path / file_path
+                ipynb = find_paired_ipynb(file_path)
+            except Exception as exc:  # noqa: BLE001
+                log.record_exception(exc)
+                sys.exit(0)
+            if ipynb is not None:
+                _print_decision(
+                    HookDecision.DENY,
+                    _PYTHON_HINT.format(
+                        label="python script",
+                        file=file_str,
+                        ipynb=ipynb.name,
+                    ),
+                    logger=log,
+                )
+                sys.exit(0)
+
+        sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -206,64 +216,67 @@ def python_run_guard():
 # ---------------------------------------------------------------------------
 
 @hooks.command("pair-drift-guard-pre")
-def pair_drift_guard_pre() -> None:
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.")
+def pair_drift_guard_pre(debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)  # fail-open
+    with HookDebugLogger("pair-drift-guard-pre", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
 
-    try:
-        tool_input: dict = payload.get("tool_input", {}) or {}
-        file_path: str = tool_input.get("file_path", "") or ""
-    except (AttributeError, TypeError):
-        sys.exit(0)  # fail-open
+        try:
+            tool_input: dict = payload.get("tool_input", {}) or {}
+            file_path: str = tool_input.get("file_path", "") or ""
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
 
-    if not file_path:
-        sys.exit(0)  # no file to check, allow
+        if not file_path:
+            sys.exit(0)
 
-    path = Path(file_path)
+        path = Path(file_path)
 
-    # Block direct Edit/Write of .ipynb files — use the py:percent round-trip instead.
-    # This covers both edits to existing notebooks and attempts to create new .ipynb via Write.
-    if path.suffix == ".ipynb":
-        _print_decision(
-            HookDecision.DENY,
-            f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
-            "via the py:percent round-trip instead:\n"
-            f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
-            f"  2. Edit {path.stem}.py with Edit/Write\n"
-            f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
-            "(Outputs in the `.ipynb` are preserved through the round-trip.)",
-        )
-        sys.exit(0)
+        if path.suffix == ".ipynb":
+            _print_decision(
+                HookDecision.DENY,
+                f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
+                "via the py:percent round-trip instead:\n"
+                f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
+                f"  2. Edit {path.stem}.py with Edit/Write\n"
+                f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
+                "(Outputs in the `.ipynb` are preserved through the round-trip.)",
+                logger=log,
+            )
+            sys.exit(0)
 
-    if not path.exists():
-        sys.exit(0)  # new file, no drift possible
+        if not path.exists():
+            sys.exit(0)
 
-    try:
-        _run_pre_drift_check(path)
-    except Exception as exc:  # noqa: BLE001 — fail-open on any error
-        print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
-        sys.exit(0)
+        try:
+            _run_pre_drift_check(path, log)
+        except Exception as exc:  # noqa: BLE001
+            log.record_exception(exc)
+            print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
+            sys.exit(0)
 
 
-def _run_pre_drift_check(path: Path) -> None:
+def _run_pre_drift_check(path: Path, logger=None) -> None:
     """Run drift check for PreToolUse and emit a decision if action is needed."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
     if pair is None:
-        return  # not a paired file, allow
+        return
 
-    # Determine which is py and which is ipynb
     if path.suffix == ".ipynb":
         py_path, ipynb_path = pair, path
     else:
         py_path, ipynb_path = path, pair
 
     if not py_path.exists() or not ipynb_path.exists():
-        return  # one side missing, allow
+        return
 
     try:
         from jupyter_jcli.drift import check_drift
@@ -271,11 +284,13 @@ def _run_pre_drift_check(path: Path) -> None:
     except UnicodeDecodeError:
         print("pair-drift-guard-pre: non-UTF-8 content, skipping drift check", file=sys.stderr)
         return
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if logger is not None:
+            logger.record_exception(exc)
         return
 
     if result.status == DriftStatus.IN_SYNC:
-        return  # no action needed
+        return
 
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
@@ -294,6 +309,7 @@ def _run_pre_drift_check(path: Path) -> None:
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
             "   # takes .py's cells; discards ipynb's edits"
             + _diff_section(result.diff_text, py_path.name),
+            logger=logger,
         )
         return
 
@@ -318,11 +334,12 @@ def _run_pre_drift_check(path: Path) -> None:
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
             "   # overwrites .ipynb sources (outputs preserved)"
             + _diff_section(result.diff_text, py_path.name),
+            logger=logger,
         )
         return
 
     if result.status == DriftStatus.MERGED:
-        _apply_merge_and_decide(path, py_path, ipynb_path, result)
+        _apply_merge_and_decide(path, py_path, ipynb_path, result, logger=logger)
 
 
 def _apply_merge_and_decide(
@@ -330,12 +347,12 @@ def _apply_merge_and_decide(
     py_path: Path,
     ipynb_path: Path,
     result,  # DriftResult
+    logger=None,
 ) -> None:
     """Write merged content and emit allow/deny based on which file changed."""
     from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
     from jupyter_jcli.parser import parse_py_percent
 
-    # Hash target before writing so we can detect write-time races
     try:
         target_before = target.read_bytes()
     except OSError:
@@ -346,7 +363,6 @@ def _apply_merge_and_decide(
     if result.py_needs_update:
         try:
             py_parsed = parse_py_percent(str(py_path))
-            # Swap in merged cells, keep front_matter_raw
             from jupyter_jcli.parser import ParsedFile
             merged_parsed = ParsedFile(
                 kernel_name=py_parsed.kernel_name,
@@ -355,7 +371,6 @@ def _apply_merge_and_decide(
                 front_matter_raw=py_parsed.front_matter_raw,
             )
             new_text = emit_py_percent(merged_parsed)
-            # Check for races before writing
             if py_path.read_bytes() == target_before or py_path != target:
                 py_path.write_text(new_text, encoding="utf-8")
                 if py_path == target:
@@ -366,6 +381,8 @@ def _apply_merge_and_decide(
                         file=sys.stderr,
                     )
         except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
             print(f"pair-drift-guard-pre: could not write {py_path.name}: {exc}", file=sys.stderr)
 
     if result.ipynb_needs_update:
@@ -380,11 +397,11 @@ def _apply_merge_and_decide(
                         file=sys.stderr,
                     )
         except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
             print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
 
     if wrote_target:
-        # The file the agent is about to edit was rewritten — its cached content
-        # (old_string) is now stale. Deny and ask for a re-read.
         other = ipynb_path if target == py_path else py_path
         _print_decision(
             HookDecision.DENY,
@@ -392,6 +409,7 @@ def _apply_merge_and_decide(
             f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
             "so your next Edit sees the updated content. "
             "(This drift existed before your tool call; you did not cause it.)",
+            logger=logger,
         )
 
 
@@ -432,32 +450,37 @@ def _diff_section(diff_text: str, py_name: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 @hooks.command("notebook-edit-guard")
-def notebook_edit_guard() -> None:
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.")
+def notebook_edit_guard(debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)  # fail-open
+    with HookDebugLogger("notebook-edit-guard", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
 
-    try:
-        tool_name: str = payload.get("tool_name", "") or ""
-    except (AttributeError, TypeError):
-        sys.exit(0)  # fail-open
+        try:
+            tool_name: str = payload.get("tool_name", "") or ""
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
 
-    if tool_name != "NotebookEdit":
-        sys.exit(0)  # not a NotebookEdit call, allow
+        if tool_name != "NotebookEdit":
+            sys.exit(0)
 
-    _print_decision(
-        HookDecision.DENY,
-        "NotebookEdit is disabled in this project — edit notebooks via the "
-        "py:percent round-trip instead:\n"
-        "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
-        "  2. Edit <nb.py> with Edit/Write\n"
-        "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
-        "(The paired `.py` round-trip preserves outputs and keeps the pair "
-        "in sync via `pair-drift-guard-pre`.)",
-    )
-    sys.exit(0)
+        _print_decision(
+            HookDecision.DENY,
+            "NotebookEdit is disabled in this project — edit notebooks via the "
+            "py:percent round-trip instead:\n"
+            "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
+            "  2. Edit <nb.py> with Edit/Write\n"
+            "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
+            "(The paired `.py` round-trip preserves outputs and keeps the pair "
+            "in sync via `pair-drift-guard-pre`.)",
+            logger=log,
+        )
+        sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -465,46 +488,49 @@ def notebook_edit_guard() -> None:
 # ---------------------------------------------------------------------------
 
 @hooks.command("pair-drift-guard-post")
-def pair_drift_guard_post() -> None:
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.")
+def pair_drift_guard_post(debug: bool) -> None:
     """PostToolUse hook: auto-sync py/ipynb pair after agent's own Edit/Write."""
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)  # fail-open
+    with HookDebugLogger("pair-drift-guard-post", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
 
-    try:
-        tool_input: dict = payload.get("tool_input", {}) or {}
-        file_path: str = tool_input.get("file_path", "") or ""
-    except (AttributeError, TypeError):
-        sys.exit(0)  # fail-open
+        try:
+            tool_input: dict = payload.get("tool_input", {}) or {}
+            file_path: str = tool_input.get("file_path", "") or ""
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
 
-    if not file_path:
-        sys.exit(0)
+        if not file_path:
+            sys.exit(0)
 
-    path = Path(file_path)
+        path = Path(file_path)
 
-    # .ipynb should have been blocked by pair-drift-guard-pre; if it somehow
-    # reached Post, there is nothing useful to sync — exit silently.
-    if path.suffix == ".ipynb":
-        sys.exit(0)
+        if path.suffix == ".ipynb":
+            sys.exit(0)
 
-    if not path.exists():
-        sys.exit(0)
+        if not path.exists():
+            sys.exit(0)
 
-    try:
-        _run_post_drift_check(path)
-    except Exception as exc:  # noqa: BLE001 — fail-open on any error
-        print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
-        sys.exit(0)
+        try:
+            _run_post_drift_check(path, log)
+        except Exception as exc:  # noqa: BLE001
+            log.record_exception(exc)
+            print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+            sys.exit(0)
 
 
-def _run_post_drift_check(path: Path) -> None:
+def _run_post_drift_check(path: Path, logger=None) -> None:
     """Run drift check after an agent edit and sync the other side if possible."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
     if pair is None:
-        return  # not a paired file, nothing to sync
+        return
 
     if path.suffix == ".ipynb":
         py_path, ipynb_path = pair, path
@@ -512,7 +538,7 @@ def _run_post_drift_check(path: Path) -> None:
         py_path, ipynb_path = path, pair
 
     if not py_path.exists() or not ipynb_path.exists():
-        return  # one side missing, nothing to sync
+        return
 
     try:
         from jupyter_jcli.drift import check_drift
@@ -520,14 +546,16 @@ def _run_post_drift_check(path: Path) -> None:
     except UnicodeDecodeError:
         print("pair-drift-guard-post: non-UTF-8 content, skipping", file=sys.stderr)
         return
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if logger is not None:
+            logger.record_exception(exc)
         return
 
     if result.status == DriftStatus.IN_SYNC:
-        return  # pair already in sync — silent
+        return
 
     if result.status == DriftStatus.MERGED:
-        _sync_pair_after_edit(path, py_path, ipynb_path, result)
+        _sync_pair_after_edit(path, py_path, ipynb_path, result, logger=logger)
         return
 
     if result.status == DriftStatus.CONFLICT:
@@ -548,6 +576,7 @@ def _run_post_drift_check(path: Path) -> None:
             "   # take .py; discard ipynb edits on those cells"
             + _diff_section(result.diff_text, py_path.name),
             event=HookEvent.POST_TOOL_USE,
+            logger=logger,
         )
         return
 
@@ -569,6 +598,7 @@ def _run_post_drift_check(path: Path) -> None:
             "Be aware this overwrites the other file's independent content."
             + _diff_section(result.diff_text, py_path.name),
             event=HookEvent.POST_TOOL_USE,
+            logger=logger,
         )
 
 
@@ -577,6 +607,7 @@ def _sync_pair_after_edit(
     py_path: Path,
     ipynb_path: Path,
     result,  # DriftResult
+    logger=None,
 ) -> None:
     """Write the merge result to the OTHER side (not the one the agent just edited)."""
     from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
@@ -589,6 +620,8 @@ def _sync_pair_after_edit(
             update_ipynb_sources(ipynb_path, result.merged_cells)
             synced = True
         except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
             print(
                 f"pair-drift-guard-post: could not write {ipynb_path.name}: {exc}",
                 file=sys.stderr,
@@ -606,6 +639,8 @@ def _sync_pair_after_edit(
             py_path.write_text(emit_py_percent(merged_parsed), encoding="utf-8")
             synced = True
         except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
             print(
                 f"pair-drift-guard-post: could not write {py_path.name}: {exc}",
                 file=sys.stderr,
@@ -618,6 +653,7 @@ def _sync_pair_after_edit(
             f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
             "Pair is now in sync.",
             event=HookEvent.POST_TOOL_USE,
+            logger=logger,
         )
 
 
@@ -630,9 +666,15 @@ def _sync_pair_after_edit(
     "--include", "include_globs", multiple=True, metavar="GLOB",
     help="Only process .py files matching this glob (repeatable).",
 )
-def pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pre-commit-pair-sync-{ts}.log.")
+def pre_commit_pair_sync(include_globs: tuple[str, ...], debug: bool) -> None:
     """Git pre-commit hook: sync py/ipynb pairs before commit."""
+    with HookDebugLogger("pre-commit-pair-sync", enabled=debug) as _log:
+        _run_pre_commit_pair_sync(include_globs)
 
+
+def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
     # ------------------------------------------------------------------
     # Step 1: locate repo root (fail-open if git missing / not a repo)
     # ------------------------------------------------------------------

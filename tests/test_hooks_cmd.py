@@ -1,6 +1,7 @@
 """Tests for `j-cli _hooks notebook-exec-guard`."""
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -154,3 +155,31 @@ def test_all_guard_categories_active():
     assert _is_deny(_invoke("ipython foo.ipynb")[1])
     # nbconvert --execute via jupyter subcommand
     assert _is_deny(_invoke("jupyter nbconvert --execute foo.ipynb")[1])
+
+
+# ---------------------------------------------------------------------------
+# --debug smoke test for notebook-exec-guard
+# ---------------------------------------------------------------------------
+
+class TestNotebookExecGuardDebug:
+    def test_debug_creates_log_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        runner = CliRunner()
+        payload = json.dumps({"tool_input": {"command": "jupyter nbconvert --execute foo.ipynb"}})
+        runner.invoke(main, ["_hooks", "notebook-exec-guard", "--debug"],
+                      input=payload, catch_exceptions=False)
+        logs = sorted(tmp_path.glob("notebook-exec-guard-*.log"))
+        assert len(logs) == 1
+        data = json.loads(logs[0].read_text())
+        assert data["hook"] == "notebook-exec-guard"
+        assert data["stdin_parsed"]["tool_input"]["command"] == "jupyter nbconvert --execute foo.ipynb"
+
+    def test_debug_allow_path_logs_empty_stdout(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        runner = CliRunner()
+        payload = json.dumps({"tool_input": {"command": "python foo.py"}})
+        runner.invoke(main, ["_hooks", "notebook-exec-guard", "--debug"],
+                      input=payload, catch_exceptions=False)
+        data = json.loads(sorted(tmp_path.glob("notebook-exec-guard-*.log"))[0].read_text())
+        assert data["stdout_raw"] == ""
+        assert data["exit_code"] == 0

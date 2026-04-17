@@ -546,3 +546,46 @@ class TestPairDriftGuardPost:
         code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}})
         assert code == 0
         assert _decision(out) is None  # no output — Pre was the line of defense
+
+
+# ---------------------------------------------------------------------------
+# --debug smoke tests for pair-drift-guard-pre and pair-drift-guard-post
+# ---------------------------------------------------------------------------
+
+class TestPairDriftGuardPreDebug:
+    def test_debug_creates_log_for_pre(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        runner = CliRunner()
+        payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": "nonexistent.py"}})
+        runner.invoke(main, ["_hooks", "pair-drift-guard-pre", "--debug"],
+                      input=payload, catch_exceptions=False)
+        logs = sorted(tmp_path.glob("pair-drift-guard-pre-*.log"))
+        assert len(logs) == 1
+        data = json.loads(logs[0].read_text())
+        assert data["hook"] == "pair-drift-guard-pre"
+        assert data["exit_code"] == 0
+        assert data["stdout_raw"] == ""
+
+    def test_debug_creates_log_for_post(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        runner = CliRunner()
+        payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": "nonexistent.py"}})
+        runner.invoke(main, ["_hooks", "pair-drift-guard-post", "--debug"],
+                      input=payload, catch_exceptions=False)
+        logs = sorted(tmp_path.glob("pair-drift-guard-post-*.log"))
+        assert len(logs) == 1
+        data = json.loads(logs[0].read_text())
+        assert data["hook"] == "pair-drift-guard-post"
+        assert data["exit_code"] == 0
+
+    def test_debug_notebook_edit_guard(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        runner = CliRunner()
+        payload = json.dumps({"tool_name": "NotebookEdit", "tool_input": {}})
+        runner.invoke(main, ["_hooks", "notebook-edit-guard", "--debug"],
+                      input=payload, catch_exceptions=False)
+        logs = sorted(tmp_path.glob("notebook-edit-guard-*.log"))
+        assert len(logs) == 1
+        data = json.loads(logs[0].read_text())
+        assert data["hook"] == "notebook-edit-guard"
+        assert data["stdout_parsed"]["hookSpecificOutput"]["permissionDecision"] == "deny"

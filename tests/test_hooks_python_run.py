@@ -167,3 +167,23 @@ def test_decision_shape(tmp_path):
     # Reconsider / think-carefully framing
     assert "Reconsider" in reason or "reconsider" in reason
     assert "Think carefully" in reason or "think carefully" in reason
+
+
+# ---------------------------------------------------------------------------
+# --debug smoke test for python-run-guard
+# ---------------------------------------------------------------------------
+
+class TestPythonRunGuardDebug:
+    def test_debug_creates_log_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+        import json as _json
+        from click.testing import CliRunner as _CliRunner
+        runner = _CliRunner()
+        payload = _json.dumps({"tool_input": {"command": "python foo.py"}, "cwd": "/tmp"})
+        runner.invoke(main, ["_hooks", "python-run-guard", "--debug"],
+                      input=payload, catch_exceptions=False)
+        logs = sorted(tmp_path.glob("python-run-guard-*.log"))
+        assert len(logs) == 1
+        data = _json.loads(logs[0].read_text())
+        assert data["hook"] == "python-run-guard"
+        assert data["exit_code"] == 0

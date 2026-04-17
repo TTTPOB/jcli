@@ -403,3 +403,25 @@ class TestFailClosed:
         result = _invoke(runner)
 
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# --debug smoke test for pre-commit-pair-sync
+# ---------------------------------------------------------------------------
+
+class TestPreCommitPairSyncDebug:
+    def test_debug_creates_log_file(self, tmp_path, monkeypatch):
+        """--debug creates a log file; pre-commit-pair-sync reads no stdin."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(log_dir))
+        from click.testing import CliRunner
+        from jupyter_jcli.cli import main
+        import json as _json
+        runner = CliRunner()
+        runner.invoke(main, ["_hooks", "pre-commit-pair-sync", "--debug"],
+                      input="", catch_exceptions=False)
+        logs = sorted(log_dir.glob("pre-commit-pair-sync-*.log"))
+        assert len(logs) == 1
+        data = _json.loads(logs[0].read_text())
+        assert data["hook"] == "pre-commit-pair-sync"
