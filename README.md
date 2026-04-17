@@ -257,6 +257,28 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 
 **Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically. Plain Python scripts without markers are executed normally without creating a notebook.
 
+## Troubleshooting Hooks
+
+If a hook appears to run but produces no visible effect (silent `exit 0` with no
+sync, no deny message), enable the per-hook debug log to capture stdin/stdout/stderr.
+
+Edit `.claude/settings.local.json` and append ` --debug` to the hook command you
+want to inspect, e.g.:
+
+    "command": "j-cli _hooks pair-drift-guard-post --debug"
+
+Trigger the hook, then inspect the log:
+
+    ls /tmp/jcli-$UID/
+    cat /tmp/jcli-$UID/pair-drift-guard-post-*.log | jq .
+
+Each invocation writes one JSON file containing the incoming payload, outgoing
+decision (if any), stderr, exit code, and any exception. Remove `--debug` when
+done — log files accumulate in `/tmp` and are not rotated.
+
+Override the log directory with `JCLI_DEBUG_LOG_DIR=/path/to/dir` if `/tmp` is
+not writable or you want the logs elsewhere.
+
 ## Py:Percent Format
 
 j-cli supports the [py:percent](https://jupytext.readthedocs.io/en/latest/formats-scripts.html#the-percent-format) format — plain Python files with cell markers:
