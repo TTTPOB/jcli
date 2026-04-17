@@ -46,6 +46,10 @@ def _git_env(ts: int) -> dict[str, str]:
     stamp = f"@{ts} +0000"
     env["GIT_AUTHOR_DATE"] = stamp
     env["GIT_COMMITTER_DATE"] = stamp
+    env["GIT_AUTHOR_NAME"] = "Test User"
+    env["GIT_AUTHOR_EMAIL"] = "test@test.com"
+    env["GIT_COMMITTER_NAME"] = "Test User"
+    env["GIT_COMMITTER_EMAIL"] = "test@test.com"
     return env
 
 
