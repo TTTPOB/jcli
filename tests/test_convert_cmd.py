@@ -1,11 +1,14 @@
 """Tests for `j-cli convert`."""
 
+import subprocess
 from pathlib import Path
 
 import nbformat
 import pytest
 from click.testing import CliRunner
 
+from jupyter_jcli import pair_baseline
+from jupyter_jcli.canonicalize import canonicalize_py_text
 from jupyter_jcli.cli import main
 from jupyter_jcli.parser import parse_py_percent, parse_py_percent_text
 
@@ -17,6 +20,46 @@ from jupyter_jcli.parser import parse_py_percent, parse_py_percent_text
 def _invoke(*args: str):
     runner = CliRunner()
     return runner.invoke(main, list(args), catch_exceptions=False)
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+    return tmp_path
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _has_ref(repo: Path, rel_py_path: str) -> bool:
+    ref_name = pair_baseline._ref_name(Path(rel_py_path).as_posix())
+    result = subprocess.run(
+        ["git", "for-each-ref", ref_name, "--format=%(refname)"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() == ref_name
 
 
 def _make_ipynb(cells: list[tuple[str, str, list]], kernel: str = "python3") -> nbformat.NotebookNode:
@@ -87,6 +130,51 @@ class TestIpynbToPy:
         assert parsed.cells[0].source == "a = 1"
         assert parsed.cells[1].source == "b = 2"
 
+    def test_canonical_ipynb_to_py_refreshes_baseline(self, git_repo):
+        nb = _make_ipynb([("code", "x = 1", [])])
+        ipynb = git_repo / "nb.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = git_repo / "nb.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        assert _has_ref(git_repo, "nb.py")
+        assert pair_baseline.read_baseline(py) == canonicalize_py_text(py.read_text(encoding="utf-8"))
+
+    def test_dummy_ipynb_to_py_refreshes_baseline(self, git_repo):
+        nb = _make_ipynb([("code", "x = 1", [])])
+        ipynb = git_repo / "nb.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = git_repo / "nb.dummy.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        assert _has_ref(git_repo, "nb.dummy.py")
+
+    def test_noncanonical_ipynb_to_py_does_not_refresh_baseline(self, git_repo):
+        nb = _make_ipynb([("code", "x = 1", [])])
+        ipynb = git_repo / "nb.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = git_repo / "custom.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        assert not _has_ref(git_repo, "custom.py")
+
+    def test_ipynb_to_py_non_git_still_succeeds(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", [])])
+        ipynb = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = tmp_path / "nb.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        assert py.exists()
+
 
 # ---------------------------------------------------------------------------
 # py-to-ipynb — new file creation
@@ -128,6 +216,37 @@ class TestPyToIpynbCreate:
         result = _invoke("convert", "py-to-ipynb", str(py))
         assert result.exit_code == 0
         assert (tmp_path / "foo.ipynb").exists()
+
+    def test_canonical_py_to_ipynb_refreshes_baseline(self, git_repo):
+        py = git_repo / "script.py"
+        py.write_text("# %%\nx = 1\n", encoding="utf-8")
+
+        result = _invoke("convert", "py-to-ipynb", str(py))
+
+        assert result.exit_code == 0
+        assert (git_repo / "script.ipynb").exists()
+        assert _has_ref(git_repo, "script.py")
+        assert pair_baseline.read_baseline(py) == canonicalize_py_text(py.read_text(encoding="utf-8"))
+
+    def test_noncanonical_py_to_ipynb_does_not_refresh_baseline(self, git_repo):
+        py = git_repo / "script.py"
+        py.write_text("# %%\nx = 1\n", encoding="utf-8")
+        out = git_repo / "custom.ipynb"
+
+        result = _invoke("convert", "py-to-ipynb", str(py), str(out))
+
+        assert result.exit_code == 0
+        assert out.exists()
+        assert not _has_ref(git_repo, "script.py")
+
+    def test_py_to_ipynb_non_git_still_succeeds(self, tmp_path):
+        py = tmp_path / "script.py"
+        py.write_text("# %%\nx = 1\n", encoding="utf-8")
+
+        result = _invoke("convert", "py-to-ipynb", str(py))
+
+        assert result.exit_code == 0
+        assert (tmp_path / "script.ipynb").exists()
 
 
 # ---------------------------------------------------------------------------

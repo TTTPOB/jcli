@@ -678,6 +678,40 @@ class TestPreToPostChain:
         assert [cell.source for cell in nb_after.cells if cell.source.strip()] == ["x = 40"]
 
 
+class TestConvertSeededBaseline:
+    def test_convert_then_first_edit_uses_sticky_baseline(self, git_repo: Path):
+        py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 10"), encoding="utf-8")
+
+        runner = CliRunner()
+        convert = runner.invoke(
+            main,
+            ["convert", "py-to-ipynb", str(py), str(ipynb)],
+            catch_exceptions=False,
+        )
+        assert convert.exit_code == 0
+
+        ref_ts = _git(
+            git_repo,
+            "log",
+            "-1",
+            "--format=%ct",
+            pair_baseline._ref_name("nb.py"),
+        ).stdout.strip()
+        assert ref_ts
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 10", "x = 20"), encoding="utf-8")
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert "Auto-synced" in _additional_context(out)
+        nb_after = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in nb_after.cells if cell.source.strip()] == ["x = 20"]
+
+
 class TestGcPairSyncRefsCLI:
     def test_dry_run_reports_without_deleting(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
         py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
