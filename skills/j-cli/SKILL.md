@@ -31,6 +31,31 @@ The command is idempotent — re-running updates the hook in place without dupli
 - **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when `git merge-file` produces no conflicts; warns only when your edit collided with a pre-existing change on the paired side.
 - **`notebook-edit-guard`** **(PreToolUse, NotebookEdit)** — hard-denies direct `NotebookEdit` calls; always use the py:percent round-trip instead.
 
+## One-time Codex hook install
+
+Run this once per project to prevent Codex from falling back to `jupyter nbconvert --execute` (or `papermill` / `runipy`) instead of j-cli:
+
+```bash
+j-cli setup codex --local    # writes .codex/hooks.local.json (gitignored, this machine only)
+# or:
+j-cli setup codex --project  # writes .codex/hooks.json       (committed, team-shared)
+# or:
+j-cli setup codex --user     # writes ~/.codex/hooks.json     (global, all projects)
+```
+
+The command is idempotent — re-running updates the hook in place without duplicating it.
+
+**Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing.
+
+**What the hooks install:**
+
+- **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`.
+- **`python-run-guard`** (Bash, soft deny) — fires when a shell command targets a `.py` file that has a paired `.ipynb`.
+- **`pair-drift-guard-pre`** (PreToolUse, apply_patch) — detects drift before an `apply_patch` edit touches a paired `.py` file.
+- **`pair-drift-guard-post`** (PostToolUse, apply_patch) — after `apply_patch`, silently syncs the other side of the pair when possible.
+
+> **Note:** `notebook-edit-guard` is not installed for Codex because Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
+
 ## Installing the git pre-commit hook
 
 Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
