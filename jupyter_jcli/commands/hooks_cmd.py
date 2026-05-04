@@ -1,4 +1,10 @@
-"""jcli _hooks — internal hook handlers for Claude Code harness integration."""
+"""jcli _hooks — internal hook handlers for agent harness integration (Claude Code / Codex).
+
+Codex hook schema sources:
+  https://developers.openai.com/codex/hooks
+  https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated
+  openai/codex#2578 — apply_patch Lark grammar
+"""
 
 import fnmatch
 import json
@@ -441,9 +447,9 @@ def _emit_decision(decision: HookDecision, *, logger=None) -> None:
 
 
 def _post_drift_notice(drift_reason: str) -> str:
-    """Rewrap a drift reason as a post-hoc notification to Claude.
+    """Rewrap a drift reason as a post-hoc notification to the agent.
 
-    The edit has already been applied; we can only inform Claude that
+    The edit has already been applied; we can only inform the agent that
     the paired file is now out of sync because someone changed it
     behind our back.
     """

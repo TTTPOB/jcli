@@ -1,4 +1,4 @@
-"""Typed hook decisions — each class owns its Claude Code output schema.
+"""Typed hook decisions — each class owns the agent hook output schema.
 
 PreToolUse and PostToolUse have fundamentally different JSON shapes
 and semantics. PreToolUse is a permission gate (allow/deny/ask).
@@ -6,7 +6,8 @@ PostToolUse can only inject context — the tool already ran, so there
 is no meaningful way to "deny" it. Each valid (event, outcome) pair
 is modelled as its own dataclass so the emitter has no branches.
 
-See https://code.claude.com/docs/en/hooks for the wire schema.
+See https://code.claude.com/docs/en/hooks for Claude Code wire schema.
+See https://developers.openai.com/codex/hooks for Codex wire schema.
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ from typing import Protocol
 
 
 class HookEvent(str, Enum):
-    """Claude Code hook event names — single source of truth for the
-    wire strings that appear in payload's hookEventName field."""
+    """Hook event names (used by Claude Code and Codex) — single source of truth
+    for the wire strings that appear in payload's hookEventName field."""
     PRE_TOOL_USE = "PreToolUse"
     POST_TOOL_USE = "PostToolUse"
 
@@ -31,7 +32,7 @@ class PreToolUseOutcome(str, Enum):
 
 
 class HookDecision(Protocol):
-    """Anything that serializes to a Claude Code hook JSON payload."""
+    """Anything that serializes to an agent hook JSON payload."""
     def to_payload(self) -> dict: ...
 
 
@@ -40,7 +41,7 @@ class PreToolUseDecision:
     """Permission gate emitted from a PreToolUse hook.
 
     - ALLOW/ASK: reason shown to the user
-    - DENY:      reason shown to Claude (fed into its context)
+    - DENY:      reason shown to the agent (fed into its context)
     """
     outcome: PreToolUseOutcome
     reason: str
@@ -59,7 +60,7 @@ class PreToolUseDecision:
 class PostToolUseContext:
     """Non-blocking context injection from a PostToolUse hook.
 
-    The tool already ran — we can only tell Claude what happened.
+    The tool already ran — we can only tell the agent what happened.
     Used for both "paired file auto-synced" and "paired file drifted,
     someone else may have edited it" notifications.
     """

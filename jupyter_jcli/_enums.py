@@ -5,7 +5,7 @@ This means ``json.dumps``, f-strings, and nbformat API calls all work without
 ``.value`` — the serialized output is identical to the raw string.
 
 Enums that are constrained by external protocols (nbformat, Jupyter REST API,
-Claude Code hooks) carry a note in their docstring. Changing their values requires
+agent hooks) carry a note in their docstring. Changing their values requires
 synchronizing with those protocols.
 """
 
