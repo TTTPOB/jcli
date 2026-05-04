@@ -341,7 +341,13 @@ def _pair_drift_guard_pre_claude(debug: bool) -> None:
             sys.exit(0)
 
         try:
-            _run_pre_drift_check(path, log)
+            deny_reason = _run_pre_drift_check(path, log)
+            if deny_reason is not None:
+                _emit_decision(
+                    PreToolUseDecision(PreToolUseOutcome.DENY, deny_reason),
+                    logger=log,
+                )
+                sys.exit(0)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
             print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
@@ -365,45 +371,50 @@ def _pair_drift_guard_pre_codex(debug: bool) -> None:
         if not file_paths:
             sys.exit(0)
 
+        deny_reasons: list[str] = []
+
         for file_path in file_paths:
             path = Path(file_path)
 
             if path.suffix == ".ipynb":
-                _emit_decision(
-                    PreToolUseDecision(
-                        PreToolUseOutcome.DENY,
-                        f"apply_patch of `{path.name}` is not supported — edit notebooks "
-                        "via the py:percent round-trip instead:\n"
-                        f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
-                        f"  2. Edit {path.stem}.py\n"
-                        f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
-                        "(Outputs in the `.ipynb` are preserved through the round-trip.)",
-                    ),
-                    logger=log,
+                deny_reasons.append(
+                    f"apply_patch of `{path.name}` is not supported — edit notebooks "
+                    "via the py:percent round-trip instead:\n"
+                    f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
+                    f"  2. Edit {path.stem}.py\n"
+                    f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
+                    "(Outputs in the `.ipynb` are preserved through the round-trip.)"
                 )
-                # Exit after first .ipynb denial — the apply_patch is blocked.
-                # Remaining files in the patch are irrelevant.
-                sys.exit(0)
+                continue
 
             if not path.exists():
                 continue
 
             try:
-                _run_pre_drift_check(path, log)
+                deny_reason = _run_pre_drift_check(path, log)
+                if deny_reason is not None:
+                    deny_reasons.append(deny_reason)
             except Exception as exc:  # noqa: BLE001
                 log.record_exception(exc)
                 print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
 
+        if deny_reasons:
+            merged = "\n\n---\n\n".join(deny_reasons)
+            _emit_decision(
+                PreToolUseDecision(PreToolUseOutcome.DENY, merged),
+                logger=log,
+            )
+
         sys.exit(0)
 
 
-def _run_pre_drift_check(path: Path, logger=None) -> None:
-    """Run drift check for PreToolUse and emit a decision if action is needed."""
+def _run_pre_drift_check(path: Path, logger=None) -> str | None:
+    """Run drift check for PreToolUse and return a deny reason if action is needed."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
     if pair is None:
-        return
+        return None
 
     if path.suffix == ".ipynb":
         py_path, ipynb_path = pair, path
@@ -411,74 +422,87 @@ def _run_pre_drift_check(path: Path, logger=None) -> None:
         py_path, ipynb_path = path, pair
 
     if not py_path.exists() or not ipynb_path.exists():
-        return
+        return None
 
     try:
         from jupyter_jcli.drift import check_drift
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
         print("pair-drift-guard-pre: non-UTF-8 content, skipping drift check", file=sys.stderr)
-        return
+        return None
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
             logger.record_exception(exc)
-        return
+        return None
 
     if result.status == DriftStatus.IN_SYNC:
-        return
+        return None
 
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
-        _emit_decision(
-            PreToolUseDecision(
-                PreToolUseOutcome.DENY,
-                f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
-                f"at cell(s) [{idx_str}] — both sides have been edited (e.g. by a human "
-                "user in JupyterLab and via py:percent) since the last commit of `.py`, "
-                "and the edits collide on the same cell(s). This drift existed before "
-                "your tool call.\n\n"
-                f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
-                f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
-                "inspect the other side. Then pick a direction:\n"
-                f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-                "   # takes ipynb's cells; discards .py's edits\n"
-                f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-                "   # takes .py's cells; discards ipynb's edits"
-                + _diff_section(result.diff_text, py_path.name),
-            ),
-            logger=logger,
+        return (
+            f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
+            f"at cell(s) [{idx_str}] — both sides have been edited (e.g. by a human "
+            "user in JupyterLab and via py:percent) since the last commit of `.py`, "
+            "and the edits collide on the same cell(s). This drift existed before "
+            "your tool call.\n\n"
+            f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
+            f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
+            "inspect the other side. Then pick a direction:\n"
+            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            "   # takes ipynb's cells; discards .py's edits\n"
+            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            "   # takes .py's cells; discards ipynb's edits"
+            + _diff_section(result.diff_text, py_path.name)
         )
-        return
 
     if result.status == DriftStatus.DRIFT_ONLY:
-        _emit_decision(
-            PreToolUseDecision(
-                PreToolUseOutcome.DENY,
-                f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
-                f"auto-merge the pair. Current sources of `{py_path.name}` and "
-                f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
-                "This usually happens right after creating a new notebook (common "
-                "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
-                "the two can drift in whitespace/cell count before the first commit).\n\n"
-                "Before picking a side:\n"
-                f"  1. Run `git log --oneline -- {py_path.name}` to confirm `.py` really "
-                "is new (no HEAD).\n"
-                "  2. Run `git status` and check who/what wrote each side most recently.\n"
-                f"  3. If `{ipynb_path.name}` has exec outputs you want to keep, take "
-                f"`{ipynb_path.name}` as truth; otherwise take `{py_path.name}`.\n\n"
-                "Then, once you've decided:\n"
-                f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-                "   # overwrites .py\n"
-                f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-                "   # overwrites .ipynb sources (outputs preserved)"
-                + _diff_section(result.diff_text, py_path.name),
-            ),
-            logger=logger,
+        return (
+            f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
+            f"auto-merge the pair. Current sources of `{py_path.name}` and "
+            f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
+            "This usually happens right after creating a new notebook (common "
+            "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
+            "the two can drift in whitespace/cell count before the first commit).\n\n"
+            "Before picking a side:\n"
+            f"  1. Run `git log --oneline -- {py_path.name}` to confirm `.py` really "
+            "is new (no HEAD).\n"
+            "  2. Run `git status` and check who/what wrote each side most recently.\n"
+            f"  3. If `{ipynb_path.name}` has exec outputs you want to keep, take "
+            f"`{ipynb_path.name}` as truth; otherwise take `{py_path.name}`.\n\n"
+            "Then, once you've decided:\n"
+            f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
+            "   # overwrites .py\n"
+            f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
+            "   # overwrites .ipynb sources (outputs preserved)"
+            + _diff_section(result.diff_text, py_path.name)
         )
-        return
 
     if result.status == DriftStatus.MERGED:
-        _apply_merge_and_decide(path, py_path, ipynb_path, result, logger=logger)
+        return _apply_merge_and_decide(path, py_path, ipynb_path, result, logger=logger)
+
+    return None
+
+
+def _prepare_merged_py(py_path: Path, merged_cells, logger=None) -> tuple[str | None, str | None]:
+    try:
+        from jupyter_jcli.canonicalize import canonicalize_py_text
+        from jupyter_jcli.pair_io import emit_py_percent
+        from jupyter_jcli.parser import ParsedFile, parse_py_percent
+
+        py_parsed = parse_py_percent(str(py_path))
+        merged_parsed = ParsedFile(
+            kernel_name=py_parsed.kernel_name,
+            cells=merged_cells,
+            source_path=py_parsed.source_path,
+            front_matter_raw=py_parsed.front_matter_raw,
+        )
+        merged_text = emit_py_percent(merged_parsed)
+        return merged_text, canonicalize_py_text(merged_text)
+    except Exception as exc:  # noqa: BLE001
+        if logger is not None:
+            logger.record_exception(exc)
+        return None, None
 
 
 def _apply_merge_and_decide(
@@ -487,43 +511,25 @@ def _apply_merge_and_decide(
     ipynb_path: Path,
     result,  # DriftResult
     logger=None,
-) -> None:
+) -> str | None:
     """Write merged content and emit allow/deny based on which file changed."""
-    from jupyter_jcli.canonicalize import canonicalize_py_text
     from jupyter_jcli import pair_baseline
-    from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
-    from jupyter_jcli.parser import ParsedFile, parse_py_percent
+    from jupyter_jcli.pair_io import update_ipynb_sources
 
     try:
         target_before = target.read_bytes()
     except OSError:
-        return
+        return None
 
     wrote_target = False
     synced = False
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
 
-    def _prepare_merged_py() -> tuple[str | None, str | None]:
-        try:
-            py_parsed = parse_py_percent(str(py_path))
-            merged_parsed = ParsedFile(
-                kernel_name=py_parsed.kernel_name,
-                cells=result.merged_cells,
-                source_path=py_parsed.source_path,
-                front_matter_raw=py_parsed.front_matter_raw,
-            )
-            merged_text = emit_py_percent(merged_parsed)
-            return merged_text, canonicalize_py_text(merged_text)
-        except Exception as exc:  # noqa: BLE001
-            if logger is not None:
-                logger.record_exception(exc)
-            return None, None
-
     if result.py_needs_update:
         try:
             if merged_py_text is None:
-                merged_py_text, canonical_merged_py = _prepare_merged_py()
+                merged_py_text, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
             if merged_py_text is None:
                 raise RuntimeError("could not prepare merged py text")
             if py_path.read_bytes() == target_before or py_path != target:
@@ -560,22 +566,19 @@ def _apply_merge_and_decide(
 
     if synced:
         if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py()
+            _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
 
     if wrote_target:
         other = ipynb_path if target == py_path else py_path
-        _emit_decision(
-            PreToolUseDecision(
-                PreToolUseOutcome.DENY,
-                f"Someone else edited the paired `{other.name}` before your edit — the "
-                f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
-                "so your next Edit sees the updated content. "
-                "(This drift existed before your tool call; you did not cause it.)",
-            ),
-            logger=logger,
+        return (
+            f"Someone else edited the paired `{other.name}` before your edit — the "
+            f"changes have been auto-merged into `{target.name}`. Re-read `{target.name}` "
+            "so your next Edit sees the updated content. "
+            "(This drift existed before your tool call; you did not cause it.)"
         )
+    return None
 
 
 def _emit_decision(decision: HookDecision, *, logger=None) -> None:
@@ -701,7 +704,9 @@ def _pair_drift_guard_post_claude(debug: bool) -> None:
             sys.exit(0)
 
         try:
-            _run_post_drift_check(path, log)
+            context_str = _run_post_drift_check(path, log)
+            if context_str is not None:
+                _emit_decision(PostToolUseContext(context_str), logger=log)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
             print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
@@ -725,6 +730,8 @@ def _pair_drift_guard_post_codex(debug: bool) -> None:
         if not file_paths:
             sys.exit(0)
 
+        contexts: list[str] = []
+
         for file_path in file_paths:
             path = Path(file_path)
 
@@ -735,21 +742,27 @@ def _pair_drift_guard_post_codex(debug: bool) -> None:
                 continue
 
             try:
-                _run_post_drift_check(path, log)
+                context_str = _run_post_drift_check(path, log)
+                if context_str is not None:
+                    contexts.append(context_str)
             except Exception as exc:  # noqa: BLE001
                 log.record_exception(exc)
                 print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
 
+        if contexts:
+            merged = "\n\n---\n\n".join(contexts)
+            _emit_decision(PostToolUseContext(merged), logger=log)
+
         sys.exit(0)
 
 
-def _run_post_drift_check(path: Path, logger=None) -> None:
-    """Run drift check after an agent edit and sync the other side if possible."""
+def _run_post_drift_check(path: Path, logger=None) -> str | None:
+    """Run drift check after an agent edit and return a context notice if needed."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
     if pair is None:
-        return
+        return None
 
     if path.suffix == ".ipynb":
         py_path, ipynb_path = pair, path
@@ -757,25 +770,24 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
         py_path, ipynb_path = path, pair
 
     if not py_path.exists() or not ipynb_path.exists():
-        return
+        return None
 
     try:
         from jupyter_jcli.drift import check_drift
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
         print("pair-drift-guard-post: non-UTF-8 content, skipping", file=sys.stderr)
-        return
+        return None
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
             logger.record_exception(exc)
-        return
+        return None
 
     if result.status == DriftStatus.IN_SYNC:
-        return
+        return None
 
     if result.status == DriftStatus.MERGED:
-        _sync_pair_after_edit(path, py_path, ipynb_path, result, logger=logger)
-        return
+        return _sync_pair_after_edit(path, py_path, ipynb_path, result, logger=logger)
 
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
@@ -794,8 +806,7 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
             "   # take .py; discard ipynb edits on those cells"
             + _diff_section(result.diff_text, py_path.name)
         )
-        _emit_decision(PostToolUseContext(_post_drift_notice(drift_reason)), logger=logger)
-        return
+        return _post_drift_notice(drift_reason)
 
     if result.status == DriftStatus.DRIFT_ONLY:
         if path == py_path:
@@ -814,7 +825,9 @@ def _run_post_drift_check(path: Path, logger=None) -> None:
             "Be aware this overwrites the other file's independent content."
             + _diff_section(result.diff_text, py_path.name)
         )
-        _emit_decision(PostToolUseContext(_post_drift_notice(drift_reason)), logger=logger)
+        return _post_drift_notice(drift_reason)
+
+    return None
 
 
 def _sync_pair_after_edit(
@@ -823,32 +836,14 @@ def _sync_pair_after_edit(
     ipynb_path: Path,
     result,  # DriftResult
     logger=None,
-) -> None:
+) -> str | None:
     """Write the merge result to the OTHER side (not the one the agent just edited)."""
-    from jupyter_jcli.canonicalize import canonicalize_py_text
     from jupyter_jcli import pair_baseline
-    from jupyter_jcli.pair_io import emit_py_percent, update_ipynb_sources
-    from jupyter_jcli.parser import ParsedFile, parse_py_percent
+    from jupyter_jcli.pair_io import update_ipynb_sources
 
     synced = False
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
-
-    def _prepare_merged_py() -> tuple[str | None, str | None]:
-        try:
-            py_parsed = parse_py_percent(str(py_path))
-            merged_parsed = ParsedFile(
-                kernel_name=py_parsed.kernel_name,
-                cells=result.merged_cells,
-                source_path=py_parsed.source_path,
-                front_matter_raw=py_parsed.front_matter_raw,
-            )
-            merged_text = emit_py_percent(merged_parsed)
-            return merged_text, canonicalize_py_text(merged_text)
-        except Exception as exc:  # noqa: BLE001
-            if logger is not None:
-                logger.record_exception(exc)
-            return None, None
 
     if result.ipynb_needs_update and ipynb_path != edited:
         try:
@@ -865,7 +860,7 @@ def _sync_pair_after_edit(
     if result.py_needs_update and py_path != edited:
         try:
             if merged_py_text is None:
-                merged_py_text, canonical_merged_py = _prepare_merged_py()
+                merged_py_text, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
             if merged_py_text is None:
                 raise RuntimeError("could not prepare merged py text")
             py_path.write_text(merged_py_text, encoding="utf-8")
@@ -880,18 +875,16 @@ def _sync_pair_after_edit(
 
     if synced:
         if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py()
+            _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced:
         other = ipynb_path if edited == py_path else py_path
-        _emit_decision(
-            PostToolUseContext(
-                f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-                "Pair is now in sync."
-            ),
-            logger=logger,
+        return (
+            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+            "Pair is now in sync."
         )
+    return None
 
 
 # ---------------------------------------------------------------------------
