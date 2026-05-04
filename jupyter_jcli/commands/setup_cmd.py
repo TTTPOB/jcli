@@ -192,9 +192,139 @@ def claude(ctx: Context, scope: str, remove: bool):
     )
 
 
+@setup.command("codex")
+@click.option("--user",    "scope", flag_value=Scope.USER.value,    help="Write to ~/.codex/hooks.json")
+@click.option("--project", "scope", flag_value=Scope.PROJECT.value, help="Write to ./.codex/hooks.json")
+@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,   default=True,
+              help="Write to ./.codex/hooks.local.json (default, gitignored)")
+@click.option("--remove", is_flag=True, default=False,
+              help="Remove all j-cli managed hooks from the target hooks file.")
+@pass_ctx
+def codex(ctx: Context, scope: str, remove: bool):
+    """Install Codex hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, and pair-drift-guard-post.
+
+    notebook-edit-guard is not installed (Codex has no NotebookEdit tool).
+
+    Codex hook schema sources:
+      https://developers.openai.com/codex/hooks
+      https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated
+    """
+    path = _resolve_codex_path(scope)
+    platform = "codex"
+
+    if remove:
+        if not path.exists():
+            emit(
+                {
+                    "status": ResponseStatus.NOOP,
+                    "path": str(path),
+                    "_human": f"Nothing to remove: {path} does not exist.",
+                },
+                ctx.use_json,
+            )
+            return
+
+        settings = _load_settings(path, ctx.use_json)
+        removed = _remove_managed_hooks(settings)
+
+        # Prune empty hook structures
+        if "hooks" in settings:
+            for _event_key in list(settings["hooks"].keys()):
+                if not settings["hooks"].get(_event_key):
+                    settings["hooks"].pop(_event_key, None)
+            if not settings["hooks"]:
+                del settings["hooks"]
+
+        if settings:
+            _write_settings(path, settings)
+        else:
+            path.unlink()
+
+        if removed == 0:
+            emit(
+                {
+                    "status": ResponseStatus.NOOP,
+                    "removed": 0,
+                    "path": str(path),
+                    "_human": f"No managed hooks found in {path}; nothing removed.",
+                },
+                ctx.use_json,
+            )
+        else:
+            emit(
+                {
+                    "status": ResponseStatus.OK,
+                    "removed": removed,
+                    "path": str(path),
+                    "_human": f"Removed {removed} managed hook(s) from {path}.",
+                },
+                ctx.use_json,
+            )
+        return
+
+    # Install path
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    _ensure_codex_feature_flag(path)
+
+    settings = _load_settings(path, ctx.use_json)
+    for block_desc in _MANAGED_BLOCKS:
+        if platform not in block_desc.get("platforms", []):
+            continue
+        _merge_hook(settings, block_desc, platform)
+    _write_settings(path, settings)
+
+    emit(
+        {
+            "status": ResponseStatus.OK,
+            "path": str(path),
+            "_human": f"Wrote Codex hooks to {path}",
+        },
+        ctx.use_json,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _ensure_codex_feature_flag(path: Path) -> None:
+    """Check that codex_hooks feature flag is enabled in a .codex/config.toml.
+
+    Searches for ``[features]`` section line followed by ``codex_hooks = true``.
+    Prints a warning to stderr if the flag is missing.  Does NOT modify the file.
+    """
+    scope_dir = path.parent
+    config_toml = scope_dir / "config.toml"
+
+    if not config_toml.exists():
+        click.echo(
+            f"warning: {config_toml} not found — "
+            f"Codex hooks require '[features]\\ncodex_hooks = true' in config.toml",
+            err=True,
+        )
+        return
+
+    text = config_toml.read_text(encoding="utf-8")
+    # Scan for codex_hooks = true under [features] section (line-based, no TOML parser needed)
+    in_features = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "[features]":
+            in_features = True
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_features = False
+            continue
+        if in_features and re.match(r"^codex_hooks\s*=\s*true\s*$", stripped):
+            return  # flag found
+
+    click.echo(
+        f"warning: codex_hooks feature flag not enabled in {config_toml} — "
+        f"add '[features]\\ncodex_hooks = true' to activate hooks",
+        err=True,
+    )
+
 
 def _resolve_claude_path(scope: str) -> Path:
     s = Scope(scope)
