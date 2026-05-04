@@ -39,6 +39,71 @@ _HINT = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Platform extraction layer
+#
+# Each extraction function isolates platform-specific stdin field access.
+# Claude Code and Codex pass different tool_input shapes (see module docstring
+# for schema URLs).  Guards call the appropriate function based on --platform.
+# ---------------------------------------------------------------------------
+
+
+def _extract_bash_command_claude(payload: dict) -> str:
+    """Claude Code: tool_input.command is a plain string."""
+    return payload.get("tool_input", {}).get("command", "") or ""
+
+
+def _extract_bash_command_codex(payload: dict) -> str:
+    """Codex: tool_input.command may be array ['bash', '-c', '<cmd>'] or string.
+
+    PreToolUse schema declares tool_input unrestricted ("true" in JSON Schema).
+    See codex-rs/hooks/schema/generated/pre-tool-use.command.input.schema.json
+    """
+    cmd = payload.get("tool_input", {}).get("command", "")
+    if isinstance(cmd, list):
+        # Codex shell tool: command is array; '-c' flag means third element
+        # is the actual user command.
+        if len(cmd) >= 3 and cmd[1] == "-c":
+            return cmd[2] or ""
+        # Fallback: return the last non-empty element.
+        return cmd[-1] if cmd else ""
+    return cmd or ""
+
+
+def _extract_file_path_claude(payload: dict) -> str:
+    """Claude Code: Edit/Write tools have file_path in tool_input."""
+    return payload.get("tool_input", {}).get("file_path", "") or ""
+
+
+def _extract_file_paths_codex(payload: dict) -> list[str]:
+    """Codex: apply_patch tool_input.command = ['apply_patch', '<patch_text>']."""
+    cmd = payload.get("tool_input", {}).get("command", "")
+    if isinstance(cmd, list):
+        patch_text = cmd[1] if len(cmd) > 1 else ""
+    else:
+        patch_text = cmd if isinstance(cmd, str) else ""
+    return _parse_codex_apply_patch_file_paths(patch_text)
+
+
+def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
+    """Extract file paths from Codex apply_patch patch text.
+
+    Grammar from codex-rs apply-patch.rs (openai/codex#2578):
+      add_hunk:    "*** Add File: " filename LF add_line+
+      update_hunk: "*** Update File: " filename LF change_move? change?
+      change_line: ("+" | "-" | " ") /(.+)/ LF
+
+    Content lines always have + / - / space prefix at column 0, so directive
+    markers at column 0 cannot be confused with file content.  ^ anchor
+    enforces this guarantee.
+    """
+    return re.findall(
+        r'^\*{3} (?:Update|Add|Delete) File: (.+)$',
+        patch_text,
+        re.MULTILINE,
+    )
+
+
 @click.group(hidden=True)
 def hooks():
     """Internal hook handlers (not intended for direct use)."""
@@ -87,9 +152,11 @@ def _check_exec_guard(sc) -> str | None:
 
 
 @hooks.command("notebook-exec-guard")
+@click.option("--platform", default="claude",
+              help="Agent platform: claude or codex")
 @click.option("--debug", "debug", is_flag=True, default=False,
               help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.")
-def nbconvert_guard(debug: bool):
+def nbconvert_guard(platform: str, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
     with HookDebugLogger("notebook-exec-guard", enabled=debug) as log:
         try:
@@ -97,9 +164,11 @@ def nbconvert_guard(debug: bool):
         except (json.JSONDecodeError, ValueError):
             sys.exit(0)
 
-        command: str = ""
         try:
-            command = payload.get("tool_input", {}).get("command", "") or ""
+            if platform == "codex":
+                command = _extract_bash_command_codex(payload)
+            else:
+                command = _extract_bash_command_claude(payload)
         except (AttributeError, TypeError) as exc:
             log.record_exception(exc)
             sys.exit(0)
@@ -144,9 +213,11 @@ _PYTHON_HINT = (
 
 
 @hooks.command("python-run-guard")
+@click.option("--platform", default="claude",
+              help="Agent platform: claude or codex")
 @click.option("--debug", "debug", is_flag=True, default=False,
               help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.")
-def python_run_guard(debug: bool):
+def python_run_guard(platform: str, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
     with HookDebugLogger("python-run-guard", enabled=debug) as log:
         try:
@@ -154,10 +225,12 @@ def python_run_guard(debug: bool):
         except (json.JSONDecodeError, ValueError):
             sys.exit(0)
 
-        command: str = ""
         cwd: str = ""
         try:
-            command = payload.get("tool_input", {}).get("command", "") or ""
+            if platform == "codex":
+                command = _extract_bash_command_codex(payload)
+            else:
+                command = _extract_bash_command_claude(payload)
             cwd = payload.get("cwd", "") or ""
         except (AttributeError, TypeError) as exc:
             log.record_exception(exc)
@@ -209,10 +282,20 @@ def python_run_guard(debug: bool):
 # ---------------------------------------------------------------------------
 
 @hooks.command("pair-drift-guard-pre")
+@click.option("--platform", default="claude",
+              help="Agent platform: claude or codex")
 @click.option("--debug", "debug", is_flag=True, default=False,
               help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.")
-def pair_drift_guard_pre(debug: bool) -> None:
+def pair_drift_guard_pre(platform: str, debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
+    if platform == "codex":
+        return _pair_drift_guard_pre_codex(debug)
+    else:
+        return _pair_drift_guard_pre_claude(debug)
+
+
+def _pair_drift_guard_pre_claude(debug: bool) -> None:
+    """Claude Code: read tool_input.file_path from Edit/Write tools."""
     with HookDebugLogger("pair-drift-guard-pre", enabled=debug) as log:
         try:
             payload = read_hook_stdin(log)
@@ -255,6 +338,53 @@ def pair_drift_guard_pre(debug: bool) -> None:
             log.record_exception(exc)
             print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
             sys.exit(0)
+
+
+def _pair_drift_guard_pre_codex(debug: bool) -> None:
+    """Codex: parse apply_patch command for *** Update File: / *** Add File: paths."""
+    with HookDebugLogger("pair-drift-guard-pre", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
+
+        try:
+            file_paths = _extract_file_paths_codex(payload)
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
+
+        if not file_paths:
+            sys.exit(0)
+
+        for file_path in file_paths:
+            path = Path(file_path)
+
+            if path.suffix == ".ipynb":
+                _emit_decision(
+                    PreToolUseDecision(
+                        PreToolUseOutcome.DENY,
+                        f"apply_patch of `{path.name}` is not supported — edit notebooks "
+                        "via the py:percent round-trip instead:\n"
+                        f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
+                        f"  2. Edit {path.stem}.py\n"
+                        f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
+                        "(Outputs in the `.ipynb` are preserved through the round-trip.)",
+                    ),
+                    logger=log,
+                )
+                sys.exit(0)
+
+            if not path.exists():
+                continue
+
+            try:
+                _run_pre_drift_check(path, log)
+            except Exception as exc:  # noqa: BLE001
+                log.record_exception(exc)
+                print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
+
+        sys.exit(0)
 
 
 def _run_pre_drift_check(path: Path, logger=None) -> None:
@@ -479,10 +609,14 @@ def _diff_section(diff_text: str, py_name: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 @hooks.command("notebook-edit-guard")
+@click.option("--platform", default="claude",
+              help="Agent platform: claude or codex")
 @click.option("--debug", "debug", is_flag=True, default=False,
               help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.")
-def notebook_edit_guard(debug: bool) -> None:
+def notebook_edit_guard(platform: str, debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
+    # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
+    # --platform accepted for interface uniformity; not used for dispatch.
     with HookDebugLogger("notebook-edit-guard", enabled=debug) as log:
         try:
             payload = read_hook_stdin(log)
@@ -519,10 +653,20 @@ def notebook_edit_guard(debug: bool) -> None:
 # ---------------------------------------------------------------------------
 
 @hooks.command("pair-drift-guard-post")
+@click.option("--platform", default="claude",
+              help="Agent platform: claude or codex")
 @click.option("--debug", "debug", is_flag=True, default=False,
               help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.")
-def pair_drift_guard_post(debug: bool) -> None:
-    """PostToolUse hook: auto-sync py/ipynb pair after agent's own Edit/Write."""
+def pair_drift_guard_post(platform: str, debug: bool) -> None:
+    """PostToolUse hook: auto-sync py/ipynb pair after agent's own edit."""
+    if platform == "codex":
+        return _pair_drift_guard_post_codex(debug)
+    else:
+        return _pair_drift_guard_post_claude(debug)
+
+
+def _pair_drift_guard_post_claude(debug: bool) -> None:
+    """Claude Code: read tool_input.file_path from Edit/Write tools."""
     with HookDebugLogger("pair-drift-guard-post", enabled=debug) as log:
         try:
             payload = read_hook_stdin(log)
@@ -553,6 +697,41 @@ def pair_drift_guard_post(debug: bool) -> None:
             log.record_exception(exc)
             print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
             sys.exit(0)
+
+
+def _pair_drift_guard_post_codex(debug: bool) -> None:
+    """Codex: parse apply_patch command for file paths, run post-edit sync."""
+    with HookDebugLogger("pair-drift-guard-post", enabled=debug) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
+
+        try:
+            file_paths = _extract_file_paths_codex(payload)
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
+
+        if not file_paths:
+            sys.exit(0)
+
+        for file_path in file_paths:
+            path = Path(file_path)
+
+            if path.suffix == ".ipynb":
+                continue
+
+            if not path.exists():
+                continue
+
+            try:
+                _run_post_drift_check(path, log)
+            except Exception as exc:  # noqa: BLE001
+                log.record_exception(exc)
+                print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+
+        sys.exit(0)
 
 
 def _run_post_drift_check(path: Path, logger=None) -> None:
