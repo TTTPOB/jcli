@@ -27,7 +27,9 @@ class Scope(str, Enum):
 # Each block descriptor has:
 #   event     - hook event type ("PreToolUse" or "PostToolUse")
 #   matcher   - tool matcher string
+#   platforms - list of platforms this block applies to (e.g. ["claude", "codex"])
 #   entry     - the hook entry dict to install (must contain _jcli_managed key)
+#               command may contain {platform_flag} placeholder substituted at install
 #   legacy    - frozenset of old _jcli_managed values to replace on upgrade
 # ---------------------------------------------------------------------------
 
@@ -37,9 +39,10 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PreToolUse",
         "matcher": "Bash",
+        "platforms": ["claude", "codex"],
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks notebook-exec-guard",
+            "command": "j-cli _hooks notebook-exec-guard{platform_flag}",
             "_jcli_managed": "notebook-exec-guard",
         },
         "legacy": frozenset({"nbconvert-guard"}),
@@ -47,9 +50,10 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PreToolUse",
         "matcher": "Edit|Write",
+        "platforms": ["claude", "codex"],
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks pair-drift-guard-pre",
+            "command": "j-cli _hooks pair-drift-guard-pre{platform_flag}",
             "_jcli_managed": "pair-drift-guard-pre",
         },
         "legacy": frozenset({"pair-drift-guard"}),
@@ -57,9 +61,10 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PreToolUse",
         "matcher": "NotebookEdit",
+        "platforms": ["claude"],           # Codex has no NotebookEdit tool
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks notebook-edit-guard",
+            "command": "j-cli _hooks notebook-edit-guard{platform_flag}",
             "_jcli_managed": "notebook-edit-guard",
         },
         "legacy": frozenset({"pair-drift-guard-notebook"}),
@@ -67,9 +72,10 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PostToolUse",
         "matcher": "Edit|Write",
+        "platforms": ["claude", "codex"],
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks pair-drift-guard-post",
+            "command": "j-cli _hooks pair-drift-guard-post{platform_flag}",
             "_jcli_managed": "pair-drift-guard-post",
         },
         "legacy": frozenset(),
@@ -77,9 +83,10 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PreToolUse",
         "matcher": "Bash",
+        "platforms": ["claude", "codex"],
         "entry": {
             "type": "command",
-            "command": "j-cli _hooks python-run-guard",
+            "command": "j-cli _hooks python-run-guard{platform_flag}",
             "_jcli_managed": "python-run-guard",
         },
         "legacy": frozenset(),
@@ -112,7 +119,8 @@ def setup():
 @pass_ctx
 def claude(ctx: Context, scope: str, remove: bool):
     """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
-    path = _resolve_path(scope)
+    path = _resolve_claude_path(scope)
+    platform = "claude"
 
     if remove:
         if not path.exists():
@@ -127,7 +135,7 @@ def claude(ctx: Context, scope: str, remove: bool):
             return
 
         settings = _load_settings(path, ctx.use_json)
-        removed = _remove_claude_hooks(settings)
+        removed = _remove_managed_hooks(settings)
 
         # Prune empty hook structures
         if "hooks" in settings:
@@ -169,7 +177,9 @@ def claude(ctx: Context, scope: str, remove: bool):
 
     settings = _load_settings(path, ctx.use_json)
     for block_desc in _MANAGED_BLOCKS:
-        _merge_hook(settings, block_desc)
+        if platform not in block_desc.get("platforms", []):
+            continue
+        _merge_hook(settings, block_desc, platform)
     _write_settings(path, settings)
 
     emit(
@@ -186,13 +196,22 @@ def claude(ctx: Context, scope: str, remove: bool):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _resolve_path(scope: str) -> Path:
+def _resolve_claude_path(scope: str) -> Path:
     s = Scope(scope)
     if s == Scope.USER:
         return Path.home() / ".claude" / "settings.json"
     if s == Scope.PROJECT:
         return Path.cwd() / ".claude" / "settings.json"
     return Path.cwd() / ".claude" / "settings.local.json"
+
+
+def _resolve_codex_path(scope: str) -> Path:
+    s = Scope(scope)
+    if s == Scope.USER:
+        return Path.home() / ".codex" / "hooks.json"
+    if s == Scope.PROJECT:
+        return Path.cwd() / ".codex" / "hooks.json"
+    return Path.cwd() / ".codex" / "hooks.local.json"
 
 
 def _load_settings(path: Path, use_json: bool) -> dict:
@@ -209,20 +228,26 @@ def _load_settings(path: Path, use_json: bool) -> dict:
         raise SystemExit(1) from exc
 
 
-def _merge_hook(settings: dict, block_desc: dict) -> None:
-    """Merge one managed hook block into settings.
+def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:
+    """Merge one managed hook block into settings for the given platform.
 
-    For the given block descriptor, scans all event-type blocks whose matcher
-    matches ``block_desc["matcher"]`` for any entry whose _jcli_managed value is
-    the current name or any legacy name. The first such entry is replaced with the
-    current entry dict; additional managed entries are dropped to prevent duplicates.
-    If no existing managed entry is found, a new block is appended.
+    Only inserts/updates if block_desc['platforms'] includes *platform*.
+    Substitutes {platform_flag} in the command string:
+      "claude" -> "" (backward compat, no flag)
+      "codex"  -> " --platform codex"
     """
     target_event: str = block_desc.get("event", "PreToolUse")
     target_matcher: str = block_desc["matcher"]
     current_entry: dict = block_desc["entry"]
     current_val: str = current_entry[_MANAGED_KEY]
     all_vals: frozenset[str] = frozenset({current_val}) | block_desc["legacy"]
+
+    # Substitute platform flag
+    platform_flag = " --platform codex" if platform == "codex" else ""
+    current_entry = {
+        **current_entry,
+        "command": current_entry["command"].format(platform_flag=platform_flag),
+    }
 
     hooks_map: dict = settings.setdefault("hooks", {})
     event_list: list = hooks_map.setdefault(target_event, [])
@@ -254,7 +279,7 @@ def _write_settings(path: Path, settings: dict) -> None:
     )
 
 
-def _remove_claude_hooks(settings: dict) -> int:
+def _remove_managed_hooks(settings: dict) -> int:
     """Remove all jcli-managed entries from settings["hooks"] (all event types).
 
     Returns the number of entries removed.  Empty event-type blocks are
