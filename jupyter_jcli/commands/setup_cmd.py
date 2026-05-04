@@ -120,76 +120,7 @@ def setup():
 def claude(ctx: Context, scope: str, remove: bool):
     """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
     path = _resolve_claude_path(scope)
-    platform = "claude"
-
-    if remove:
-        if not path.exists():
-            emit(
-                {
-                    "status": ResponseStatus.NOOP,
-                    "path": str(path),
-                    "_human": f"Nothing to remove: {path} does not exist.",
-                },
-                ctx.use_json,
-            )
-            return
-
-        settings = _load_settings(path, ctx.use_json)
-        removed = _remove_managed_hooks(settings)
-
-        # Prune empty hook structures
-        if "hooks" in settings:
-            for _event_key in list(settings["hooks"].keys()):
-                if not settings["hooks"].get(_event_key):
-                    settings["hooks"].pop(_event_key, None)
-            if not settings["hooks"]:
-                del settings["hooks"]
-
-        if settings:
-            _write_settings(path, settings)
-        else:
-            path.unlink()
-
-        if removed == 0:
-            emit(
-                {
-                    "status": ResponseStatus.NOOP,
-                    "removed": 0,
-                    "path": str(path),
-                    "_human": f"No managed hooks found in {path}; nothing removed.",
-                },
-                ctx.use_json,
-            )
-        else:
-            emit(
-                {
-                    "status": ResponseStatus.OK,
-                    "removed": removed,
-                    "path": str(path),
-                    "_human": f"Removed {removed} managed hook(s) from {path}.",
-                },
-                ctx.use_json,
-            )
-        return
-
-    # Install path
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    settings = _load_settings(path, ctx.use_json)
-    for block_desc in _MANAGED_BLOCKS:
-        if platform not in block_desc.get("platforms", []):
-            continue
-        _merge_hook(settings, block_desc, platform)
-    _write_settings(path, settings)
-
-    emit(
-        {
-            "status": ResponseStatus.OK,
-            "path": str(path),
-            "_human": f"Wrote Claude Code hooks to {path}",
-        },
-        ctx.use_json,
-    )
+    _install_or_remove("claude", path, remove, ctx)
 
 
 @setup.command("codex")
@@ -210,8 +141,11 @@ def codex(ctx: Context, scope: str, remove: bool):
       https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated
     """
     path = _resolve_codex_path(scope)
-    platform = "codex"
+    _install_or_remove("codex", path, remove, ctx)
 
+
+def _install_or_remove(platform: str, path: Path, remove: bool, ctx: Context) -> None:
+    """Install or remove managed hooks for a given platform."""
     if remove:
         if not path.exists():
             emit(
@@ -265,7 +199,8 @@ def codex(ctx: Context, scope: str, remove: bool):
     # Install path
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    _ensure_codex_feature_flag(path)
+    if platform == "codex":
+        _ensure_codex_feature_flag(path)
 
     settings = _load_settings(path, ctx.use_json)
     for block_desc in _MANAGED_BLOCKS:
@@ -278,7 +213,7 @@ def codex(ctx: Context, scope: str, remove: bool):
         {
             "status": ResponseStatus.OK,
             "path": str(path),
-            "_human": f"Wrote Codex hooks to {path}",
+            "_human": f"Wrote {platform.title()} hooks to {path}",
         },
         ctx.use_json,
     )
@@ -306,17 +241,21 @@ def _ensure_codex_feature_flag(path: Path) -> None:
         return
 
     text = config_toml.read_text(encoding="utf-8")
-    # Scan for codex_hooks = true under [features] section (line-based, no TOML parser needed)
+    # Scan for codex_hooks = true under [features] section.
+    # Line-based text scan avoids pulling in a TOML parser for a single check.
+    # Limitation: does not handle multi-line TOML strings containing "[features]"
+    # as literal text.  In practice this is vanishingly rare and the function
+    # only warns (does not block), so the trade-off is acceptable.
     in_features = False
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped = line.split("#", 1)[0].strip()  # strip inline comments
         if stripped == "[features]":
             in_features = True
             continue
         if stripped.startswith("[") and stripped.endswith("]"):
             in_features = False
             continue
-        if in_features and re.match(r"^codex_hooks\s*=\s*true\s*$", stripped):
+        if in_features and re.match(r"^codex_hooks\s*=\s*true\b", stripped):
             return  # flag found
 
     click.echo(
@@ -372,7 +311,7 @@ def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:
     current_val: str = current_entry[_MANAGED_KEY]
     all_vals: frozenset[str] = frozenset({current_val}) | block_desc["legacy"]
 
-    # Substitute platform flag
+    # Substitute platform flag (shallow-copy to avoid mutating _MANAGED_BLOCKS)
     platform_flag = " --platform codex" if platform == "codex" else ""
     current_entry = {
         **current_entry,

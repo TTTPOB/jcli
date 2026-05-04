@@ -61,10 +61,13 @@ def _extract_bash_command_codex(payload: dict) -> str:
     """
     cmd = payload.get("tool_input", {}).get("command", "")
     if isinstance(cmd, list):
-        # Codex shell tool: command is array; '-c' flag means third element
-        # is the actual user command.
-        if len(cmd) >= 3 and cmd[1] == "-c":
-            return cmd[2] or ""
+        # Scan for '-c' flag position rather than assuming fixed index.
+        try:
+            c_idx = cmd.index("-c")
+            if c_idx + 1 < len(cmd):
+                return cmd[c_idx + 1] or ""
+        except ValueError:
+            pass
         # Fallback: return the last non-empty element.
         return cmd[-1] if cmd else ""
     return cmd or ""
@@ -76,7 +79,13 @@ def _extract_file_path_claude(payload: dict) -> str:
 
 
 def _extract_file_paths_codex(payload: dict) -> list[str]:
-    """Codex: apply_patch tool_input.command = ['apply_patch', '<patch_text>']."""
+    """Codex: apply_patch tool_input.command = ['apply_patch', '<patch_text>'].
+
+    Only extracts when tool_name is 'apply_patch' to avoid false positives
+    from Bash commands that happen to contain patch-like markers.
+    """
+    if payload.get("tool_name", "") != "apply_patch":
+        return []
     cmd = payload.get("tool_input", {}).get("command", "")
     if isinstance(cmd, list):
         patch_text = cmd[1] if len(cmd) > 1 else ""
@@ -97,11 +106,11 @@ def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
     markers at column 0 cannot be confused with file content.  ^ anchor
     enforces this guarantee.
     """
-    return re.findall(
+    return [m.strip() for m in re.findall(
         r'^\*{3} (?:Update|Add|Delete) File: (.+)$',
         patch_text,
         re.MULTILINE,
-    )
+    )]
 
 
 @click.group(hidden=True)
@@ -303,8 +312,7 @@ def _pair_drift_guard_pre_claude(debug: bool) -> None:
             sys.exit(0)
 
         try:
-            tool_input: dict = payload.get("tool_input", {}) or {}
-            file_path: str = tool_input.get("file_path", "") or ""
+            file_path: str = _extract_file_path_claude(payload)
         except (AttributeError, TypeError) as exc:
             log.record_exception(exc)
             sys.exit(0)
@@ -373,6 +381,8 @@ def _pair_drift_guard_pre_codex(debug: bool) -> None:
                     ),
                     logger=log,
                 )
+                # Exit after first .ipynb denial — the apply_patch is blocked.
+                # Remaining files in the patch are irrelevant.
                 sys.exit(0)
 
             if not path.exists():
@@ -674,8 +684,7 @@ def _pair_drift_guard_post_claude(debug: bool) -> None:
             sys.exit(0)
 
         try:
-            tool_input: dict = payload.get("tool_input", {}) or {}
-            file_path: str = tool_input.get("file_path", "") or ""
+            file_path: str = _extract_file_path_claude(payload)
         except (AttributeError, TypeError) as exc:
             log.record_exception(exc)
             sys.exit(0)

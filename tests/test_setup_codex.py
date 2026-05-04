@@ -124,6 +124,30 @@ class TestCodexInstall:
         assert result.exit_code == 0
         assert "codex_hooks" not in result.stderr
 
+    def test_warns_when_feature_flag_explicitly_false(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            "[features]\ncodex_hooks = false\n", encoding="utf-8"
+        )
+        runner = CliRunner()
+        result = _invoke(runner, ["--local"])
+        assert result.exit_code == 0
+        assert "codex_hooks" in result.stderr
+
+    def test_no_warning_with_inline_comment(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            "[features]\ncodex_hooks = true  # required by j-cli\n", encoding="utf-8"
+        )
+        runner = CliRunner()
+        result = _invoke(runner, ["--local"])
+        assert result.exit_code == 0
+        assert "codex_hooks" not in result.stderr
+
 
 class TestCodexRemove:
     def test_remove_cleans_all_entries(self, tmp_path, monkeypatch):
