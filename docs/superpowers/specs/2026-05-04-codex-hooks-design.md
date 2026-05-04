@@ -8,7 +8,7 @@ Additionally, much of the existing code assumes Claude Code is the only platform
 
 ## Schema sources
 
-Codex hook schemas live in the private `openai/codex` repo. Access paths confirmed during design:
+Codex hook schemas live in the public `openai/codex` repo. Access paths confirmed during design:
 
 - **PreToolUse input schema**: `codex-rs/hooks/schema/generated/pre-tool-use.command.input.schema.json` — 10 required fields. `tool_input` is unrestricted (`true` in JSON Schema).
 - **PostToolUse input schema**: `codex-rs/hooks/schema/generated/post-tool-use.command.input.schema.json` — 11 required fields (+`tool_response`).
