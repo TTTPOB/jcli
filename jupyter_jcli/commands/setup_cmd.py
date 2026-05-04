@@ -315,7 +315,7 @@ def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:
     platform_flag = " --platform codex" if platform == "codex" else ""
     current_entry = {
         **current_entry,
-        "command": current_entry["command"].format(platform_flag=platform_flag),
+        "command": current_entry["command"].replace("{platform_flag}", platform_flag),
     }
 
     hooks_map: dict = settings.setdefault("hooks", {})

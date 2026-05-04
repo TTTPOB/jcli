@@ -38,6 +38,16 @@ class TestExtractBashCommandCodex:
     def test_missing_command(self):
         assert _extract_bash_command_codex({"tool_input": {}}) == ""
 
+    def test_dash_c_not_at_index_1(self):
+        """-c flag with --norc before it."""
+        payload = {
+            "tool_input": {
+                "command": ["bash", "--norc", "-c", "echo hello"]
+            }
+        }
+        result = _extract_bash_command_codex(payload)
+        assert result == "echo hello"
+
 
 class TestParseCodexApplyPatchFilePaths:
     def test_single_update_file(self):
@@ -220,13 +230,3 @@ class TestCodexExtractFilePaths:
         assert result == ["foo.py"]
 
 
-class TestExtractBashCommandCodex:
-    def test_dash_c_not_at_index_1(self):
-        """-c flag with --norc before it."""
-        payload = {
-            "tool_input": {
-                "command": ["bash", "--norc", "-c", "echo hello"]
-            }
-        }
-        result = _extract_bash_command_codex(payload)
-        assert result == "echo hello"
