@@ -340,7 +340,7 @@ j-cli exec <session_id> --file script.py --cell 0
 
 Each cell in the range is executed sequentially. Outputs are reported per cell with `--- cell N ---` separators (or per-cell JSON objects with `-j`).
 
-**Timeout** (default 300s):
+**Timeout** (default: 10s per cell; when set, it's a total budget shared across cells):
 ```bash
 j-cli exec <session_id> --code "long_computation()" --timeout 600
 ```

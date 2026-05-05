@@ -16,9 +16,9 @@ from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 @click.option("--code", "-c", default=None, help="Code to execute directly")
 @click.option("--file", "-f", "file_path", default=None, help="Path to .py or .ipynb file")
 @click.option("--cell", default=None, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)")
-@click.option("--timeout", default=300, type=int, help="Execution timeout in seconds")
+@click.option("--timeout", default=None, type=int, help="Total execution timeout in seconds (default: 10s per cell)")
 @pass_ctx
-def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | None, cell: str | None, timeout: int):
+def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | None, cell: str | None, timeout: int | None):
     """Execute code in a kernel session.
 
     Either --code or --file (with --cell) must be provided.
@@ -44,12 +44,12 @@ def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | N
     _exec_file(ctx, kernel_id, file_path, cell, timeout)
 
 
-def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int):
+def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int | None):
     """Execute inline code."""
     try:
         from jupyter_jcli.kernel import execute_code
 
-        result = execute_code(ctx.server_url, ctx.token, kernel_id, code, timeout)
+        result = execute_code(ctx.server_url, ctx.token, kernel_id, code, timeout if timeout is not None else 10)
         raw_outputs = result.get("outputs", [])
         outputs = process_outputs(raw_outputs)
 
@@ -64,9 +64,16 @@ def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int):
         emit_error("EXECUTION_ERROR", str(e), ctx.use_json)
 
 
-def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | None, timeout: int):
-    """Execute cells from a file."""
+def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | None, timeout: int | None):
+    """Execute cells from a file.
+
+    If *timeout* is None, each cell gets a 10s per-cell timeout with no
+    overall limit.  If specified, *timeout* is the total wall-clock budget
+    shared across all cells.
+    """
     try:
+        import time as _time
+
         from jupyter_jcli.parser import parse_file, parse_cell_spec
         from jupyter_jcli.kernel import kernel_connection
 
@@ -87,10 +94,19 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
 
         cell_results = []
         all_outputs_human = []
+        deadline = _time.monotonic() + timeout if timeout is not None else None
 
         with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
             for cell in selected:
-                result = kernel.execute(cell.source, timeout=timeout)
+                if deadline is not None:
+                    remaining = deadline - _time.monotonic()
+                    if remaining <= 0:
+                        emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded at cell {cell.index}", ctx.use_json)
+                        break
+                else:
+                    remaining = 10
+
+                result = kernel.execute(cell.source, timeout=remaining)
                 raw_outputs = result.get("outputs", [])
                 outputs = process_outputs(raw_outputs)
 
