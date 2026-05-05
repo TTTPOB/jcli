@@ -14,6 +14,10 @@ def kernel_connection(server_url: str, token: str | None, kernel_id: str):
         kernel_id=kernel_id,
     )
     kernel.start()
+    # Ensure server-side ZMQ→WebSocket forwarding pipeline is ready before
+    # yielding, to prevent the nudge() race condition where execute_reply is
+    # dropped because the forwarding callback (subscribe) hasn't been set up yet.
+    kernel._manager.client.wait_for_ready(timeout=30)
     try:
         yield kernel
     finally:
