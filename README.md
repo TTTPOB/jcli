@@ -151,13 +151,34 @@ j-cli setup git --local --remove
 
 `--remove` deletes the hook only if it was written by j-cli, leaves `core.hooksPath` alone if it points to a non-j-cli directory, and removes the managed `.gitignore` block. Unrecognised hooks are skipped with a warning.
 
-### `setup codex` (not yet available)
+### `setup codex`
 
-Codex hook support is blocked upstream: the Codex hook API currently only
-reports the tool name `bash`, which means we cannot match `NotebookEdit` or
-`Edit|Write` the way we do for Claude Code. Once Codex exposes per-tool
-names we will add `j-cli setup codex`. Track upstream progress at
-<https://developers.openai.com/codex/hooks>.
+Install Codex hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Codex to use j-cli instead.
+
+```bash
+j-cli setup codex --local    # writes .codex/hooks.local.json (gitignored, this machine only)
+j-cli setup codex --project  # writes .codex/hooks.json       (committed, team-shared)
+j-cli setup codex --user     # writes ~/.codex/hooks.json     (global, all projects)
+
+# remove all j-cli managed hooks from the target file
+j-cli setup codex --remove
+j-cli setup codex --project --remove
+```
+
+**Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
+
+The install command is idempotent — re-running updates hooks in place without duplicating them. `--remove` prunes only j-cli managed entries, preserving any unrelated user hooks.
+
+**What gets installed (4 hooks):**
+
+| Hook | Event | Trigger | Action |
+|------|-------|---------|--------|
+| `notebook-exec-guard` | PreToolUse (Bash) | `jupyter nbconvert --execute`, `papermill`, `runipy`, `ipython <.ipynb>` | Hard deny, redirect to j-cli |
+| `python-run-guard` | PreToolUse (Bash) | Bash command targeting a `.py` with a paired `.ipynb` | Soft deny, suggest j-cli session |
+| `pair-drift-guard-pre` | PreToolUse (apply_patch) | `apply_patch` touching a paired `.py` / `.ipynb` | Detect drift, auto-merge, deny stale edits |
+| `pair-drift-guard-post` | PostToolUse (apply_patch) | After `apply_patch` completes | Auto-sync the other side of the pair |
+
+> `notebook-edit-guard` is not installed for Codex — Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
 ### `serve-cmd`
 
