@@ -42,6 +42,23 @@ class TestWaitForReadyCalled:
 
             mock_wait.assert_called_once_with(timeout=30)
 
+    def test_kernel_stopped_when_wait_for_ready_fails(self):
+        """kernel.stop() must be called even if wait_for_ready() raises."""
+        from jupyter_jcli.kernel import kernel_connection
+
+        with patch("jupyter_jcli.kernel.KernelClient") as MockClient:
+            mock_instance = MockClient.return_value
+            mock_instance._manager.client.wait_for_ready = MagicMock(
+                side_effect=TimeoutError("kernel not ready")
+            )
+            mock_stop = mock_instance.stop
+
+            with pytest.raises(TimeoutError, match="kernel not ready"):
+                with kernel_connection("http://x", "tok", "kid"):
+                    pass
+
+            mock_stop.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Integration tests — real Jupyter server
