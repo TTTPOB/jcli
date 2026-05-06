@@ -4,13 +4,18 @@ Server-side ``nudge()`` must complete before ZMQ→WebSocket forwarding
 (``handle_outgoing_message`` via ``subscribe`` callback) is set up.
 If the client sends ``execute_request`` before nudge completes, the
 kernel's reply arrives on the main shell ZMQ channel which has no
-forwarding callback yet — the reply is silently dropped and the client
+forwarding callback yet - the reply is silently dropped and the client
 hangs in ``_message_received.wait()`` / ``_recv_reply()`` forever.
 
-Fix: ``kernel_connection()`` now calls ``wait_for_ready()`` after
-``kernel.start()`` to ensure the server pipeline is ready before yielding.
+Fix: ``kernel_connection()`` now performs its own shell-channel round-trip
+probe on the current WebSocket after ``kernel.start()``.  A matching
+``kernel_info_reply`` proves the server pipeline is forwarding replies before
+the client sends ``execute_request``.  If a specific WebSocket wedges during
+server-side nudge setup, j-cli closes it and retries with a fresh WebSocket.
+The retry is safe because no user code is sent until the probe succeeds.
 """
 
+import queue
 import signal
 import subprocess
 import sys
@@ -24,44 +29,135 @@ import pytest
 # Unit tests — verify the fix is in place
 # ---------------------------------------------------------------------------
 
-class TestWaitForReadyCalled:
-    """Verify kernel_connection calls wait_for_ready after start."""
+class _FakeChannel:
+    def __init__(self, messages=None):
+        self.messages = queue.Queue()
+        for msg in messages or []:
+            self.messages.put(msg)
 
-    def test_execute_code_calls_wait_for_ready(self):
-        """execute_code uses kernel_connection which calls wait_for_ready."""
-        from unittest.mock import MagicMock
+    def get_msg(self, timeout=None):
+        return self.messages.get(timeout=timeout)
+
+
+class _FakeClient:
+    def __init__(self, shell_messages=None, iopub_messages=None):
+        self.shell_channel = _FakeChannel(shell_messages)
+        self.iopub_channel = _FakeChannel(iopub_messages)
+        self.sent_msg_ids = []
+        self.handled_kernel_info_reply = None
+
+    def kernel_info(self):
+        msg_id = f"probe-{len(self.sent_msg_ids)}"
+        self.sent_msg_ids.append(msg_id)
+        return msg_id
+
+    def _handle_kernel_info_reply(self, msg):
+        self.handled_kernel_info_reply = msg
+
+
+class TestKernelWebsocketReadyProbe:
+    """Verify kernel_connection waits for a current-WebSocket shell round-trip."""
+
+    def test_kernel_connection_calls_ready_probe(self):
+        """kernel_connection uses j-cli's ready probe after start."""
         from jupyter_jcli.kernel import kernel_connection
 
-        with patch("jupyter_jcli.kernel.KernelClient") as MockClient:
+        with (
+            patch("jupyter_jcli.kernel.KernelClient") as MockClient,
+            patch("jupyter_jcli.kernel._wait_for_kernel_websocket_ready") as mock_ready,
+        ):
             mock_instance = MockClient.return_value
-            mock_wait = MagicMock()
-            mock_instance._manager.client.wait_for_ready = mock_wait
 
             with kernel_connection("http://x", "tok", "kid") as k:
-                pass
+                assert k is mock_instance
 
-            mock_wait.assert_called_once_with(timeout=30)
+            mock_instance.start.assert_called_once_with(timeout=10)
+            mock_ready.assert_called_once_with(mock_instance, timeout=10)
 
-    def test_kernel_stopped_when_wait_for_ready_fails(self):
-        """kernel.stop() must be called even if wait_for_ready() raises."""
+    def test_kernel_stopped_when_ready_probe_fails(self):
+        """kernel.stop() must be called even if the ready probe raises."""
         from jupyter_jcli.kernel import kernel_connection
 
-        with patch("jupyter_jcli.kernel.KernelClient") as MockClient:
+        with (
+            patch("jupyter_jcli.kernel.KernelClient") as MockClient,
+            patch(
+                "jupyter_jcli.kernel._wait_for_kernel_websocket_ready",
+                side_effect=TimeoutError("kernel not ready"),
+            ),
+        ):
             mock_instance = MockClient.return_value
-            mock_instance._manager.client.wait_for_ready = MagicMock(
-                side_effect=TimeoutError("kernel not ready")
-            )
             mock_stop = mock_instance.stop
 
-            with pytest.raises(TimeoutError, match="kernel not ready"):
+            with pytest.raises(TimeoutError, match="Kernel didn't respond in 30 seconds"):
                 with kernel_connection("http://x", "tok", "kid"):
                     pass
 
-            mock_stop.assert_called_once()
+            assert mock_stop.call_count == 3
+
+    def test_kernel_connection_retries_fresh_websocket_after_probe_timeout(self):
+        """A wedged WebSocket should not poison the whole exec attempt."""
+        from jupyter_jcli.kernel import kernel_connection
+
+        first_kernel = MagicMock()
+        second_kernel = MagicMock()
+
+        with (
+            patch("jupyter_jcli.kernel.KernelClient") as MockClient,
+            patch("jupyter_jcli.kernel._wait_for_kernel_websocket_ready") as mock_ready,
+        ):
+            MockClient.side_effect = [first_kernel, second_kernel]
+            mock_ready.side_effect = [TimeoutError("wedged websocket"), None]
+
+            with kernel_connection("http://x", "tok", "kid") as kernel:
+                assert kernel is second_kernel
+
+            first_kernel.start.assert_called_once_with(timeout=10)
+            second_kernel.start.assert_called_once_with(timeout=10)
+            first_kernel.stop.assert_called_once()
+            second_kernel.stop.assert_called_once()
+
+    def test_ready_probe_accepts_only_matching_kernel_info_reply(self):
+        """The probe ignores stale/unrelated shell messages before succeeding."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        matching_reply = {
+            "msg_type": "kernel_info_reply",
+            "parent_header": {"msg_id": "probe-0"},
+            "content": {"protocol_version": "5.3"},
+        }
+        client = _FakeClient(
+            shell_messages=[
+                {"msg_type": "execute_reply", "parent_header": {"msg_id": "old"}},
+                {"msg_type": "kernel_info_reply", "parent_header": {"msg_id": "stale"}},
+                matching_reply,
+            ],
+            iopub_messages=[{"msg_type": "status"}],
+        )
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        _wait_for_kernel_websocket_ready(kernel, timeout=1)
+
+        assert client.sent_msg_ids == ["probe-0"]
+        assert client.handled_kernel_info_reply is matching_reply
+        assert client.iopub_channel.messages.empty()
+
+    def test_ready_probe_times_out_without_matching_reply(self):
+        """The probe fails clearly if shell forwarding never becomes ready."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        client = _FakeClient()
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
+            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+
+        assert client.sent_msg_ids == ["probe-0"]
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — real Jupyter server
+# Integration tests - real Jupyter server
 # ---------------------------------------------------------------------------
 
 class TestFreshConnectionExec:
@@ -90,8 +186,8 @@ class TestFreshConnectionExec:
         sid = data["session_id"]
 
         try:
-            # Execute code immediately — this exercises the race window.
-            # With the wait_for_ready fix, this must complete quickly.
+            # Execute code immediately - this exercises the race window.
+            # With the ready probe fix, this must complete quickly.
             result = runner.invoke(main, [
                 "-s", jupyter_server["url"], "-t", jupyter_server["token"],
                 "exec", sid, "--code", "print('fresh-ok')", "--timeout", "30",
@@ -179,7 +275,7 @@ class TestFreshConnectionExec:
 
 
 # ---------------------------------------------------------------------------
-# Signal handler tests — SIGINT → kernel interrupt
+# Signal handler tests - SIGINT -> kernel interrupt
 # ---------------------------------------------------------------------------
 
 class TestSigintHandlerUnit:
@@ -254,21 +350,24 @@ class TestSigintHandlerUnit:
         """kernel_connection sets and restores signal handlers."""
         from jupyter_jcli.kernel import kernel_connection
 
-        with patch("jupyter_jcli.kernel.KernelClient"):
-            with patch("jupyter_jcli.kernel.signal.signal") as mock_signal_fn:
-                mock_signal_fn.return_value = "OLD_HANDLER"
-                with kernel_connection("http://x", "tok", "kid"):
-                    pass
+        with (
+            patch("jupyter_jcli.kernel.KernelClient"),
+            patch("jupyter_jcli.kernel._wait_for_kernel_websocket_ready"),
+            patch("jupyter_jcli.kernel.signal.signal") as mock_signal_fn,
+        ):
+            mock_signal_fn.return_value = "OLD_HANDLER"
+            with kernel_connection("http://x", "tok", "kid"):
+                pass
 
-                # Should have been called twice for setup (SIGINT, SIGTERM)
-                # and twice for teardown
-                setup_calls = [
-                    c for c in mock_signal_fn.call_args_list
-                    if c[0][0] == signal.SIGINT
-                ]
-                assert len(setup_calls) == 2  # one set, one restore
-                assert len([c for c in mock_signal_fn.call_args_list
-                            if c[0][0] == signal.SIGTERM]) == 2
+            # Should have been called twice for setup (SIGINT, SIGTERM)
+            # and twice for teardown
+            setup_calls = [
+                c for c in mock_signal_fn.call_args_list
+                if c[0][0] == signal.SIGINT
+            ]
+            assert len(setup_calls) == 2  # one set, one restore
+            assert len([c for c in mock_signal_fn.call_args_list
+                        if c[0][0] == signal.SIGTERM]) == 2
 
 
 class TestSigintHandlerIntegration:
