@@ -25,12 +25,13 @@ def _count_hooks(settings: dict) -> int:
 
 
 class TestCodexScopeRouting:
-    def test_local_is_default(self, tmp_path, monkeypatch):
+    def test_project_is_default(self, tmp_path, monkeypatch):
+        """Default writes to .codex/hooks.json (Codex only reads hooks.json)."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = _invoke(runner, [])
         assert result.exit_code == 0
-        target = tmp_path / ".codex" / "hooks.local.json"
+        target = tmp_path / ".codex" / "hooks.json"
         assert target.exists()
 
     def test_project_writes_settings_json(self, tmp_path, monkeypatch):
@@ -64,7 +65,7 @@ class TestCodexInstall:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         _invoke(runner, ["--local"])
-        settings = _read_json(tmp_path / ".codex" / "hooks.local.json")
+        settings = _read_json(tmp_path / ".codex" / "hooks.json")
         count = _count_hooks(settings)
         assert count == 4
 
@@ -79,7 +80,7 @@ class TestCodexInstall:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         _invoke(runner, ["--local"])
-        settings = _read_json(tmp_path / ".codex" / "hooks.local.json")
+        settings = _read_json(tmp_path / ".codex" / "hooks.json")
         for event_list in settings.get("hooks", {}).values():
             for block in event_list:
                 for entry in block.get("hooks", []):
@@ -90,7 +91,7 @@ class TestCodexInstall:
         runner = CliRunner()
         _invoke(runner, ["--local"])
         _invoke(runner, ["--local"])
-        settings = _read_json(tmp_path / ".codex" / "hooks.local.json")
+        settings = _read_json(tmp_path / ".codex" / "hooks.json")
         assert _count_hooks(settings) == 4
 
     def test_warns_when_config_toml_missing(self, tmp_path, monkeypatch):
@@ -154,7 +155,7 @@ class TestCodexRemove:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         _invoke(runner, ["--local"])
-        target = tmp_path / ".codex" / "hooks.local.json"
+        target = tmp_path / ".codex" / "hooks.json"
         assert target.exists()
         _invoke(runner, ["--local", "--remove"])
         assert not target.exists()
@@ -186,12 +187,12 @@ class TestCodexRemove:
                 ]
             }
         }
-        (codex_dir / "hooks.local.json").write_text(
+        (codex_dir / "hooks.json").write_text(
             json.dumps(existing), encoding="utf-8"
         )
         runner = CliRunner()
         _invoke(runner, ["--local", "--remove"])
-        settings = _read_json(codex_dir / "hooks.local.json")
+        settings = _read_json(codex_dir / "hooks.json")
         assert _count_hooks(settings) == 1
 
 

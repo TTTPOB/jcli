@@ -156,9 +156,9 @@ j-cli setup git --local --remove
 Install Codex hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Codex to use j-cli instead.
 
 ```bash
-j-cli setup codex --local    # writes .codex/hooks.local.json (gitignored, this machine only)
-j-cli setup codex --project  # writes .codex/hooks.json       (committed, team-shared)
-j-cli setup codex --user     # writes ~/.codex/hooks.json     (global, all projects)
+j-cli setup codex             # writes .codex/hooks.json (default)
+j-cli setup codex --project   # same as default
+j-cli setup codex --user      # writes ~/.codex/hooks.json (global, all projects)
 
 # remove all j-cli managed hooks from the target file
 j-cli setup codex --remove

@@ -36,11 +36,11 @@ The command is idempotent — re-running updates the hook in place without dupli
 Run this once per project to prevent Codex from falling back to `jupyter nbconvert --execute` (or `papermill` / `runipy`) instead of j-cli:
 
 ```bash
-j-cli setup codex --local    # writes .codex/hooks.local.json (gitignored, this machine only)
+j-cli setup codex             # writes .codex/hooks.json (default)
 # or:
-j-cli setup codex --project  # writes .codex/hooks.json       (committed, team-shared)
+j-cli setup codex --project   # same as default
 # or:
-j-cli setup codex --user     # writes ~/.codex/hooks.json     (global, all projects)
+j-cli setup codex --user      # writes ~/.codex/hooks.json (global, all projects)
 ```
 
 The command is idempotent — re-running updates the hook in place without duplicating it.

@@ -125,9 +125,10 @@ def claude(ctx: Context, scope: str, remove: bool):
 
 @setup.command("codex")
 @click.option("--user",    "scope", flag_value=Scope.USER.value,    help="Write to ~/.codex/hooks.json")
-@click.option("--project", "scope", flag_value=Scope.PROJECT.value, help="Write to ./.codex/hooks.json")
-@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,   default=True,
-              help="Write to ./.codex/hooks.local.json (default, gitignored)")
+@click.option("--project", "scope", flag_value=Scope.PROJECT.value, default=True,
+              help="Write to ./.codex/hooks.json (default)")
+@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,
+              help="Alias for --project (Codex has no settings.local.json layer)")
 @click.option("--remove", is_flag=True, default=False,
               help="Remove all j-cli managed hooks from the target hooks file.")
 @pass_ctx
@@ -278,9 +279,9 @@ def _resolve_codex_path(scope: str) -> Path:
     s = Scope(scope)
     if s == Scope.USER:
         return Path.home() / ".codex" / "hooks.json"
-    if s == Scope.PROJECT:
-        return Path.cwd() / ".codex" / "hooks.json"
-    return Path.cwd() / ".codex" / "hooks.local.json"
+    # Codex only reads hooks.json — there is no hooks.local.json layer.
+    # Both --project and --local write to ./.codex/hooks.json.
+    return Path.cwd() / ".codex" / "hooks.json"
 
 
 def _load_settings(path: Path, use_json: bool) -> dict:
