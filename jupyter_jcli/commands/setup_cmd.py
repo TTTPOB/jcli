@@ -142,6 +142,11 @@ def codex(ctx: Context, scope: str, remove: bool):
       https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated
     """
     path = _resolve_codex_path(scope)
+    if Scope(scope) == Scope.LOCAL:
+        click.echo(
+            "Note: Codex has no hooks.local.json layer; --local writes to ./.codex/hooks.json",
+            err=True,
+        )
     _install_or_remove("codex", path, remove, ctx)
 
 
