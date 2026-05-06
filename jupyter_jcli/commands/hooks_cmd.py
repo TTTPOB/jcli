@@ -100,17 +100,25 @@ def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
     Grammar from codex-rs apply-patch.rs (openai/codex#2578):
       add_hunk:    "*** Add File: " filename LF add_line+
       update_hunk: "*** Update File: " filename LF change_move? change?
+      change_move: "*** Move to: " filename LF
       change_line: ("+" | "-" | " ") /(.+)/ LF
+
+    The parser accepts "*** " markers, but the model may still produce the
+    older "**_ " format from the legacy system prompt, so both are matched.
 
     Content lines always have + / - / space prefix at column 0, so directive
     markers at column 0 cannot be confused with file content.  ^ anchor
     enforces this guarantee.
     """
-    return [m.strip() for m in re.findall(
-        r'^\*{3} (?:Update|Add|Delete) File: (.+)$',
-        patch_text,
-        re.MULTILINE,
-    )]
+    _MARKER = r"\*{3}|\*{2}_"  # both "*** " and "**_ " (legacy prompt)
+    _DIRECTIVE = rf'^(?:{_MARKER}) (?:Update|Add|Delete) File: |^(?:{_MARKER}) Move to: '
+    paths: list[str] = []
+    for line in patch_text.splitlines():
+        m = re.match(_DIRECTIVE, line)
+        if not m:
+            continue
+        paths.append(line[m.end():].strip())
+    return paths
 
 
 @click.group(hidden=True)

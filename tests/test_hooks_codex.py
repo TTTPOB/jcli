@@ -82,6 +82,51 @@ class TestParseCodexApplyPatchFilePaths:
         result = _parse_codex_apply_patch_file_paths(text)
         assert result == ["real.py"]
 
+    def test_rename_move_to(self):
+        """Extracts both old (Update File) and new (Move to) paths."""
+        text = (
+            "*** Begin Patch\n"
+            "*** Update File: src/app.py\n"
+            "*** Move to: src/main.py\n"
+            "@@ -1 +1 @@\n"
+            "-print('hi')\n"
+            "+print('hello')\n"
+            "*** End Patch"
+        )
+        result = _parse_codex_apply_patch_file_paths(text)
+        assert result == ["src/app.py", "src/main.py"]
+
+    def test_move_to_with_add_and_delete(self):
+        """Move to works alongside Add and Delete hunks."""
+        text = (
+            "*** Begin Patch\n"
+            "*** Update File: old/foo.py\n"
+            "*** Move to: new/foo.py\n"
+            "@@ ... @@\n"
+            "*** Add File: new/bar.py\n"
+            "+print('bar')\n"
+            "*** Delete File: old/baz.py\n"
+            "*** End Patch"
+        )
+        result = _parse_codex_apply_patch_file_paths(text)
+        assert result == ["old/foo.py", "new/foo.py", "new/bar.py", "old/baz.py"]
+
+    def test_legacy_underscore_asterisk_format(self):
+        """Legacy ``**_ `` markers from the old system prompt are also matched."""
+        text = (
+            "**_ Begin Patch\n"
+            "**_ Update File: foo.py\n"
+            "**_ Move to: bar.py\n"
+            "@@ -1 +1 @@\n"
+            "- old\n"
+            "+ new\n"
+            "**_ Add File: baz.py\n"
+            "+print('new')\n"
+            "_** End Patch\n"
+        )
+        result = _parse_codex_apply_patch_file_paths(text)
+        assert result == ["foo.py", "bar.py", "baz.py"]
+
 
 class TestExtractFilePathsCodex:
     def test_array_command(self):
