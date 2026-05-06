@@ -12,9 +12,14 @@ uv tool install jupyter-jcli
 
 # latest dev version
 uv tool install git+https://github.com/tttpob/jcli.git
+
+# verify the installed CLI
+j-cli --version
 ```
 
 Requires Python 3.10+.
+
+Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`.
 
 ## Recommended Workflow
 

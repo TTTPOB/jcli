@@ -144,6 +144,7 @@ If not installed, install it with:
 
 ```bash
 uv tool install jupyter-jcli
+j-cli --version
 ```
 
 Note: the PyPI package name is `jupyter-jcli`, the binary name is `j-cli`.

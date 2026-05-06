@@ -44,7 +44,7 @@ pass_ctx = click.make_pass_decorator(Context)
     "--json", "-j", "use_json", is_flag=True, default=False,
     help="Output as JSON instead of human-readable text",
 )
-@click.version_option(package_name="jcli")
+@click.version_option(package_name="jupyter-jcli")
 @click.pass_context
 def main(ctx, server_url, token, use_json):
     """CLI tool for LLM agents to operate Jupyter Lab servers."""
