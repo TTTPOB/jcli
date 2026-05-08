@@ -90,7 +90,7 @@ j-cli setup git --include "notebooks/*" --include "experiments/*"
 |------|-------------|
 | `-s`, `--server-url` | Jupyter server URL (env: `JCLI_JUPYTER_SERVER_URL`, default: `http://localhost:8888`) |
 | `-t`, `--token` | Auth token (env: `JCLI_JUPYTER_SERVER_TOKEN`) |
-| `-j`, `--json` | Output as JSON for programmatic use |
+| `-j`, `--json` | Output as JSON for programmatic use; `exec --file` streams JSON Lines |
 | `--version` | Show version |
 
 ### `healthcheck`
