@@ -339,7 +339,7 @@ j-cli exec <session_id> --file notebook.ipynb --cell :3      # cells 0,1,2
 j-cli exec <session_id> --file script.py --cell 0
 ```
 
-Each cell in the range is executed sequentially. Outputs are reported per cell with `--- cell N ---` separators (or per-cell JSON objects with `-j`).
+Each cell in the range is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies. Human output uses `--- cell N ---` separators.
 
 **Timeout** (default: 10s per cell; when set, it's a total budget shared across cells):
 ```bash
@@ -352,12 +352,17 @@ j-cli -j exec <session_id> --code "print('hello')"
 # JSON: {"status": "ok", "outputs": [{"type": "stream", "stream_name": "stdout", "text": "hello\n"}]}
 
 j-cli -j exec <session_id> --file notebook.ipynb --cell 0:3
-# JSON: {"status": "ok", "cells": [{"cell_index": 0, "outputs": [...], "execution_count": 1}, ...], "notebook_updated": "notebook.ipynb"}
+# JSONL:
+# {"status":"ok","cell":{"cell_index":0,"outputs":[...],"execution_count":1},"notebook_updated":"notebook.ipynb"}
+# {"status":"ok","cell":{"cell_index":1,"outputs":[...],"execution_count":2},"notebook_updated":"notebook.ipynb"}
+# {"status":"ok","summary":{"cells_executed":2,"notebook_updated":"notebook.ipynb"}}
 ```
+
+When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you are a machine; JSON/JSONL mode is for scripts or tools that need to parse output programmatically.
 
 ## Notebook Writeback
 
-When executing from a file, j-cli automatically writes outputs back to the paired `.ipynb`:
+When executing from a file, j-cli automatically writes each completed cell's outputs back to the paired `.ipynb`:
 
 - `notebook.ipynb` → outputs written back to itself
 - `analysis.py` (py:percent) → outputs written to `analysis.ipynb`; **created automatically if it does not exist**

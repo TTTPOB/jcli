@@ -42,7 +42,7 @@ pass_ctx = click.make_pass_decorator(Context)
 )
 @click.option(
     "--json", "-j", "use_json", is_flag=True, default=False,
-    help="Output as JSON instead of human-readable text",
+    help="Output as JSON for commands; exec --file streams JSON Lines for scripts",
 )
 @click.version_option(package_name="jupyter-jcli")
 @click.pass_context

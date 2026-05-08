@@ -9,6 +9,10 @@ from click.testing import CliRunner
 from jupyter_jcli.cli import main
 
 
+def _jsonl_events(output: str) -> list[dict]:
+    return [json.loads(line) for line in output.splitlines() if line.strip()]
+
+
 class TestExecCode:
     """Test inline --code execution.
 
@@ -131,11 +135,48 @@ class TestExecFile:
             "--file", str(script), "--cell", "0:3",
         ])
         assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert len(data["cells"]) == 3
+        events = _jsonl_events(result.output)
+        cell_events = [event for event in events if "cell" in event]
+        assert len(cell_events) == 3
         # cell 1 prints 11
-        cell1_out = data["cells"][1]["outputs"]
+        cell1_out = cell_events[1]["cell"]["outputs"]
         assert any("11" in o.get("text", "") for o in cell1_out)
+
+    def test_file_json_output_is_jsonl_per_cell(self, live_session, mock_kernel_connection, tmp_path):
+        runner = CliRunner()
+        script = tmp_path / "jsonl.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            print("alpha")
+
+            # %%
+            print("beta")
+        """))
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"],
+            "--file", str(script), "--cell", "0:2",
+        ])
+
+        assert result.exit_code == 0
+        lines = _jsonl_events(result.output)
+        assert len(lines) == 3
+        assert lines[0]["status"] == "ok"
+        assert lines[0]["cell"]["cell_index"] == 0
+        assert any("alpha" in o.get("text", "") for o in lines[0]["cell"]["outputs"])
+        assert lines[0]["notebook_created"] == str(tmp_path / "jsonl.ipynb")
+        assert lines[0]["notebook_updated"] == str(tmp_path / "jsonl.ipynb")
+        assert lines[1]["cell"]["cell_index"] == 1
+        assert any("beta" in o.get("text", "") for o in lines[1]["cell"]["outputs"])
+        assert lines[1]["notebook_updated"] == str(tmp_path / "jsonl.ipynb")
+        assert lines[2] == {
+            "status": "ok",
+            "summary": {
+                "cells_executed": 2,
+                "notebook_updated": str(tmp_path / "jsonl.ipynb"),
+            },
+        }
 
     def test_ipynb_execution(self, live_session, mock_kernel_connection, tmp_path):
         runner = CliRunner()
@@ -268,10 +309,11 @@ class TestExecAutoCreatesIpynb:
             "--json", "exec", live_session["session_id"], "--file", str(script),
         ])
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        events = _jsonl_events(result.output)
+        cell_event = next(event for event in events if "cell" in event)
         # Should update, not create
-        assert "notebook_created" not in data
-        assert data.get("notebook_updated") == str(nb_path)
+        assert "notebook_created" not in cell_event
+        assert cell_event.get("notebook_updated") == str(nb_path)
 
     def test_json_output_includes_notebook_created(self, live_session, mock_kernel_connection, tmp_path):
         """--json output includes notebook_created field when auto-creation triggers."""
@@ -287,7 +329,8 @@ class TestExecAutoCreatesIpynb:
             "--json", "exec", live_session["session_id"], "--file", str(script),
         ])
         assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["status"] == "ok"
-        assert "notebook_created" in data
-        assert data["notebook_created"].endswith("json_test.ipynb")
+        events = _jsonl_events(result.output)
+        cell_event = next(event for event in events if "cell" in event)
+        assert cell_event["status"] == "ok"
+        assert "notebook_created" in cell_event
+        assert cell_event["notebook_created"].endswith("json_test.ipynb")

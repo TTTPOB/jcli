@@ -281,7 +281,11 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 | `3:` | Cell 3 to end |
 | `:5` | Cells 0 through 4 |
 
-**Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically. Plain Python scripts without markers are executed normally without creating a notebook.
+For file execution, each selected cell is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies.
+
+Human mode is intended for direct reading by people and agents. Use `--json` when a script needs structured output; `j-cli --json exec --file ...` streams JSON Lines, one object per completed cell plus a final summary object.
+
+**Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), each completed cell's outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically before the first cell executes. Plain Python scripts without markers are executed normally without creating a notebook.
 
 **Convert baseline refresh**: When `j-cli convert` syncs a canonical managed pair (`foo.py` ↔ `foo.ipynb`, or `foo.dummy.py` ↔ `foo.ipynb`) inside a git repo, it also refreshes the sticky pair baseline under `refs/jcli/pair-sync/*`. This lets later drift checks compare against the last successful pair sync instead of falling back to an older `HEAD`.
 

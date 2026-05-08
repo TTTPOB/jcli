@@ -1,5 +1,6 @@
 """jcli exec — execute code or cells from files."""
 
+import json
 from pathlib import Path
 
 import click
@@ -92,8 +93,22 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
         if not selected:
             emit_error("PARSE_ERROR", "No code cells found to execute", ctx.use_json)
 
-        cell_results = []
-        all_outputs_human = []
+        notebook_created = None
+        ipynb_path = parsed.paired_ipynb
+        if ipynb_path is None and parsed.is_py_percent and file_path.endswith(".py"):
+            from jupyter_jcli.parser import ipynb_path_for_py
+            from jupyter_jcli.pair_io import create_ipynb_from_parsed
+            import nbformat as _nbformat
+
+            target = ipynb_path_for_py(Path(file_path))
+            nb = create_ipynb_from_parsed(parsed)
+            _nbformat.write(nb, str(target))
+            parsed.paired_ipynb = str(target)
+            ipynb_path = str(target)
+            notebook_created = str(target)
+
+        cells_executed = 0
+        last_notebook_updated = None
         deadline = _time.monotonic() + timeout if timeout is not None else None
 
         with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
@@ -110,57 +125,63 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
                 raw_outputs = result.get("outputs", [])
                 outputs = process_outputs(raw_outputs)
 
-                cell_results.append({
+                cell_result = {
                     "cell_index": cell.index,
                     "source_preview": cell.source[:80].replace("\n", " "),
                     "outputs": outputs,
                     "raw_outputs": raw_outputs,
                     "execution_count": result.get("execution_count"),
-                })
+                }
 
-                if not ctx.use_json:
-                    all_outputs_human.append(f"--- cell {cell.index} ---")
-                    text = format_outputs_human(outputs)
-                    if text:
-                        all_outputs_human.append(text)
+                notebook_updated = None
+                if ipynb_path:
+                    notebook_updated = write_outputs_to_notebook(ipynb_path, [cell_result])
+                    if notebook_updated is None:
+                        raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
+                    last_notebook_updated = notebook_updated
 
-        # Auto-create paired .ipynb for py:percent files that have no pair yet
-        notebook_created = None
-        if parsed.paired_ipynb is None and parsed.is_py_percent and file_path.endswith(".py"):
-            from jupyter_jcli.parser import ipynb_path_for_py
-            from jupyter_jcli.pair_io import create_ipynb_from_parsed
-            import nbformat as _nbformat
-
-            target = ipynb_path_for_py(Path(file_path))
-            nb = create_ipynb_from_parsed(parsed)
-            _nbformat.write(nb, str(target))
-            parsed.paired_ipynb = str(target)
-            notebook_created = str(target)
-
-        # Write back to notebook
-        notebook_updated = None
-        ipynb_path = parsed.paired_ipynb
-        if ipynb_path:
-            notebook_updated = write_outputs_to_notebook(ipynb_path, cell_results)
+                cells_executed += 1
+                _emit_file_cell_result(ctx, cell_result, notebook_created, notebook_updated)
+                notebook_created = None
 
         if ctx.use_json:
-            # Remove raw_outputs from JSON output (they're internal)
-            for cr in cell_results:
-                del cr["raw_outputs"]
-            data = {"status": ResponseStatus.OK, "cells": cell_results}
-            if notebook_created:
-                data["notebook_created"] = notebook_created
-            if notebook_updated:
-                data["notebook_updated"] = notebook_updated
-            emit(data, use_json=True)
-        else:
-            if notebook_created:
-                all_outputs_human.append(f"\nNotebook created: {notebook_created}")
-            if notebook_updated:
-                all_outputs_human.append(f"\nNotebook updated: {notebook_updated}")
-            emit({"_human": "\n".join(all_outputs_human)}, use_json=False)
+            summary = {"cells_executed": cells_executed}
+            if last_notebook_updated:
+                summary["notebook_updated"] = last_notebook_updated
+            _emit_jsonl({"status": ResponseStatus.OK, "summary": summary})
 
     except SystemExit:
         raise
     except Exception as e:
         emit_error("EXECUTION_ERROR", str(e), ctx.use_json)
+
+
+def _emit_file_cell_result(
+    ctx: Context,
+    cell_result: dict,
+    notebook_created: str | None,
+    notebook_updated: str | None,
+) -> None:
+    if ctx.use_json:
+        cell_payload = {key: value for key, value in cell_result.items() if key != "raw_outputs"}
+        data = {"status": ResponseStatus.OK, "cell": cell_payload}
+        if notebook_created:
+            data["notebook_created"] = notebook_created
+        if notebook_updated:
+            data["notebook_updated"] = notebook_updated
+        _emit_jsonl(data)
+        return
+
+    parts = [f"--- cell {cell_result['cell_index']} ---"]
+    text = format_outputs_human(cell_result["outputs"])
+    if text:
+        parts.append(text)
+    if notebook_created:
+        parts.append(f"Notebook created: {notebook_created}")
+    if notebook_updated:
+        parts.append(f"Notebook updated: {notebook_updated}")
+    emit({"_human": "\n".join(parts)}, use_json=False)
+
+
+def _emit_jsonl(data: dict) -> None:
+    click.echo(json.dumps(data, ensure_ascii=False))
