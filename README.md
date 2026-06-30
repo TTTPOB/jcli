@@ -109,6 +109,14 @@ List available kernel specifications.
 j-cli kernelspec list
 ```
 
+### `kernelspec inspect-file`
+
+Inspect kernel metadata declared by a py:percent file or notebook.
+
+```bash
+j-cli -j kernelspec inspect-file analysis.py
+```
+
 ### `session`
 
 ```bash

@@ -173,14 +173,12 @@ You can also pass them as flags per-command: `-s <url>` and `-t <token>`.
 A typical workflow follows these steps:
 
 1. **Check connectivity** — run `j-cli healthcheck`; if it fails the server is not running — start it first (see *Starting the Jupyter server* above)
-2. **Detect kernel spec** — if the user provides a `.py` or `.ipynb` file, use the parser module to extract the kernel name:
-   ```python
-   from jupyter_jcli.parser import parse_file
-   parsed = parse_file("analysis.py")  # or "notebook.ipynb"
-   print(parsed.kernel_name)  # e.g. "ir", "python3", "julia-1.10"
+2. **Detect kernel spec** — if the user provides a `.py` or `.ipynb` file, inspect the file metadata through the CLI:
+   ```bash
+   j-cli -j kernelspec inspect-file analysis.py
    ```
-   Use `parsed.kernel_name` as the `--kernel` value when creating the session. If it's `None`, fall back to `python3` or ask the user.
-3. **Create a session** — use the detected kernel spec (or fall back to `python3`)
+   Use `kernel_name` as the `--kernel` value when creating the session. If `kernel_name` is `null`, do not guess blindly. First inspect the paired notebook if one exists, then infer from project environment files (`pixi.toml`, `pyproject.toml` / `uv.lock`, Conda environment files) and `j-cli -j kernelspec list` whether there is one promising kernel. If there is no clear single match, ask the user to specify the kernel.
+3. **Create a session** — use the detected or clearly inferred kernel spec
 4. **Execute code** — run inline code or cells from files
 5. **Clean up** — kill the session when done
 
@@ -192,8 +190,8 @@ j-cli healthcheck
 # Output: OK  Jupyter server v2.14.2  0 kernel(s) running
 
 # 2. Detect kernel spec from the file
-python -c "from jupyter_jcli.parser import parse_file; print(parse_file('analysis.py').kernel_name)"
-# Output: ir
+j-cli -j kernelspec inspect-file analysis.py
+# Output: {"path": "analysis.py", "kernel_name": "ir", "kernel_display_name": null, "kernel_language": null}
 
 # 3. Create a session with the detected kernel
 j-cli -j session create --kernel ir --name analysis
