@@ -31,3 +31,28 @@ def list_specs(ctx: Context):
 
     except Exception as e:
         emit_error("CONNECTION_FAILED", str(e), ctx.use_json)
+
+
+@kernelspec.command("inspect-file")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@pass_ctx
+def inspect_file(ctx: Context, path: str):
+    """Inspect kernel metadata declared by a .py or .ipynb file."""
+    try:
+        from jupyter_jcli.parser import parse_file
+
+        parsed = parse_file(path)
+        data = {
+            "path": path,
+            "kernel_name": parsed.kernel_name,
+            "kernel_display_name": parsed.kernel_display_name,
+            "kernel_language": parsed.kernel_language,
+        }
+        if ctx.use_json:
+            emit(data, use_json=True)
+            return
+
+        kernel_name = parsed.kernel_name or "None"
+        emit({"_human": kernel_name}, use_json=False)
+    except Exception as e:
+        emit_error("INSPECT_FILE_FAILED", str(e), ctx.use_json)
