@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.request
 from contextlib import contextmanager
+from uuid import uuid4
 
 from jupyter_kernel_client import KernelClient
 
@@ -197,12 +198,42 @@ def kernel_connection(server_url: str, token: str | None, kernel_id: str):
         kernel.stop()
 
 
+@contextmanager
+def expression_display_mode(kernel: KernelClient, display_mode: str, timeout: float = 10):
+    """Temporarily configure how IPython displays top-level expressions."""
+    state_attr = f"_jcli_ast_node_interactivity_{uuid4().hex}"
+    setup_result = kernel.execute(
+        "setattr(get_ipython(), "
+        f"{state_attr!r}, get_ipython().ast_node_interactivity)\n"
+        f"get_ipython().ast_node_interactivity = {display_mode!r}",
+        silent=True,
+        store_history=False,
+        timeout=timeout,
+    )
+    if setup_result.get("status") != "ok":
+        raise RuntimeError(f"Kernel failed to enable IPython display mode {display_mode!r}")
+
+    try:
+        yield
+    finally:
+        kernel.execute(
+            "_jcli_shell = get_ipython()\n"
+            f"_jcli_shell.ast_node_interactivity = getattr(_jcli_shell, {state_attr!r})\n"
+            f"delattr(_jcli_shell, {state_attr!r})\n"
+            "del _jcli_shell",
+            silent=True,
+            store_history=False,
+            timeout=10,
+        )
+
+
 def execute_code(
     server_url: str,
     token: str | None,
     kernel_id: str,
     code: str,
     timeout: int = 300,
+    display_mode: str = "last_expr",
 ) -> dict:
     """Execute code in a kernel and return raw result.
 
@@ -210,4 +241,5 @@ def execute_code(
     and 'execution_count'.
     """
     with kernel_connection(server_url, token, kernel_id) as kernel:
-        return kernel.execute(code, timeout=timeout)
+        with expression_display_mode(kernel, display_mode, timeout=timeout):
+            return kernel.execute(code, timeout=timeout)

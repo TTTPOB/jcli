@@ -17,9 +17,24 @@ from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 @click.option("--code", "-c", default=None, help="Code to execute directly")
 @click.option("--file", "-f", "file_path", default=None, help="Path to .py or .ipynb file")
 @click.option("--cell", default=None, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)")
+@click.option(
+    "--display-mode",
+    type=click.Choice(["last_expr", "all", "last_expr_or_assign", "last", "none"]),
+    default="last_expr",
+    show_default=True,
+    help="IPython expression display mode for code and file execution",
+)
 @click.option("--timeout", default=None, type=int, help="Total execution timeout in seconds (default: 10s per cell)")
 @pass_ctx
-def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | None, cell: str | None, timeout: int | None):
+def exec_cmd(
+    ctx: Context,
+    session_id: str,
+    code: str | None,
+    file_path: str | None,
+    cell: str | None,
+    display_mode: str,
+    timeout: int | None,
+):
     """Execute code in a kernel session.
 
     Either --code or --file (with --cell) must be provided.
@@ -38,19 +53,26 @@ def exec_cmd(ctx: Context, session_id: str, code: str | None, file_path: str | N
 
     # Direct code execution
     if code:
-        _exec_code(ctx, kernel_id, code, timeout)
+        _exec_code(ctx, kernel_id, code, display_mode, timeout)
         return
 
     # File-based execution
-    _exec_file(ctx, kernel_id, file_path, cell, timeout)
+    _exec_file(ctx, kernel_id, file_path, cell, display_mode, timeout)
 
 
-def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int | None):
+def _exec_code(ctx: Context, kernel_id: str, code: str, display_mode: str, timeout: int | None):
     """Execute inline code."""
     try:
         from jupyter_jcli.kernel import execute_code
 
-        result = execute_code(ctx.server_url, ctx.token, kernel_id, code, timeout if timeout is not None else 10)
+        result = execute_code(
+            ctx.server_url,
+            ctx.token,
+            kernel_id,
+            code,
+            timeout if timeout is not None else 10,
+            display_mode,
+        )
         raw_outputs = result.get("outputs", [])
         outputs = process_outputs(raw_outputs)
 
@@ -65,7 +87,14 @@ def _exec_code(ctx: Context, kernel_id: str, code: str, timeout: int | None):
         emit_error("EXECUTION_ERROR", str(e), ctx.use_json)
 
 
-def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | None, timeout: int | None):
+def _exec_file(
+    ctx: Context,
+    kernel_id: str,
+    file_path: str,
+    cell_spec: str | None,
+    display_mode: str,
+    timeout: int | None,
+):
     """Execute cells from a file.
 
     If *timeout* is None, each cell gets a 10s per-cell timeout with no
@@ -76,7 +105,7 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
         import time as _time
 
         from jupyter_jcli.parser import parse_file, parse_cell_spec
-        from jupyter_jcli.kernel import kernel_connection
+        from jupyter_jcli.kernel import expression_display_mode, kernel_connection
 
         parsed = parse_file(file_path)
 
@@ -112,37 +141,42 @@ def _exec_file(ctx: Context, kernel_id: str, file_path: str, cell_spec: str | No
         deadline = _time.monotonic() + timeout if timeout is not None else None
 
         with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
-            for cell in selected:
-                if deadline is not None:
-                    remaining = deadline - _time.monotonic()
-                    if remaining <= 0:
-                        emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded at cell {cell.index}", ctx.use_json)
-                        break
-                else:
-                    remaining = 10
+            setup_timeout = max(deadline - _time.monotonic(), 0) if deadline is not None else 10
+            if setup_timeout <= 0:
+                emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded before execution", ctx.use_json)
 
-                result = kernel.execute(cell.source, timeout=remaining)
-                raw_outputs = result.get("outputs", [])
-                outputs = process_outputs(raw_outputs)
+            with expression_display_mode(kernel, display_mode, timeout=setup_timeout):
+                for cell in selected:
+                    if deadline is not None:
+                        remaining = deadline - _time.monotonic()
+                        if remaining <= 0:
+                            emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded at cell {cell.index}", ctx.use_json)
+                            break
+                    else:
+                        remaining = 10
 
-                cell_result = {
-                    "cell_index": cell.index,
-                    "source_preview": cell.source[:80].replace("\n", " "),
-                    "outputs": outputs,
-                    "raw_outputs": raw_outputs,
-                    "execution_count": result.get("execution_count"),
-                }
+                    result = kernel.execute(cell.source, timeout=remaining)
+                    raw_outputs = result.get("outputs", [])
+                    outputs = process_outputs(raw_outputs)
 
-                notebook_updated = None
-                if ipynb_path:
-                    notebook_updated = write_outputs_to_notebook(ipynb_path, [cell_result])
-                    if notebook_updated is None:
-                        raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
-                    last_notebook_updated = notebook_updated
+                    cell_result = {
+                        "cell_index": cell.index,
+                        "source_preview": cell.source[:80].replace("\n", " "),
+                        "outputs": outputs,
+                        "raw_outputs": raw_outputs,
+                        "execution_count": result.get("execution_count"),
+                    }
 
-                cells_executed += 1
-                _emit_file_cell_result(ctx, cell_result, notebook_created, notebook_updated)
-                notebook_created = None
+                    notebook_updated = None
+                    if ipynb_path:
+                        notebook_updated = write_outputs_to_notebook(ipynb_path, [cell_result])
+                        if notebook_updated is None:
+                            raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
+                        last_notebook_updated = notebook_updated
+
+                    cells_executed += 1
+                    _emit_file_cell_result(ctx, cell_result, notebook_created, notebook_updated)
+                    notebook_created = None
 
         if ctx.use_json:
             summary = {"cells_executed": cells_executed}

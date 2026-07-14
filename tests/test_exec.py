@@ -38,6 +38,25 @@ class TestExecCode:
         assert result.exit_code == 0
         assert "5" in result.output
 
+    def test_display_mode_applies_to_inline_code(self, live_session, mock_execute_code):
+        runner = CliRunner()
+        default_result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--code", '"first"\n"second"',
+        ])
+        all_result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--code", '"first"\n"second"',
+            "--display-mode", "all",
+        ])
+
+        assert default_result.exit_code == 0
+        assert all_result.exit_code == 0
+        default_outputs = json.loads(default_result.output)["outputs"]
+        all_outputs = json.loads(all_result.output)["outputs"]
+        assert [output["text"] for output in default_outputs] == ["'second'"]
+        assert [output["text"] for output in all_outputs] == ["'first'", "'second'"]
+
     def test_error_output(self, live_session, mock_execute_code):
         runner = CliRunner()
         result = runner.invoke(main, [
@@ -142,6 +161,76 @@ class TestExecFile:
         cell1_out = cell_events[1]["cell"]["outputs"]
         assert any("11" in o.get("text", "") for o in cell1_out)
 
+    def test_py_percent_displays_every_rich_expression(self, live_session, mock_kernel_connection, tmp_path):
+        runner = CliRunner()
+        script = tmp_path / "tables.py"
+        script.write_text(textwrap.dedent("""\
+            # %%
+            class Table:
+                def __init__(self, value):
+                    self.value = value
+
+                def _repr_html_(self):
+                    return f"<table><tr><td>{self.value}</td></tr></table>"
+
+            Table("first")
+            Table("second")
+        """))
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--file", str(script),
+            "--display-mode", "all",
+        ])
+
+        assert result.exit_code == 0
+        events = _jsonl_events(result.output)
+        html_outputs = [
+            output["html"]
+            for output in events[0]["cell"]["outputs"]
+            if output["type"] == "html"
+        ]
+        assert len(html_outputs) == 2
+        assert "first" in html_outputs[0]
+        assert "second" in html_outputs[1]
+
+    def test_plain_script_defaults_to_last_expression(self, live_session, mock_kernel_connection, tmp_path):
+        runner = CliRunner()
+        script = tmp_path / "plain.py"
+        script.write_text('"plain first"\n"plain second"\n')
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--file", str(script),
+        ])
+
+        assert result.exit_code == 0
+        events = _jsonl_events(result.output)
+        texts = [
+            output["text"]
+            for output in events[0]["cell"]["outputs"]
+            if output["type"] == "execute_result"
+        ]
+        assert texts == ["'plain second'"]
+
+    def test_file_execution_restores_interactivity(self, live_session, mock_kernel_connection, tmp_path):
+        before = mock_kernel_connection.execute(
+            "get_ipython().ast_node_interactivity", timeout=10
+        )["outputs"][-1]["data"]["text/plain"]
+        script = tmp_path / "restore.py"
+        script.write_text('"run"\n')
+
+        result = CliRunner().invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "exec", live_session["session_id"], "--file", str(script),
+        ])
+
+        assert result.exit_code == 0
+        after = mock_kernel_connection.execute(
+            "get_ipython().ast_node_interactivity", timeout=10
+        )["outputs"][-1]["data"]["text/plain"]
+        assert after == before
+
     def test_file_json_output_is_jsonl_per_cell(self, live_session, mock_kernel_connection, tmp_path):
         runner = CliRunner()
         script = tmp_path / "jsonl.py"
@@ -196,6 +285,26 @@ class TestExecFile:
         ])
         assert result.exit_code == 0
         assert "from ipynb" in result.output
+
+    def test_ipynb_displays_every_expression(self, live_session, mock_kernel_connection, tmp_path):
+        runner = CliRunner()
+        import nbformat
+        nb = nbformat.v4.new_notebook()
+        nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
+        nb.cells = [nbformat.v4.new_code_cell('"ipynb first"\n"ipynb second"')]
+        nb_path = tmp_path / "display_all.ipynb"
+        nbformat.write(nb, nb_path)
+
+        result = runner.invoke(main, [
+            "-s", live_session["url"], "-t", live_session["token"],
+            "--json", "exec", live_session["session_id"], "--file", str(nb_path),
+            "--display-mode", "all",
+        ])
+
+        assert result.exit_code == 0
+        updated = nbformat.read(nb_path, as_version=4)
+        texts = [output["data"]["text/plain"] for output in updated.cells[0].outputs]
+        assert texts == ["'ipynb first'", "'ipynb second'"]
 
 
 class TestExecAutoCreatesIpynb:

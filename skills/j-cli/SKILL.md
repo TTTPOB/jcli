@@ -334,6 +334,7 @@ Execute code in a kernel session. This is the most important command.
 ```bash
 j-cli exec <session_id> --code "print('hello')"
 j-cli exec <session_id> -c "import pandas as pd; df = pd.read_csv('data.csv'); df.describe()"
+j-cli exec <session_id> --code $'df.head()\ndf.describe()' --display-mode all
 ```
 
 **From a file:**
@@ -351,9 +352,18 @@ j-cli exec <session_id> --file notebook.ipynb --cell :3      # cells 0,1,2
 
 # From py:percent file
 j-cli exec <session_id> --file script.py --cell 0
+
+# Display every top-level expression in each selected cell
+j-cli exec <session_id> --file script.py --display-mode all
 ```
 
 Each cell in the range is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies. Human output uses `--- cell N ---` separators.
+
+Inline code and file execution default to `--display-mode last_expr`, matching VS Code
+notebook behavior: only the final expression is displayed. Use `all` when every top-level
+table or figure expression should be displayed. Use `last_expr_or_assign` when a final
+assignment should also produce output. The accepted modes are `last_expr`, `all`,
+`last_expr_or_assign`, `last`, and `none`.
 
 **Timeout** (default: 10s per cell; when set, it's a total budget shared across cells):
 ```bash
@@ -422,14 +432,19 @@ import numpy as np
 
 # %%
 x = np.linspace(0, 10, 100)
-plt.plot(x, np.sin(x))
-plt.savefig("sine.png")
-plt.show()
+fig, ax = plt.subplots()
+ax.plot(x, np.sin(x))
+fig
 
 # %% [markdown]
 # ## Results
 # The plot above shows a sine wave.
 ```
+
+`j-cli exec --file` displays the final expression in each code cell by default. Leave a
+table or figure as the final bare expression, such as `df` or `fig`, to display it without
+an explicit `display(...)` or `plt.show()` call. Pass `--display-mode all` when the cell
+contains multiple expressions that should produce outputs.
 
 ### Editing via py:percent round-trip
 

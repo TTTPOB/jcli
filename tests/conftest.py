@@ -212,8 +212,11 @@ def mock_execute_code(live_kernel):
     """
     from unittest.mock import patch
 
-    def _reuse(url, token, kid, code, timeout=300):
-        return live_kernel.execute(code, timeout=timeout)
+    def _reuse(url, token, kid, code, timeout=300, display_mode="last_expr"):
+        from jupyter_jcli.kernel import expression_display_mode
+
+        with expression_display_mode(live_kernel, display_mode, timeout=timeout):
+            return live_kernel.execute(code, timeout=timeout)
 
     with patch("jupyter_jcli.kernel.execute_code", side_effect=_reuse):
         yield live_kernel

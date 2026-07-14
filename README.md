@@ -294,8 +294,14 @@ Execute code in a kernel session. Supports inline code, py:percent files, and Ju
 # inline code
 j-cli exec <session_id> --code "import pandas as pd; df = pd.read_csv('data.csv'); df.head()"
 
+# display every top-level expression in inline code
+j-cli exec <session_id> --code $'df.head()\ndf.describe()' --display-mode all
+
 # execute from py:percent file
 j-cli exec <session_id> --file analysis.py
+
+# display every top-level expression instead of only the last one
+j-cli exec <session_id> --file analysis.py --display-mode all
 
 # execute specific cells from a notebook
 j-cli exec <session_id> --file notebook.ipynb --cell 0:3
@@ -313,7 +319,7 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 | `3:` | Cell 3 to end |
 | `:5` | Cells 0 through 4 |
 
-For file execution, each selected cell is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies.
+Inline code and file execution default to `--display-mode last_expr`, matching VS Code notebook behavior by displaying only the final expression. Use `--display-mode all` to display every top-level table or figure expression, or `--display-mode last_expr_or_assign` to also display a final assignment. For file execution, each selected cell runs sequentially; j-cli prints and writes back its outputs before starting the next cell. j-cli restores the kernel's previous display mode after execution.
 
 Human mode is intended for direct reading by people and agents. Use `--json` when a script needs structured output; `j-cli --json exec --file ...` streams JSON Lines, one object per completed cell plus a final summary object.
 

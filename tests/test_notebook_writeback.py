@@ -169,12 +169,12 @@ class TestPyPercentWriteback:
         call_count = 0
         original_execute = mock_kernel_connection.execute
 
-        def _execute_then_raise(source, timeout=10):
+        def _execute_then_raise(source, timeout=10, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 2:
+            if call_count == 3:
                 raise RuntimeError("simulated kernel transport failure")
-            return original_execute(source, timeout=timeout)
+            return original_execute(source, timeout=timeout, **kwargs)
 
         with patch.object(mock_kernel_connection, "execute", side_effect=_execute_then_raise):
             result = runner.invoke(main, [
