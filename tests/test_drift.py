@@ -260,6 +260,17 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
 
+    def test_formatter_removing_eof_blank_lines_is_in_sync(self, tmp_path):
+        py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1\n"])
+        py.write_text(py.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+
+        with self._patch_git(_make_py_text("x = 1")):
+            result = check_drift(py, ipynb)
+
+        assert result.status == "in_sync"
+        assert result.py_needs_update is False
+        assert result.ipynb_needs_update is False
+
     def test_diff_text_empty_in_in_sync(self, tmp_path):
         """IN_SYNC result has empty diff_text."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1"])

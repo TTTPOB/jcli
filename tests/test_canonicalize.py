@@ -68,6 +68,16 @@ class TestCanonicalizePyText:
         result = canonicalize_py_text(text)
         assert "x = 1" in result
 
+    def test_normalizes_formatter_eof_whitespace(self):
+        variants = [
+            "# %%\nx = 1",
+            "# %%\nx = 1\n",
+            "# %%\nx = 1\n\n",
+            "# %%\nx = 1\n\n\n",
+        ]
+
+        assert len({canonicalize_py_text(text) for text in variants}) == 1
+
     def test_empty_cells_dropped(self):
         text = (
             "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
