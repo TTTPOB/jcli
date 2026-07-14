@@ -56,6 +56,22 @@ The command is idempotent — re-running updates the hook in place without dupli
 
 > **Note:** `notebook-edit-guard` is not installed for Codex because Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
+## One-time OpenCode hook install
+
+Run this once per project to install the j-cli OpenCode plugin:
+
+```bash
+j-cli setup opencode             # writes .opencode/plugins/jcli.js (default)
+# or:
+j-cli setup opencode --project   # same as default
+# or:
+j-cli setup opencode --user      # writes ~/.config/opencode/plugins/jcli.js
+```
+
+OpenCode loads the plugin at startup. The plugin applies the execution guards to `bash`, the pair drift guards to `edit`, `write`, and `apply_patch`, and appends post-edit synchronization notices to tool output. Set `JCLI_BIN` before starting OpenCode if `j-cli` is not available on its `PATH`.
+
+Do not install both project and user copies. OpenCode loads both plugin directories and would invoke both copies.
+
 ## Installing the git pre-commit hook
 
 Run once per repository to keep `.py` / `.ipynb` pairs in sync at commit time:
@@ -446,8 +462,8 @@ The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exi
 
 | Who triggers | Hook | When | Meaning | Next step |
 |---|---|---|---|---|
-| Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
-| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write | Your edit may have diverged the pair | If auto-synced: nothing to do. If warned: pick a side with `j-cli convert` |
+| Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write/apply_patch | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
+| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | If auto-synced: nothing to do. If warned: pick a side with `j-cli convert` |
 | Agent | `notebook-edit-guard` | Pre NotebookEdit | Hard deny; use py:percent round-trip | Follow the three-step convert workflow above |
 
 ## Error Handling

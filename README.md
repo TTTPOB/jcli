@@ -61,10 +61,14 @@ j-cli healthcheck
 
 ### 4. Set up hooks (once per project)
 
-Install Claude Code hooks so the AI redirects notebook edits through j-cli:
+Install hooks for your coding agent so it redirects notebook edits through j-cli:
 
 ```bash
 j-cli setup claude
+# or
+j-cli setup codex
+# or
+j-cli setup opencode
 ```
 
 Install the git `pre-commit` hook to keep `.py` / `.ipynb` pairs in sync:
@@ -193,6 +197,26 @@ The install command is idempotent — re-running updates hooks in place without 
 
 > `notebook-edit-guard` is not installed for Codex — Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
+### `setup opencode`
+
+Install a self-contained OpenCode plugin that intercepts notebook-execution bypass tools and keeps `.py` / `.ipynb` pairs in sync. OpenCode loads JavaScript files from its plugin directories at startup.
+
+```bash
+j-cli setup opencode             # writes .opencode/plugins/jcli.js (default)
+j-cli setup opencode --project   # same as default
+j-cli setup opencode --user      # writes ~/.config/opencode/plugins/jcli.js
+
+# remove the j-cli managed plugin
+j-cli setup opencode --remove
+j-cli setup opencode --user --remove
+```
+
+The installer updates only files carrying the j-cli managed marker. It refuses to overwrite or remove an unrelated `jcli.js`. Avoid installing both project and user copies because OpenCode loads both plugin directories.
+
+The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output.
+
+The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment.
+
 ### `serve-cmd`
 
 Print a copy-pasteable Jupyter launch command that references the token via an environment variable rather than inlining it.
@@ -320,6 +344,10 @@ done — log files accumulate in `/tmp` and are not rotated.
 
 Override the log directory with `JCLI_DEBUG_LOG_DIR=/path/to/dir` if `/tmp` is
 not writable or you want the logs elsewhere.
+
+For OpenCode, inspect the OpenCode application log for entries with service
+`j-cli`. The plugin logs subprocess startup failures, non-zero exits, stderr,
+and malformed guard output while allowing the tool call to continue.
 
 If `refs/jcli/pair-sync/*` accumulates over time, clean stale entries with:
 
