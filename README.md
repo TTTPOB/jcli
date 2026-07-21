@@ -321,6 +321,8 @@ j-cli exec <session_id> --file notebook.ipynb --cell 5
 
 Inline code and file execution default to `--display-mode last_expr`, matching VS Code notebook behavior by displaying only the final expression. Use `--display-mode all` to display every top-level table or figure expression, or `--display-mode last_expr_or_assign` to also display a final assignment. For file execution, each selected cell runs sequentially; j-cli prints and writes back its outputs before starting the next cell. j-cli restores the kernel's previous display mode after execution.
 
+**Execution timeout**: Without `--timeout`, j-cli gives each cell a 10-second deadline. An explicit `--timeout` sets one total budget for all selected cells. When the deadline expires during a cell, j-cli interrupts the remote execution, waits for the kernel to report `idle`, and returns `TIMEOUT`. The kernel process, session, and variables created before the interrupted cell remain available. If the interrupt request fails, j-cli returns `INTERRUPT_FAILED`; check `session list --no-vars` before deciding whether to interrupt or restart the kernel.
+
 Human mode is intended for direct reading by people and agents. Use `--json` when a script needs structured output; `j-cli --json exec --file ...` streams JSON Lines, one object per completed cell plus a final summary object.
 
 **Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), each completed cell's outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically before the first cell executes. Plain Python scripts without markers are executed normally without creating a notebook.

@@ -24,7 +24,16 @@ from jupyter_jcli.notebook_writer import write_outputs_to_notebook
     show_default=True,
     help="IPython expression display mode for code and file execution",
 )
-@click.option("--timeout", default=None, type=int, help="Total execution timeout in seconds (default: 10s per cell)")
+@click.option(
+    "--timeout",
+    default=None,
+    type=int,
+    help=(
+        "Total execution deadline in seconds. At the deadline, j-cli interrupts "
+        "the current execution and waits for kernel idle before returning TIMEOUT. "
+        "A failed interrupt returns INTERRUPT_FAILED (default: 10s per cell)."
+    ),
+)
 @pass_ctx
 def exec_cmd(
     ctx: Context,
@@ -84,7 +93,7 @@ def _exec_code(ctx: Context, kernel_id: str, code: str, display_mode: str, timeo
                 emit({"_human": text}, use_json=False)
 
     except Exception as e:
-        emit_error("EXECUTION_ERROR", str(e), ctx.use_json)
+        _emit_execution_error(ctx, e)
 
 
 def _exec_file(
@@ -105,7 +114,11 @@ def _exec_file(
         import time as _time
 
         from jupyter_jcli.parser import parse_file, parse_cell_spec
-        from jupyter_jcli.kernel import expression_display_mode, kernel_connection
+        from jupyter_jcli.kernel import (
+            execute_with_timeout,
+            expression_display_mode,
+            kernel_connection,
+        )
 
         parsed = parse_file(file_path)
 
@@ -138,14 +151,10 @@ def _exec_file(
 
         cells_executed = 0
         last_notebook_updated = None
-        deadline = _time.monotonic() + timeout if timeout is not None else None
 
         with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
-            setup_timeout = max(deadline - _time.monotonic(), 0) if deadline is not None else 10
-            if setup_timeout <= 0:
-                emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded before execution", ctx.use_json)
-
-            with expression_display_mode(kernel, display_mode, timeout=setup_timeout):
+            with expression_display_mode(kernel, display_mode, timeout=10):
+                deadline = _time.monotonic() + timeout if timeout is not None else None
                 for cell in selected:
                     if deadline is not None:
                         remaining = deadline - _time.monotonic()
@@ -155,7 +164,7 @@ def _exec_file(
                     else:
                         remaining = 10
 
-                    result = kernel.execute(cell.source, timeout=remaining)
+                    result = execute_with_timeout(kernel, cell.source, timeout=remaining)
                     raw_outputs = result.get("outputs", [])
                     outputs = process_outputs(raw_outputs)
 
@@ -187,7 +196,17 @@ def _exec_file(
     except SystemExit:
         raise
     except Exception as e:
-        emit_error("EXECUTION_ERROR", str(e), ctx.use_json)
+        _emit_execution_error(ctx, e)
+
+
+def _emit_execution_error(ctx: Context, error: Exception) -> None:
+    from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
+
+    if isinstance(error, ExecutionTimeout):
+        emit_error("TIMEOUT", str(error), ctx.use_json)
+    if isinstance(error, KernelInterruptFailed):
+        emit_error("INTERRUPT_FAILED", str(error), ctx.use_json)
+    emit_error("EXECUTION_ERROR", str(error), ctx.use_json)
 
 
 def _emit_file_cell_result(

@@ -365,10 +365,21 @@ table or figure expression should be displayed. Use `last_expr_or_assign` when a
 assignment should also produce output. The accepted modes are `last_expr`, `all`,
 `last_expr_or_assign`, `last`, and `none`.
 
-**Timeout** (default: 10s per cell; when set, it's a total budget shared across cells):
+**Timeout** (default: 10s per cell; when set, it is one total budget shared across selected cells):
 ```bash
 j-cli exec <session_id> --code "long_computation()" --timeout 600
 ```
+
+When the deadline expires during a cell, j-cli sends an interrupt to the remote kernel and
+continues consuming messages until that execution reports `idle`. It then exits with code 1
+and reports `TIMEOUT`. The session, kernel process, and variables created before the interrupted
+cell remain available. The interrupt raises `KeyboardInterrupt` in ordinary Python kernels, so
+statements after the interruption point do not run unless user code catches that exception and
+continues. j-cli still waits for the execution to report `idle` in that case.
+
+If the interrupt request fails, j-cli reports `INTERRUPT_FAILED` instead of claiming that the
+kernel returned to idle. Check `j-cli session list --no-vars`, then use
+`j-cli kernel interrupt <session_id>` or `j-cli kernel restart <session_id>` as needed.
 
 **JSON output** (for parsing results programmatically):
 ```bash
@@ -488,11 +499,13 @@ Errors return structured error codes. In JSON mode:
 ```json
 {"status": "error", "code": "SESSION_NOT_FOUND", "message": "..."}
 {"status": "error", "code": "EXECUTION_ERROR", "message": "..."}
+{"status": "error", "code": "TIMEOUT", "message": "Execution deadline expired; the kernel was interrupted and returned to idle"}
+{"status": "error", "code": "INTERRUPT_FAILED", "message": "..."}
 {"status": "error", "code": "CONNECTION_FAILED", "message": "..."}
 {"status": "error", "code": "PARSE_ERROR", "message": "..."}
 ```
 
-Error codes: `CONNECTION_FAILED`, `SESSION_NOT_FOUND`, `SESSION_CREATE_FAILED`, `KERNEL_NOT_FOUND`, `EXECUTION_ERROR`, `PARSE_ERROR`.
+Error codes: `CONNECTION_FAILED`, `SESSION_NOT_FOUND`, `SESSION_CREATE_FAILED`, `KERNEL_NOT_FOUND`, `EXECUTION_ERROR`, `TIMEOUT`, `INTERRUPT_FAILED`, `PARSE_ERROR`.
 
 All errors exit with code 1.
 

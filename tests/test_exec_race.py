@@ -19,6 +19,7 @@ import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -157,6 +158,65 @@ class TestKernelWebsocketReadyProbe:
 
 
 # ---------------------------------------------------------------------------
+# Execution deadline tests
+# ---------------------------------------------------------------------------
+
+class _BlockingKernel:
+    def __init__(self, interrupt_error=None):
+        self.interrupt_error = interrupt_error
+        self.interrupt_calls = 0
+        self.released = threading.Event()
+
+    def execute(self, code, timeout=None, **kwargs):
+        assert timeout is None
+        if not self.released.wait(2):
+            raise RuntimeError("test kernel was not interrupted")
+        return {"status": "error", "outputs": [], "execution_count": 1}
+
+    def interrupt(self, timeout=2):
+        self.interrupt_calls += 1
+        self.released.set()
+        if self.interrupt_error is not None:
+            raise self.interrupt_error
+
+
+class TestExecutionTimeoutUnit:
+    def test_completed_execution_does_not_interrupt(self):
+        from jupyter_jcli.kernel import execute_with_timeout
+
+        kernel = MagicMock()
+        kernel.execute.return_value = {
+            "status": "ok", "outputs": [], "execution_count": 1,
+        }
+
+        result = execute_with_timeout(kernel, "pass", timeout=1)
+
+        assert result["status"] == "ok"
+        kernel.execute.assert_called_once_with("pass", timeout=None)
+        kernel.interrupt.assert_not_called()
+
+    def test_deadline_interrupts_and_reports_timeout(self):
+        from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
+
+        kernel = _BlockingKernel()
+
+        with pytest.raises(ExecutionTimeout, match="interrupted and returned to idle"):
+            execute_with_timeout(kernel, "long_running()", timeout=0.01)
+
+        assert kernel.interrupt_calls == 1
+
+    def test_interrupt_failure_is_distinct(self):
+        from jupyter_jcli.kernel import KernelInterruptFailed, execute_with_timeout
+
+        kernel = _BlockingKernel(interrupt_error=OSError("server unavailable"))
+
+        with pytest.raises(KernelInterruptFailed, match="server unavailable"):
+            execute_with_timeout(kernel, "long_running()", timeout=0.01)
+
+        assert kernel.interrupt_calls == 1
+
+
+# ---------------------------------------------------------------------------
 # Integration tests - real Jupyter server
 # ---------------------------------------------------------------------------
 
@@ -272,6 +332,95 @@ class TestFreshConnectionExec:
                     "-s", jupyter_server["url"], "-t", jupyter_server["token"],
                     "session", "kill", sid,
                 ])
+
+
+class TestExecutionTimeoutIntegration:
+    def test_timeout_interrupts_kernel_and_preserves_session(self, jupyter_server):
+        import json
+        from click.testing import CliRunner
+        from jupyter_jcli.cli import main
+
+        runner = CliRunner()
+        created = runner.invoke(main, [
+            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+            "--json", "session", "create", "--kernel", "python3",
+        ])
+        assert created.exit_code == 0, created.output
+        sid = json.loads(created.output)["session_id"]
+
+        try:
+            started = time.monotonic()
+            timed_out = runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "--json", "exec", sid, "--code",
+                "import time; time.sleep(30); timeout_sentinel = True",
+                "--timeout", "1",
+            ])
+            elapsed = time.monotonic() - started
+
+            assert timed_out.exit_code == 1, timed_out.output
+            error = json.loads(timed_out.output)
+            assert error["code"] == "TIMEOUT"
+            assert "returned to idle" in error["message"]
+            assert elapsed < 10
+
+            recovered = runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "exec", sid, "--code",
+                "print('recovered', 'timeout_sentinel' in globals())",
+                "--timeout", "10",
+            ])
+            assert recovered.exit_code == 0, recovered.output
+            assert "recovered False" in recovered.output
+        finally:
+            runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "session", "kill", sid,
+            ])
+
+    def test_file_cell_timeout_interrupts_kernel(self, jupyter_server, tmp_path):
+        import json
+        from click.testing import CliRunner
+        from jupyter_jcli.cli import main
+
+        script = tmp_path / "timeout_cell.py"
+        script.write_text(
+            "# %%\n"
+            "import time\n"
+            "time.sleep(30)\n"
+            "file_timeout_sentinel = True\n"
+        )
+        runner = CliRunner()
+        created = runner.invoke(main, [
+            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+            "--json", "session", "create", "--kernel", "python3",
+        ])
+        assert created.exit_code == 0, created.output
+        sid = json.loads(created.output)["session_id"]
+
+        try:
+            timed_out = runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "--json", "exec", sid, "--file", str(script), "--cell", "0",
+                "--timeout", "1",
+            ])
+
+            assert timed_out.exit_code == 1, timed_out.output
+            assert json.loads(timed_out.output)["code"] == "TIMEOUT"
+
+            recovered = runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "exec", sid, "--code",
+                "print('file-recovered', 'file_timeout_sentinel' in globals())",
+                "--timeout", "10",
+            ])
+            assert recovered.exit_code == 0, recovered.output
+            assert "file-recovered False" in recovered.output
+        finally:
+            runner.invoke(main, [
+                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
+                "session", "kill", sid,
+            ])
 
 
 # ---------------------------------------------------------------------------

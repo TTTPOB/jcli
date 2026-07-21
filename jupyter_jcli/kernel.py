@@ -20,6 +20,14 @@ _KERNEL_READY_ATTEMPT_TIMEOUT = 10
 _KERNEL_READY_MAX_ATTEMPTS = 3
 
 
+class ExecutionTimeout(TimeoutError):
+    """Raised after a timed-out execution has returned to idle."""
+
+
+class KernelInterruptFailed(RuntimeError):
+    """Raised when a timed-out execution could not be interrupted."""
+
+
 def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
     """Return a SIGINT/SIGTERM handler that interrupts the remote kernel.
 
@@ -202,29 +210,96 @@ def kernel_connection(server_url: str, token: str | None, kernel_id: str):
 def expression_display_mode(kernel: KernelClient, display_mode: str, timeout: float = 10):
     """Temporarily configure how IPython displays top-level expressions."""
     state_attr = f"_jcli_ast_node_interactivity_{uuid4().hex}"
-    setup_result = kernel.execute(
+    setup_result = execute_with_timeout(
+        kernel,
         "setattr(get_ipython(), "
         f"{state_attr!r}, get_ipython().ast_node_interactivity)\n"
         f"get_ipython().ast_node_interactivity = {display_mode!r}",
+        timeout=timeout,
         silent=True,
         store_history=False,
-        timeout=timeout,
     )
     if setup_result.get("status") != "ok":
         raise RuntimeError(f"Kernel failed to enable IPython display mode {display_mode!r}")
 
+    active_error: BaseException | None = None
     try:
         yield
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
-        kernel.execute(
-            "_jcli_shell = get_ipython()\n"
-            f"_jcli_shell.ast_node_interactivity = getattr(_jcli_shell, {state_attr!r})\n"
-            f"delattr(_jcli_shell, {state_attr!r})\n"
-            "del _jcli_shell",
-            silent=True,
-            store_history=False,
-            timeout=10,
+        try:
+            execute_with_timeout(
+                kernel,
+                "_jcli_shell = get_ipython()\n"
+                f"_jcli_shell.ast_node_interactivity = getattr(_jcli_shell, {state_attr!r})\n"
+                f"delattr(_jcli_shell, {state_attr!r})\n"
+                "del _jcli_shell",
+                timeout=10,
+                silent=True,
+                store_history=False,
+            )
+        except Exception:
+            if active_error is None:
+                raise
+
+
+def execute_with_timeout(
+    kernel: KernelClient,
+    code: str,
+    timeout: float,
+    **execute_kwargs,
+) -> dict:
+    """Execute code and interrupt the remote kernel when the deadline expires."""
+    if timeout <= 0:
+        raise ExecutionTimeout("Execution deadline expired before the request was sent")
+
+    finished = threading.Event()
+    timed_out = threading.Event()
+    interrupt_errors: list[Exception] = []
+
+    def interrupt_at_deadline() -> None:
+        if finished.wait(timeout):
+            return
+        timed_out.set()
+        try:
+            kernel.interrupt(timeout=2)
+        except Exception as exc:
+            interrupt_errors.append(exc)
+
+    watchdog = threading.Thread(
+        target=interrupt_at_deadline,
+        name="jcli-execution-timeout",
+        daemon=True,
+    )
+    watchdog.start()
+    result: dict | None = None
+    execution_error: Exception | None = None
+    try:
+        # jupyter-kernel-client 0.9.0 does not enforce its WebSocket timeout.
+        # The watchdog owns the deadline and interrupt, while this call consumes
+        # messages through the matching idle status after an interrupt.
+        result = kernel.execute(code, timeout=None, **execute_kwargs)
+    except Exception as exc:
+        execution_error = exc
+    finally:
+        finished.set()
+        watchdog.join()
+
+    if timed_out.is_set():
+        if interrupt_errors:
+            raise KernelInterruptFailed(
+                "Execution deadline expired and the kernel interrupt failed: "
+                f"{interrupt_errors[0]}"
+            ) from interrupt_errors[0]
+        raise ExecutionTimeout(
+            "Execution deadline expired; the kernel was interrupted and returned to idle"
         )
+    if execution_error is not None:
+        raise execution_error
+    assert result is not None
+    return result
 
 
 def execute_code(
@@ -241,5 +316,7 @@ def execute_code(
     and 'execution_count'.
     """
     with kernel_connection(server_url, token, kernel_id) as kernel:
-        with expression_display_mode(kernel, display_mode, timeout=timeout):
-            return kernel.execute(code, timeout=timeout)
+        with expression_display_mode(kernel, display_mode, timeout=10):
+            deadline = time.monotonic() + timeout
+            remaining = max(deadline - time.monotonic(), 0)
+            return execute_with_timeout(kernel, code, timeout=remaining)
