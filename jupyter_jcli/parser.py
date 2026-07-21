@@ -5,10 +5,8 @@ from dataclasses import dataclass, field
 import io
 from pathlib import Path
 import re
-from textwrap import dedent
 import tokenize
 
-from IPython.core.inputtransformer2 import TransformerManager
 import nbformat
 
 from jupyter_jcli._enums import CellType
@@ -17,7 +15,9 @@ from jupyter_jcli._enums import CellType
 _CELL_MARKER_RE = re.compile(r"^# %%(?:\s|$)")
 _COMMENTED_CELL_MAGIC_BODY = "# jupyter-jcli: commented cell magic body"
 _MAGIC_PLACEHOLDER = "pass  # jupyter-jcli: IPython magic placeholder"
-_IPYTHON_TRANSFORMER = TransformerManager()
+_HELP_END_RE = re.compile(
+    r"(%{0,2}(?!\d)[\w*]+(?:\.(?!\d)[\w*]+|\[-?[0-9]+\])*)(\?\??)$"
+)
 _PYTHON_BODY_CELL_MAGICS = {
     "%%capture",
     "%%debug",
@@ -31,16 +31,6 @@ _PYTHON_BODY_CELL_MAGICS = {
     "%%timeit",
     "%%writefile",
 }
-
-
-def _is_ipython_syntax(source: str) -> bool:
-    candidate = dedent(source)
-    if not candidate.endswith("\n"):
-        candidate += "\n"
-    try:
-        return _IPYTHON_TRANSFORMER.transform_cell(candidate) != candidate
-    except (IndentationError, SyntaxError, tokenize.TokenError):
-        return False
 
 
 def _tokens_by_logical_line(source: str) -> list[list[tokenize.TokenInfo]]:
@@ -87,34 +77,43 @@ def _significant_tokens(tokens: list[tokenize.TokenInfo]) -> list[tokenize.Token
     ]
 
 
+def _is_supported_magic(tokens: list[tokenize.TokenInfo], source: str) -> bool:
+    # This subset mirrors IPython's token transformers without importing IPython.
+    if tokens[0].string in {"%", "!", "?"}:
+        return True
+
+    if tokens[-1].string == "?" and _HELP_END_RE.search(source.rstrip()):
+        return True
+
+    paren_level = 0
+    for index, token in enumerate(tokens):
+        if token.string in {"(", "[", "{"}:
+            paren_level += 1
+        elif token.string in {")", "]", "}"}:
+            paren_level = max(0, paren_level - 1)
+        elif token.string == "=" and paren_level == 0:
+            if index + 1 >= len(tokens):
+                return False
+            rhs = tokens[index + 1]
+            if rhs.string == "!":
+                return index > 0
+            return (
+                rhs.string == "%"
+                and index + 2 < len(tokens)
+                and tokens[index + 2].type == tokenize.NAME
+            )
+    return False
+
+
 def _find_first_magic_range(lines: list[str]) -> tuple[int, int] | None:
     for logical_line in _tokens_by_logical_line("".join(lines)):
         tokens = _significant_tokens(logical_line)
         if not tokens:
             continue
 
-        special = tokens[0].string in {"%", "!", "?"} or tokens[-1].string == "?"
-        paren_level = 0
-        for index, token in enumerate(tokens):
-            if token.string in {"(", "[", "{"}:
-                paren_level += 1
-            elif token.string in {
-                ")",
-                "]",
-                "}",
-            }:
-                paren_level = max(0, paren_level - 1)
-            elif token.string == "=" and paren_level == 0 and index + 1 < len(tokens):
-                rhs = tokens[index + 1]
-                special = rhs.string in {"%", "!"}
-                break
-
-        if not special:
-            continue
-
         start = min(token.start[0] for token in logical_line) - 1
         end = max(token.end[0] for token in logical_line) - 1
-        if _is_ipython_syntax("".join(lines[start : end + 1])):
+        if _is_supported_magic(tokens, "".join(lines[start : end + 1])):
             return start, end
     return None
 

@@ -16,7 +16,6 @@ classifiers = [
 ]
 dependencies = [
     "click>=8",
-    "ipython>=8",
     "jupyter-kernel-client>=0.7.3",
     "jupyter-server-client",
     "nbformat>=5",
@@ -28,6 +27,7 @@ dependencies = [
 test = [
     "pytest>=8",
     "pytest-asyncio",
+    "ipython>=8",
     "jupyter-server>=2,<3",
     "ipykernel",
     "matplotlib",
