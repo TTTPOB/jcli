@@ -364,8 +364,8 @@ def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor
 
 
 def test_large_replace_block_uses_linear_positional_fallback():
-    old = _parsed(*(f"old value {index}" for index in range(150)))
-    current = _parsed(*(f"new value {index}" for index in range(150)))
+    old = _parsed(*(f"old value {index}" for index in range(100)))
+    current = _parsed(*(f"new value {index}" for index in range(100)))
 
     with patch(
         "jupyter_jcli.cell_alignment._cell_edit_cost",
@@ -373,10 +373,10 @@ def test_large_replace_block_uses_linear_positional_fallback():
     ):
         changes = diff_cells(old, current)
 
-    assert len(changes) == 150
+    assert len(changes) == 100
     assert all(change.kind == "edited" for change in changes)
     assert [(change.old_index, change.new_index) for change in changes] == [
-        (index, index) for index in range(150)
+        (index, index) for index in range(100)
     ]
 
 

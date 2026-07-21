@@ -484,6 +484,63 @@ class TestUpdateIpynbSources:
         assert nb2.cells[0].outputs[0]["text"] == "first\n"
         assert nb2.cells[1].outputs[0]["text"] == "second\n"
 
+    def test_repeated_cells_use_shifted_unique_anchor(self, tmp_path):
+        old_sources = ["anchor_start", *(["repeat"] * 99), "anchor_end"]
+        nb = _make_ipynb(
+            [
+                ("code", source, [f"out-{index}\n"])
+                for index, source in enumerate(old_sources)
+            ]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        new_sources = ["brand_new", "anchor_start", *(["repeat"] * 98), "anchor_end"]
+
+        update_ipynb_sources(
+            p,
+            [Cell(index, "code", source) for index, source in enumerate(new_sources)],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs[0]["text"] == "out-0\n"
+        assert nb2.cells[-1].outputs[0]["text"] == "out-100\n"
+
+    def test_clean_preserves_large_repeated_equal_cells_after_insert(self, tmp_path):
+        nb = _make_ipynb(
+            [("code", "repeat", [f"out-{index}\n"]) for index in range(200)]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        new_cells = [Cell(0, "code", "inserted")]
+        new_cells.extend(Cell(index + 1, "code", "repeat") for index in range(200))
+
+        update_ipynb_sources(p, new_cells, clean_outputs=True)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs[0]["text"] == "out-0\n"
+        assert nb2.cells[-1].outputs[0]["text"] == "out-199\n"
+
+    def test_large_fallback_handles_two_insertions_before_edits(self, tmp_path):
+        nb = _make_ipynb(
+            [("code", f"value_{index} = 0", [f"out-{index}\n"]) for index in range(101)]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        new_cells = [Cell(0, "code", "first_insert"), Cell(1, "code", "second_insert")]
+        new_cells.extend(
+            Cell(index + 2, "code", f"value_{index} = 1") for index in range(101)
+        )
+
+        update_ipynb_sources(p, new_cells)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs == []
+        assert nb2.cells[2].outputs[0]["text"] == "out-0\n"
+        assert nb2.cells[-1].outputs[0]["text"] == "out-100\n"
+
     def test_supports_count_change_delete(self, tmp_path):
         """Deleting a cell (count shrinks) works without error."""
         nb = _make_ipynb(

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from jupyter_jcli.parser import Cell, ParsedFile
 
-_MAX_REPLACE_DP_PRODUCT = 10_000
+_MAX_REPLACE_DP_PRODUCT = 2_500
 _MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
 _MAX_LARGE_POSITIONAL_CHANGES = 64
 _MIN_REPEATED_CELL_FRACTION = 0.5
 _FALLBACK_SOURCE_COMPARE_CHARS = 512
+_FALLBACK_SHIFT_LOOKAHEAD = 8
 _FALLBACK_SHIFT_MIN_SIMILARITY = 0.5
 _FALLBACK_SHIFT_ADVANTAGE = 0.2
 
@@ -69,6 +71,7 @@ def _align_cells(
         and len(old_cells) == len(current_cells)
         and _is_highly_repetitive(old_keys)
         and _is_highly_repetitive(current_keys)
+        and not _has_shifted_unique_anchor(old_keys, current_keys)
     ):
         changed_positions = {
             index
@@ -141,7 +144,9 @@ def _align_cells(
                 new_start,
             )
         )
-    return alignments
+    if include_equal:
+        return alignments
+    return [alignment for alignment in alignments if alignment.kind != "equal"]
 
 
 def _paired_change(kind: str, old_cell: Cell, new_cell: Cell) -> CellChange:
@@ -160,6 +165,23 @@ def _is_highly_repetitive(keys: list[tuple[str, str]]) -> bool:
         return False
     repeated_count = len(keys) - len(set(keys))
     return repeated_count / len(keys) >= _MIN_REPEATED_CELL_FRACTION
+
+
+def _has_shifted_unique_anchor(
+    old_keys: list[tuple[str, str]], current_keys: list[tuple[str, str]]
+) -> bool:
+    old_counts = Counter(old_keys)
+    current_counts = Counter(current_keys)
+    current_positions = {
+        key: index
+        for index, key in enumerate(current_keys)
+        if old_counts[key] == 1 and current_counts[key] == 1
+    }
+    return any(
+        key in current_positions and current_positions[key] != old_index
+        for old_index, key in enumerate(old_keys)
+        if old_counts[key] == 1
+    )
 
 
 def _align_replaced_cells(
@@ -211,8 +233,10 @@ def _align_replaced_cells(
     while old_pos or new_pos:
         step = steps[old_pos][new_pos]
         if step == "edited":
+            old_cell = old_cells[old_pos - 1]
+            new_cell = new_cells[new_pos - 1]
             aligned.append(
-                _paired_change("edited", old_cells[old_pos - 1], new_cells[new_pos - 1])
+                _paired_change(_paired_kind(old_cell, new_cell), old_cell, new_cell)
             )
             old_pos -= 1
             new_pos -= 1
@@ -263,15 +287,11 @@ def _align_replaced_cells_by_position(
         old_cell = old_cells[old_pos]
         new_cell = new_cells[new_pos]
         direct_similarity = _fallback_cell_similarity(old_cell, new_cell)
-        insertion_similarity = (
-            _fallback_cell_similarity(old_cell, new_cells[new_pos + 1])
-            if new_pos + 1 < len(new_cells)
-            else -1.0
+        insertion_offset, insertion_similarity = _best_forward_match(
+            old_cell, new_cells, new_pos
         )
-        deletion_similarity = (
-            _fallback_cell_similarity(old_cells[old_pos + 1], new_cell)
-            if old_pos + 1 < len(old_cells)
-            else -1.0
+        deletion_offset, deletion_similarity = _best_forward_match(
+            new_cell, old_cells, old_pos
         )
 
         if (
@@ -279,37 +299,41 @@ def _align_replaced_cells_by_position(
             and insertion_similarity >= deletion_similarity
             and insertion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
         ):
-            changes.append(
+            changes.extend(
                 CellChange(
                     kind="inserted",
                     old_index=None,
-                    new_index=new_cell.index,
+                    new_index=inserted_cell.index,
                     old_cell=None,
-                    new_cell=new_cell,
-                    current_insertion_index=new_cell.index,
+                    new_cell=inserted_cell,
+                    current_insertion_index=inserted_cell.index,
                 )
+                for inserted_cell in new_cells[new_pos : new_pos + insertion_offset]
             )
-            new_pos += 1
+            new_pos += insertion_offset
             continue
         if (
             deletion_similarity >= _FALLBACK_SHIFT_MIN_SIMILARITY
             and deletion_similarity > insertion_similarity
             and deletion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
         ):
-            changes.append(
+            changes.extend(
                 CellChange(
                     kind="deleted",
-                    old_index=old_cell.index,
+                    old_index=deleted_cell.index,
                     new_index=None,
-                    old_cell=old_cell,
+                    old_cell=deleted_cell,
                     new_cell=None,
                     current_insertion_index=new_cell.index,
                 )
+                for deleted_cell in old_cells[old_pos : old_pos + deletion_offset]
             )
-            old_pos += 1
+            old_pos += deletion_offset
             continue
 
-        changes.append(_paired_change("edited", old_cell, new_cell))
+        changes.append(
+            _paired_change(_paired_kind(old_cell, new_cell), old_cell, new_cell)
+        )
         old_pos += 1
         new_pos += 1
 
@@ -348,6 +372,30 @@ def _fallback_cell_similarity(old_cell: Cell, new_cell: Cell) -> float:
         new_cell.source[:_FALLBACK_SOURCE_COMPARE_CHARS],
         autojunk=True,
     ).ratio()
+
+
+def _best_forward_match(
+    reference: Cell, candidates: list[Cell], position: int
+) -> tuple[int, float]:
+    max_offset = min(_FALLBACK_SHIFT_LOOKAHEAD, len(candidates) - position - 1)
+    if max_offset <= 0:
+        return 0, -1.0
+    return max(
+        (
+            (
+                offset,
+                _fallback_cell_similarity(reference, candidates[position + offset]),
+            )
+            for offset in range(1, max_offset + 1)
+        ),
+        key=lambda item: (item[1], -item[0]),
+    )
+
+
+def _paired_kind(old_cell: Cell, new_cell: Cell) -> str:
+    if old_cell.cell_type == new_cell.cell_type and old_cell.source == new_cell.source:
+        return "equal"
+    return "edited"
 
 
 def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
