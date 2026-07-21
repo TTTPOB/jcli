@@ -22,6 +22,7 @@ _MAX_SOURCE_PREVIEW_CHARS = 120
 _MAX_REPLACE_DP_PRODUCT = 10_000
 _MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
 _MAX_LARGE_POSITIONAL_CHANGES = 64
+_MIN_REPEATED_CELL_FRACTION = 0.5
 _FALLBACK_SOURCE_COMPARE_CHARS = 512
 _FALLBACK_SHIFT_MIN_SIMILARITY = 0.5
 _FALLBACK_SHIFT_ADVANTAGE = 0.2
@@ -124,7 +125,12 @@ def diff_cells(
         return []
 
     product = len(old_cells) * len(current_cells)
-    if product > _MAX_SEQUENCE_MATCHER_PRODUCT and len(old_cells) == len(current_cells):
+    if (
+        product > _MAX_SEQUENCE_MATCHER_PRODUCT
+        and len(old_cells) == len(current_cells)
+        and _is_highly_repetitive(old_keys)
+        and _is_highly_repetitive(current_keys)
+    ):
         changed_positions = [
             index
             for index, (old_key, current_key) in enumerate(zip(old_keys, current_keys))
@@ -184,6 +190,13 @@ def diff_cells(
             new_start,
         ))
     return changes
+
+
+def _is_highly_repetitive(keys: list[tuple[str, str]]) -> bool:
+    if not keys:
+        return False
+    repeated_count = len(keys) - len(set(keys))
+    return repeated_count / len(keys) >= _MIN_REPEATED_CELL_FRACTION
 
 
 def _diff_replaced_cells(

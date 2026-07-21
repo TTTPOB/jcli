@@ -349,6 +349,24 @@ def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
     ]
 
 
+def test_large_unique_sequence_preserves_nearby_insert_and_delete_alignment():
+    old = _parsed(*(f"value_{index}" for index in range(200)))
+    current_sources = [cell.source for cell in old.cells]
+    current_sources.insert(50, "inserted")
+    del current_sources[56]
+    current = _parsed(*current_sources)
+
+    changes = diff_cells(old, current)
+
+    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+        ("inserted", None, 50),
+        ("deleted", 55, None),
+    ]
+    data = build_summary_data(current, changes)
+    assert data["cells"][50]["change"] == "inserted"
+    assert all("change" not in data["cells"][index] for index in range(51, 56))
+
+
 def test_large_replace_fallback_detects_leading_insertion_before_edits():
     old = _parsed(*(f"value_{index} = 0" for index in range(101)))
     current = _parsed(
