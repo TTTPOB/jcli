@@ -6,6 +6,14 @@ import nbformat
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli._enums import CellType
+from jupyter_jcli.commands.notebook import (
+    CellChange,
+    build_summary_data,
+    diff_cells,
+    format_summary_human,
+)
+from jupyter_jcli.parser import Cell, ParsedFile
 
 
 def _write_percent_notebook(path):
@@ -40,6 +48,13 @@ def _write_percent_notebook(path):
         "%matplotlib inline\n"
         "plot(values)\n",
         encoding="utf-8",
+    )
+
+
+def _parsed(*sources: str) -> ParsedFile:
+    return ParsedFile(
+        kernel_name="python3",
+        cells=[Cell(index=index, cell_type=CellType.CODE, source=source) for index, source in enumerate(sources)],
     )
 
 
@@ -173,3 +188,73 @@ def test_cli_registers_notebook_group():
     assert subcommand_help.exit_code == 0
     assert "summary" in subcommand_help.output
     assert "show" in subcommand_help.output
+
+
+def test_cell_diff_classifies_edited_inserted_deleted_and_unequal_replace():
+    edited = diff_cells(_parsed("old"), _parsed("new"))
+    inserted = diff_cells(_parsed("keep"), _parsed("new", "keep"))
+    deleted = diff_cells(_parsed("keep", "gone"), _parsed("keep"))
+    unequal_replace = diff_cells(_parsed("old one", "old two"), _parsed("new one"))
+
+    assert [(change.kind, change.old_index, change.new_index) for change in edited] == [("edited", 0, 0)]
+    assert [(change.kind, change.old_index, change.new_index) for change in inserted] == [("inserted", None, 0)]
+    assert [(change.kind, change.old_index, change.new_index) for change in deleted] == [("deleted", 1, None)]
+    assert [(change.kind, change.old_index, change.new_index) for change in unequal_replace] == [
+        ("edited", 0, 0),
+        ("deleted", 1, None),
+    ]
+
+
+def test_cell_diff_keeps_unchanged_cells_aligned_after_leading_insert():
+    old = _parsed("first", "second")
+    current = _parsed("new first", "first", "second")
+
+    changes = diff_cells(old, current)
+    data = build_summary_data(current, changes)
+
+    assert [(change.kind, change.new_index) for change in changes] == [("inserted", 0)]
+    assert data["cells"][0]["change"] == "inserted"
+    assert "change" not in data["cells"][1]
+    assert "change" not in data["cells"][2]
+
+
+def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor():
+    changes = diff_cells(_parsed("x = 1", "y = 2"), _parsed("new = 0", "x = 10", "y = 2"))
+
+    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+        ("inserted", None, 0),
+        ("edited", 0, 1),
+    ]
+
+
+def test_summary_data_has_no_changes_or_markers_without_diff():
+    data = build_summary_data(_parsed("value = 1"))
+    human = format_summary_human(data)
+
+    assert data["changes"] == []
+    assert "change" not in data["cells"][0]
+    assert "legend:" not in human
+    assert "~ 0" not in human
+
+
+def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
+    old = _parsed("gone = 1", "value = 1")
+    current = _parsed("value = 2", "new = 3")
+    changes = [
+        CellChange("edited", 1, 0, old.cells[1], current.cells[0], 0),
+        CellChange("inserted", None, 1, None, current.cells[1], 1),
+        CellChange("deleted", 0, None, old.cells[0], None, 0),
+    ]
+
+    data = build_summary_data(current, changes)
+    human = format_summary_human(data)
+
+    assert data["changes"][2]["old_index"] == 0
+    assert data["changes"][2]["current_insertion_index"] == 0
+    assert data["changes"][2]["old_cell"]["writes"] == ["gone"]
+    assert "changes: edited current[0]; inserted current[1]; deleted [old:0 at current:0]" in human
+    assert "legend: ~ edited | + inserted | - deleted" in human
+    assert "~ 0 [code]" in human
+    assert "+ 1 [code]" in human
+    assert "- old:0 at current:0 [code]" in human
+    assert "writes=gone" in human

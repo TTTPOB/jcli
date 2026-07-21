@@ -28,7 +28,7 @@ The command is idempotent — re-running updates the hook in place without dupli
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`. These tools bypass j-cli and lose kernel state.
 - **`python-run-guard`** (Bash, soft deny) — fires when a command like `python foo.py`, `uv run python foo.py`, `pixi run python foo.py`, or `./foo.py` targets a `.py` file that has a paired `.ipynb` next to it. The guard surfaces a "reconsider" message explaining that running the file as a script discards kernel state and py/ipynb pair sync. The agent is expected to use `j-cli session` + `j-cli exec` instead. Commands on ordinary scripts (no paired `.ipynb`) are never intercepted.
 - **`pair-drift-guard`** **(PreToolUse, Edit/Write)** — detects drift that was already present before your edit (e.g. a human teammate edited the `.ipynb` in JupyterLab). Uses `git merge-file` 3-way merge (handles cell insertions, deletions, and non-overlapping edits); asks you to re-read the target file after auto-merge, or explains the conflict and what to inspect before picking a side. `.ipynb` is by design gitignored; `.py` history is the only merge baseline.
-- **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when `git merge-file` produces no conflicts; warns only when your edit collided with a pre-existing change on the paired side.
+- **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when `git merge-file` produces no conflicts. With a git baseline, its context includes a cell summary where `~` marks edits, `+` marks inserts, and `- old:N` marks deleted baseline cells.
 - **`notebook-edit-guard`** **(PreToolUse, NotebookEdit)** — hard-denies direct `NotebookEdit` calls; always use the py:percent round-trip instead.
 
 ## One-time Codex hook install
@@ -52,7 +52,7 @@ The command is idempotent — re-running updates the hook in place without dupli
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`.
 - **`python-run-guard`** (Bash, soft deny) — fires when a shell command targets a `.py` file that has a paired `.ipynb`.
 - **`pair-drift-guard-pre`** (PreToolUse, apply_patch) — detects drift before an `apply_patch` edit touches a paired `.py` file.
-- **`pair-drift-guard-post`** (PostToolUse, apply_patch) — after `apply_patch`, silently syncs the other side of the pair when possible.
+- **`pair-drift-guard-post`** (PostToolUse, apply_patch) — after `apply_patch`, syncs the other side of the pair when possible and includes the same baseline-backed cell markers in its context.
 
 > **Note:** `notebook-edit-guard` is not installed for Codex because Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
@@ -505,7 +505,7 @@ The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exi
 | Who triggers | Hook | When | Meaning | Next step |
 |---|---|---|---|---|
 | Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write/apply_patch | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
-| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | If auto-synced: nothing to do. If warned: pick a side with `j-cli convert` |
+| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | Read `~` edited, `+` inserted, and `- old:N` deleted markers after an auto-sync with a git baseline. If warned: pick a side with `j-cli convert` |
 | Agent | `notebook-edit-guard` | Pre NotebookEdit | Hard deny; use py:percent round-trip | Follow the three-step convert workflow above |
 
 ## Error Handling

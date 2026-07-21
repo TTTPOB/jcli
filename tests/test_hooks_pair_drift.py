@@ -490,6 +490,7 @@ class TestPairDriftGuardPost:
         assert "Auto-synced" in ctx
         assert "nb.py" in ctx
         assert "Pair is now in sync" in ctx
+        assert "legend:" not in ctx
         assert _event_name(out) == "PostToolUse"
 
         # Verify ipynb was actually updated
@@ -597,6 +598,35 @@ class TestPairDriftGuardPost:
 # ---------------------------------------------------------------------------
 
 class TestConsecutiveEdits:
+    def test_post_context_includes_baseline_cell_summary(self, git_repo: Path):
+        py, ipynb = _make_pair(
+            git_repo,
+            ["x = 1", "y = 2", "gone = 3"],
+            ["x = 1", "y = 2", "gone = 3"],
+        )
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(
+            "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
+            "# %%\nnew = 0\n\n# %%\nx = 10\n\n# %%\ny = 2\n",
+            encoding="utf-8",
+        )
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _event_name(out) == "PostToolUse"
+        context = _additional_context(out)
+        assert "Auto-synced" in context
+        assert (
+            "changes: edited current[1]; inserted current[0]; "
+            "deleted [old:2 at current:3]"
+        ) in context
+        assert "legend: ~ edited | + inserted | - deleted" in context
+        assert "+ 0 [code]" in context
+        assert "~ 1 [code]" in context
+        assert "- old:2 at current:3 [code]" in context
+
     def test_post_uses_sticky_ref_to_avoid_false_conflict(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
         py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
         _git(git_repo, "add", "nb.py")

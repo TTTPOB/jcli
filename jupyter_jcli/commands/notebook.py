@@ -1,6 +1,8 @@
 """jcli notebook -- inspect notebook cell structure without execution."""
 
 import ast
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 import click
 
@@ -12,6 +14,19 @@ from jupyter_jcli.parser import Cell, ParsedFile, parse_cell_spec, parse_file
 
 _MAX_ANALYSIS_ITEMS = 8
 _MAX_SOURCE_PREVIEW_CHARS = 120
+_CHANGE_MARKERS = {"edited": "~", "inserted": "+", "deleted": "-"}
+
+
+@dataclass(frozen=True)
+class CellChange:
+    """A cell-level change between two parsed notebook versions."""
+
+    kind: str
+    old_index: int | None
+    new_index: int | None
+    old_cell: Cell | None
+    new_cell: Cell | None
+    current_insertion_index: int
 
 
 @click.group("notebook")
@@ -25,12 +40,11 @@ def notebook():
 def summary(ctx: Context, file_path: str) -> None:
     """Print a deterministic structural summary for each cell in FILE."""
     parsed = _parse_or_error(ctx, file_path)
-    cells = [_summarize_cell(cell) for cell in parsed.cells]
-    data = _notebook_data(parsed, cells)
+    data = build_summary_data(parsed)
     if ctx.use_json:
         emit(data, use_json=True)
         return
-    emit({"_human": _format_summary_human(data)}, use_json=False)
+    emit({"_human": format_summary_human(data)}, use_json=False)
 
 
 @notebook.command("show")
@@ -70,14 +84,198 @@ def _parse_or_error(ctx: Context, file_path: str) -> ParsedFile:
         raise AssertionError("emit_error should exit")
 
 
-def _notebook_data(parsed: ParsedFile, cells: list[dict]) -> dict:
-    return {
+def _notebook_data(parsed: ParsedFile, cells: list[dict], changes: list[dict] | None = None) -> dict:
+    data = {
         "status": ResponseStatus.OK,
         "path": parsed.source_path,
         "cell_count": len(parsed.cells),
         "kernel": parsed.kernel_name,
         "cells": cells,
     }
+    if changes is not None:
+        data["changes"] = changes
+    return data
+
+
+def diff_cells(
+    old: ParsedFile | list[Cell],
+    current: ParsedFile | list[Cell],
+) -> list[CellChange]:
+    """Classify exact cell changes while preserving unchanged-cell alignment."""
+    old_cells = old.cells if isinstance(old, ParsedFile) else old
+    current_cells = current.cells if isinstance(current, ParsedFile) else current
+    matcher = SequenceMatcher(
+        None,
+        [(cell.cell_type.value, cell.source) for cell in old_cells],
+        [(cell.cell_type.value, cell.source) for cell in current_cells],
+        autojunk=False,
+    )
+    changes: list[CellChange] = []
+    for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "insert":
+            for cell in current_cells[new_start:new_end]:
+                changes.append(CellChange(
+                    kind="inserted",
+                    old_index=None,
+                    new_index=cell.index,
+                    old_cell=None,
+                    new_cell=cell,
+                    current_insertion_index=cell.index,
+                ))
+            continue
+        if tag == "delete":
+            insertion_index = _current_insertion_index(current_cells, new_start)
+            for cell in old_cells[old_start:old_end]:
+                changes.append(CellChange(
+                    kind="deleted",
+                    old_index=cell.index,
+                    new_index=None,
+                    old_cell=cell,
+                    new_cell=None,
+                    current_insertion_index=insertion_index,
+                ))
+            continue
+
+        changes.extend(_diff_replaced_cells(
+            old_cells[old_start:old_end],
+            current_cells[new_start:new_end],
+            current_cells,
+            new_start,
+        ))
+    return changes
+
+
+def _diff_replaced_cells(
+    old_cells: list[Cell],
+    new_cells: list[Cell],
+    all_current_cells: list[Cell],
+    new_start: int,
+) -> list[CellChange]:
+    """Align a replace block so nearby source revisions remain edits."""
+    old_count = len(old_cells)
+    new_count = len(new_cells)
+    costs = [[0.0] * (new_count + 1) for _ in range(old_count + 1)]
+    steps = [[""] * (new_count + 1) for _ in range(old_count + 1)]
+
+    for old_pos in range(1, old_count + 1):
+        costs[old_pos][0] = float(old_pos)
+        steps[old_pos][0] = "deleted"
+    for new_pos in range(1, new_count + 1):
+        costs[0][new_pos] = float(new_pos)
+        steps[0][new_pos] = "inserted"
+
+    for old_pos in range(1, old_count + 1):
+        for new_pos in range(1, new_count + 1):
+            candidates = (
+                (
+                    costs[old_pos - 1][new_pos - 1]
+                    + _cell_edit_cost(old_cells[old_pos - 1], new_cells[new_pos - 1]),
+                    0,
+                    "edited",
+                ),
+                (costs[old_pos - 1][new_pos] + 1.0, 1, "deleted"),
+                (costs[old_pos][new_pos - 1] + 1.0, 2, "inserted"),
+            )
+            cost, _, step = min(candidates)
+            costs[old_pos][new_pos] = cost
+            steps[old_pos][new_pos] = step
+
+    aligned: list[CellChange] = []
+    old_pos = old_count
+    new_pos = new_count
+    while old_pos or new_pos:
+        step = steps[old_pos][new_pos]
+        if step == "edited":
+            old_cell = old_cells[old_pos - 1]
+            new_cell = new_cells[new_pos - 1]
+            aligned.append(CellChange(
+                kind="edited",
+                old_index=old_cell.index,
+                new_index=new_cell.index,
+                old_cell=old_cell,
+                new_cell=new_cell,
+                current_insertion_index=new_cell.index,
+            ))
+            old_pos -= 1
+            new_pos -= 1
+        elif step == "deleted":
+            old_cell = old_cells[old_pos - 1]
+            insertion_index = _current_insertion_index(all_current_cells, new_start + new_pos)
+            aligned.append(CellChange(
+                kind="deleted",
+                old_index=old_cell.index,
+                new_index=None,
+                old_cell=old_cell,
+                new_cell=None,
+                current_insertion_index=insertion_index,
+            ))
+            old_pos -= 1
+        else:
+            new_cell = new_cells[new_pos - 1]
+            aligned.append(CellChange(
+                kind="inserted",
+                old_index=None,
+                new_index=new_cell.index,
+                old_cell=None,
+                new_cell=new_cell,
+                current_insertion_index=new_cell.index,
+            ))
+            new_pos -= 1
+
+    aligned.reverse()
+    return aligned
+
+
+def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
+    similarity = SequenceMatcher(
+        None,
+        old_cell.source,
+        new_cell.source,
+        autojunk=False,
+    ).ratio()
+    type_penalty = 0.25 if old_cell.cell_type != new_cell.cell_type else 0.0
+    return 1.0 - similarity + type_penalty
+
+
+def build_summary_data(parsed: ParsedFile, changes: list[CellChange] | None = None) -> dict:
+    """Build structured cell summaries, optionally annotated with cell changes."""
+    changes = changes or []
+    changed_current = {
+        change.new_index: change
+        for change in changes
+        if change.new_index is not None
+    }
+    cells = []
+    for cell in parsed.cells:
+        cell_data = _summarize_cell(cell)
+        if change := changed_current.get(cell.index):
+            cell_data["change"] = change.kind
+            if change.old_index is not None:
+                cell_data["old_index"] = change.old_index
+        cells.append(cell_data)
+    return _notebook_data(
+        parsed,
+        cells,
+        changes=[_serialize_change(change) for change in changes],
+    )
+
+
+def _current_insertion_index(cells: list[Cell], position: int) -> int:
+    return cells[position].index if position < len(cells) else len(cells)
+
+
+def _serialize_change(change: CellChange) -> dict:
+    data = {
+        "kind": change.kind,
+        "old_index": change.old_index,
+        "new_index": change.new_index,
+        "current_insertion_index": change.current_insertion_index,
+    }
+    if change.old_cell is not None:
+        data["old_cell"] = _summarize_cell(change.old_cell)
+    return data
 
 
 def _summarize_cell(cell: Cell) -> dict:
@@ -253,26 +451,64 @@ def _first_nonempty_line(source: str) -> str | None:
     return next((line for line in source.splitlines() if line.strip()), None)
 
 
-def _format_summary_human(data: dict) -> str:
+def format_summary_human(data: dict) -> str:
     kernel = data["kernel"] if data["kernel"] is not None else "None"
     lines = [f"path={data['path']} cells={data['cell_count']} kernel={kernel}"]
+    changes = data.get("changes", [])
+    if changes:
+        kinds = [kind for kind in _CHANGE_MARKERS if any(change["kind"] == kind for change in changes)]
+        lines.append("changes: " + _format_change_overview(changes, kinds))
+        lines.append("legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds))
+    deleted_by_position: dict[int, list[dict]] = {}
+    for change in changes:
+        if change["kind"] == "deleted":
+            deleted_by_position.setdefault(change["current_insertion_index"], []).append(change)
     for cell in data["cells"]:
-        cell_type = CellType(cell["type"])
-        parts = [f"{cell['index']} [{cell_type.value}] [{cell['line_count']}L]"]
-        if cell_type == CellType.CODE:
-            for field in ("imports", "defines", "writes", "calls"):
-                values = ", ".join(cell[field]) or "-"
-                if cell[f"{field}_truncated"]:
-                    values += " [truncated]"
-                parts.append(f"{field}={values}")
-        elif cell_type == CellType.MARKDOWN:
-            parts.append(f"first_line={cell['first_nonempty_line']!r}")
-        preview = repr(cell["source_preview"])
-        if cell["source_preview_truncated"]:
-            preview += " [truncated]"
-        parts.append(f"preview={preview}")
-        lines.append(" ".join(parts))
+        for change in deleted_by_position.pop(cell["index"], []):
+            heading = f"- old:{change['old_index']} at current:{change['current_insertion_index']}"
+            lines.append(_format_summary_cell_human(change["old_cell"], heading))
+        marker = _CHANGE_MARKERS.get(cell.get("change"), "")
+        prefix = f"{marker} " if marker else ""
+        lines.append(_format_summary_cell_human(cell, f"{prefix}{cell['index']}"))
+    for position in sorted(deleted_by_position):
+        for change in deleted_by_position[position]:
+            heading = f"- old:{change['old_index']} at current:{change['current_insertion_index']}"
+            lines.append(_format_summary_cell_human(change["old_cell"], heading))
     return "\n".join(lines)
+
+
+def _format_change_overview(changes: list[dict], kinds: list[str]) -> str:
+    parts = []
+    for kind in kinds:
+        matching = [change for change in changes if change["kind"] == kind]
+        if kind == "deleted":
+            locations = ", ".join(
+                f"old:{change['old_index']} at current:{change['current_insertion_index']}"
+                for change in matching
+            )
+            parts.append(f"deleted [{locations}]")
+        else:
+            indices = ",".join(str(change["new_index"]) for change in matching)
+            parts.append(f"{kind} current[{indices}]")
+    return "; ".join(parts)
+
+
+def _format_summary_cell_human(cell: dict, heading: str) -> str:
+    cell_type = CellType(cell["type"])
+    parts = [f"{heading} [{cell_type.value}] [{cell['line_count']}L]"]
+    if cell_type == CellType.CODE:
+        for field in ("imports", "defines", "writes", "calls"):
+            values = ", ".join(cell[field]) or "-"
+            if cell[f"{field}_truncated"]:
+                values += " [truncated]"
+            parts.append(f"{field}={values}")
+    elif cell_type == CellType.MARKDOWN:
+        parts.append(f"first_line={cell['first_nonempty_line']!r}")
+    preview = repr(cell["source_preview"])
+    if cell["source_preview_truncated"]:
+        preview += " [truncated]"
+    parts.append(f"preview={preview}")
+    return " ".join(parts)
 
 
 def _format_show_human(cells: list[Cell]) -> str:

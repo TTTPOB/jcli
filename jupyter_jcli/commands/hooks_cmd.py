@@ -849,9 +849,12 @@ def _sync_pair_after_edit(
     from jupyter_jcli import pair_baseline
     from jupyter_jcli.pair_io import update_ipynb_sources
 
+    # Read before write_baseline advances the sticky pair-sync reference.
+    old_baseline_text = pair_baseline.read_baseline(py_path)
     synced = False
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
+    summary_text: str | None = None
 
     if result.ipynb_needs_update and ipynb_path != edited:
         try:
@@ -884,14 +887,30 @@ def _sync_pair_after_edit(
     if synced:
         if canonical_merged_py is None:
             _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+        if old_baseline_text is not None and canonical_merged_py is not None:
+            try:
+                from jupyter_jcli.commands.notebook import (
+                    build_summary_data,
+                    diff_cells,
+                    format_summary_human,
+                )
+                from jupyter_jcli.parser import parse_py_percent_text
+
+                baseline = parse_py_percent_text(old_baseline_text, source_path=str(py_path))
+                current = parse_py_percent_text(canonical_merged_py, source_path=str(py_path))
+                summary_text = format_summary_human(build_summary_data(current, diff_cells(baseline, current)))
+            except Exception as exc:  # noqa: BLE001
+                if logger is not None:
+                    logger.record_exception(exc)
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced:
         other = ipynb_path if edited == py_path else py_path
-        return (
+        context = (
             f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
             "Pair is now in sync."
         )
+        return f"{context}\n\n{summary_text}" if summary_text is not None else context
     return None
 
 
