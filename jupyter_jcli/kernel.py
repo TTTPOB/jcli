@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from uuid import uuid4
 
 from jupyter_kernel_client import KernelClient
+from jupyter_kernel_client.client import output_hook
 
 
 _KERNEL_READY_TIMEOUT = 30
@@ -18,6 +19,8 @@ _KERNEL_READY_TIMEOUT = 30
 # one unlucky WebSocket from consuming the entire exec attempt.
 _KERNEL_READY_ATTEMPT_TIMEOUT = 10
 _KERNEL_READY_MAX_ATTEMPTS = 3
+_KERNEL_MESSAGE_POLL_INTERVAL = 0.1
+_KERNEL_INTERRUPT_RECOVERY_TIMEOUT = 5
 
 
 class ExecutionTimeout(TimeoutError):
@@ -258,57 +261,109 @@ def execute_with_timeout(
     kernel: KernelClient,
     code: str,
     timeout: float,
-    **execute_kwargs,
+    *,
+    silent: bool = False,
+    store_history: bool = True,
+    user_expressions: dict | None = None,
+    stop_on_error: bool = True,
 ) -> dict:
     """Execute code and interrupt the remote kernel when the deadline expires."""
     if timeout <= 0:
         raise ExecutionTimeout("Execution deadline expired before the request was sent")
 
-    finished = threading.Event()
-    timed_out = threading.Event()
-    interrupt_errors: list[Exception] = []
+    # jupyter-kernel-client 0.9.0's execute_interactive() recalculates its
+    # timeout as zero at the deadline, then loops forever on Event.wait(0).
+    # Drive its channel queues ourselves so a lost WebSocket cannot defeat the
+    # caller's deadline. Remove this workaround once upstream raises on expiry.
+    client = kernel._manager.client
+    deadline = time.monotonic() + timeout
+    outputs: list[dict] = []
+    reply: dict | None = None
+    idle_seen = False
+    timed_out = False
+    recovery_deadline: float | None = None
 
-    def interrupt_at_deadline() -> None:
-        if finished.wait(timeout):
-            return
-        timed_out.set()
+    while time.monotonic() < deadline:
         try:
-            kernel.interrupt(timeout=2)
-        except Exception as exc:
-            interrupt_errors.append(exc)
+            client.iopub_channel.get_msg(timeout=0)
+        except (queue.Empty, TimeoutError):
+            break
+    else:
+        raise ExecutionTimeout("Execution deadline expired before the request was sent")
 
-    watchdog = threading.Thread(
-        target=interrupt_at_deadline,
-        name="jcli-execution-timeout",
-        daemon=True,
+    msg_id = client.execute(
+        code,
+        silent=silent,
+        store_history=store_history,
+        user_expressions=user_expressions,
+        allow_stdin=False,
+        stop_on_error=stop_on_error,
     )
-    watchdog.start()
-    result: dict | None = None
-    execution_error: Exception | None = None
-    try:
-        # jupyter-kernel-client 0.9.0 does not enforce its WebSocket timeout.
-        # The watchdog owns the deadline and interrupt, while this call consumes
-        # messages through the matching idle status after an interrupt.
-        result = kernel.execute(code, timeout=None, **execute_kwargs)
-    except Exception as exc:
-        execution_error = exc
-    finally:
-        finished.set()
-        watchdog.join()
 
-    if timed_out.is_set():
-        if interrupt_errors:
-            raise KernelInterruptFailed(
-                "Execution deadline expired and the kernel interrupt failed: "
-                f"{interrupt_errors[0]}"
-            ) from interrupt_errors[0]
-        raise ExecutionTimeout(
-            "Execution deadline expired; the kernel was interrupted and returned to idle"
-        )
-    if execution_error is not None:
-        raise execution_error
-    assert result is not None
-    return result
+    while True:
+        now = time.monotonic()
+        active_deadline = recovery_deadline if timed_out else deadline
+        assert active_deadline is not None
+        remaining = active_deadline - now
+
+        if remaining <= 0:
+            if timed_out:
+                raise KernelInterruptFailed(
+                    "Execution deadline expired; the kernel did not return to idle "
+                    f"within {_KERNEL_INTERRUPT_RECOVERY_TIMEOUT:g} seconds"
+                )
+            if idle_seen:
+                raise ExecutionTimeout(
+                    "Execution deadline expired while waiting for the execute reply; "
+                    "the kernel returned to idle"
+                )
+            try:
+                kernel.interrupt(timeout=2)
+            except Exception as exc:
+                raise KernelInterruptFailed(
+                    f"Execution deadline expired and the kernel interrupt failed: {exc}"
+                ) from exc
+            timed_out = True
+            recovery_deadline = time.monotonic() + _KERNEL_INTERRUPT_RECOVERY_TIMEOUT
+            continue
+
+        wait_timeout = min(_KERNEL_MESSAGE_POLL_INTERVAL, remaining)
+        try:
+            msg = client.iopub_channel.get_msg(timeout=wait_timeout)
+        except (queue.Empty, TimeoutError):
+            msg = None
+
+        if msg is not None and msg.get("parent_header", {}).get("msg_id") == msg_id:
+            output_hook(outputs, msg)
+            if (
+                msg.get("header", {}).get("msg_type") == "status"
+                and msg.get("content", {}).get("execution_state") == "idle"
+            ):
+                idle_seen = True
+
+        try:
+            shell_msg = client.shell_channel.get_msg(timeout=0)
+        except (queue.Empty, TimeoutError):
+            shell_msg = None
+        if (
+            shell_msg is not None
+            and shell_msg.get("parent_header", {}).get("msg_id") == msg_id
+        ):
+            reply = shell_msg
+
+        if timed_out and idle_seen:
+            raise ExecutionTimeout(
+                "Execution deadline expired; the kernel was interrupted and returned to idle"
+            )
+        if not timed_out and idle_seen and reply is not None:
+            for output in outputs:
+                output.pop("transient", None)
+            content = reply["content"]
+            return {
+                "execution_count": content.get("execution_count"),
+                "outputs": outputs,
+                "status": content["status"],
+            }
 
 
 def execute_code(

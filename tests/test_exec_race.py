@@ -19,8 +19,8 @@ import queue
 import signal
 import subprocess
 import sys
-import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -165,46 +165,108 @@ class TestKernelWebsocketReadyProbe:
 # ---------------------------------------------------------------------------
 
 
-class _BlockingKernel:
-    def __init__(self, interrupt_error=None):
+def _kernel_message(msg_type, *, parent="execute-1", **content):
+    return {
+        "header": {"msg_type": msg_type},
+        "parent_header": {"msg_id": parent},
+        "content": content,
+    }
+
+
+class _ExecutionClient:
+    def __init__(self, *, iopub_after_execute=None, shell_after_execute=None):
+        self.iopub_channel = _FakeChannel()
+        self.shell_channel = _FakeChannel()
+        self.iopub_after_execute = iopub_after_execute or []
+        self.shell_after_execute = shell_after_execute or []
+        self.execute_calls = []
+
+    def execute(self, code, **kwargs):
+        self.execute_calls.append((code, kwargs))
+        for msg in self.iopub_after_execute:
+            self.iopub_channel.messages.put(msg)
+        for msg in self.shell_after_execute:
+            self.shell_channel.messages.put(msg)
+        return "execute-1"
+
+
+class _ContinuouslyReadyChannel:
+    def get_msg(self, timeout=None):
+        return _kernel_message("stream", parent="other-request", text="noise")
+
+
+class _ExecutionKernel:
+    def __init__(self, client, *, interrupt_messages=None, interrupt_error=None):
+        self._manager = SimpleNamespace(client=client)
+        self.interrupt_messages = interrupt_messages or []
         self.interrupt_error = interrupt_error
         self.interrupt_calls = 0
-        self.released = threading.Event()
-
-    def execute(self, code, timeout=None, **kwargs):
-        assert timeout is None
-        if not self.released.wait(2):
-            raise RuntimeError("test kernel was not interrupted")
-        return {"status": "error", "outputs": [], "execution_count": 1}
 
     def interrupt(self, timeout=2):
         self.interrupt_calls += 1
-        self.released.set()
         if self.interrupt_error is not None:
             raise self.interrupt_error
+        for msg in self.interrupt_messages:
+            self._manager.client.iopub_channel.messages.put(msg)
 
 
 class TestExecutionTimeoutUnit:
-    def test_completed_execution_does_not_interrupt(self):
+    def test_completed_execution_preserves_result_and_kwargs(self):
         from jupyter_jcli.kernel import execute_with_timeout
 
-        kernel = MagicMock()
-        kernel.execute.return_value = {
+        client = _ExecutionClient(
+            iopub_after_execute=[
+                _kernel_message(
+                    "display_data",
+                    data={"text/plain": "result"},
+                    metadata={},
+                    transient={"display_id": "temporary"},
+                ),
+                _kernel_message("status", execution_state="idle"),
+            ],
+            shell_after_execute=[
+                _kernel_message("execute_reply", status="ok", execution_count=7)
+            ],
+        )
+        kernel = _ExecutionKernel(client)
+
+        result = execute_with_timeout(
+            kernel, "pass", timeout=1, silent=True, store_history=False
+        )
+
+        assert result == {
             "status": "ok",
-            "outputs": [],
-            "execution_count": 1,
+            "outputs": [
+                {
+                    "output_type": "display_data",
+                    "data": {"text/plain": "result"},
+                    "metadata": {},
+                }
+            ],
+            "execution_count": 7,
         }
-
-        result = execute_with_timeout(kernel, "pass", timeout=1)
-
-        assert result["status"] == "ok"
-        kernel.execute.assert_called_once_with("pass", timeout=None)
-        kernel.interrupt.assert_not_called()
+        assert client.execute_calls == [
+            (
+                "pass",
+                {
+                    "silent": True,
+                    "store_history": False,
+                    "user_expressions": None,
+                    "allow_stdin": False,
+                    "stop_on_error": True,
+                },
+            )
+        ]
+        assert kernel.interrupt_calls == 0
 
     def test_deadline_interrupts_and_reports_timeout(self):
         from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
 
-        kernel = _BlockingKernel()
+        client = _ExecutionClient()
+        kernel = _ExecutionKernel(
+            client,
+            interrupt_messages=[_kernel_message("status", execution_state="idle")],
+        )
 
         with pytest.raises(ExecutionTimeout, match="interrupted and returned to idle"):
             execute_with_timeout(kernel, "long_running()", timeout=0.01)
@@ -214,12 +276,42 @@ class TestExecutionTimeoutUnit:
     def test_interrupt_failure_is_distinct(self):
         from jupyter_jcli.kernel import KernelInterruptFailed, execute_with_timeout
 
-        kernel = _BlockingKernel(interrupt_error=OSError("server unavailable"))
+        client = _ExecutionClient()
+        kernel = _ExecutionKernel(client, interrupt_error=OSError("server unavailable"))
 
         with pytest.raises(KernelInterruptFailed, match="server unavailable"):
             execute_with_timeout(kernel, "long_running()", timeout=0.01)
 
         assert kernel.interrupt_calls == 1
+
+    def test_missing_idle_after_interrupt_has_a_hard_deadline(self):
+        from jupyter_jcli.kernel import KernelInterruptFailed, execute_with_timeout
+
+        client = _ExecutionClient()
+        kernel = _ExecutionKernel(client)
+        started = time.monotonic()
+
+        with (
+            patch("jupyter_jcli.kernel._KERNEL_INTERRUPT_RECOVERY_TIMEOUT", 0.01),
+            pytest.raises(KernelInterruptFailed, match="did not return to idle"),
+        ):
+            execute_with_timeout(kernel, "long_running()", timeout=0.01)
+
+        assert time.monotonic() - started < 0.2
+        assert kernel.interrupt_calls == 1
+
+    def test_iopub_flush_cannot_consume_the_execution_deadline(self):
+        from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
+
+        client = _ExecutionClient()
+        client.iopub_channel = _ContinuouslyReadyChannel()
+        kernel = _ExecutionKernel(client)
+
+        with pytest.raises(ExecutionTimeout, match="before the request was sent"):
+            execute_with_timeout(kernel, "pass", timeout=0.01)
+
+        assert client.execute_calls == []
+        assert kernel.interrupt_calls == 0
 
 
 # ---------------------------------------------------------------------------
