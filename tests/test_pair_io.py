@@ -1,7 +1,9 @@
 """Tests for jupyter_jcli.pair_io."""
 
 from pathlib import Path
+import ast
 
+from IPython.core.inputtransformer2 import TransformerManager
 import nbformat
 import pytest
 
@@ -105,6 +107,12 @@ class TestEmitPyPercent:
         compile(text, "notebook.py", "exec")
         assert parse_py_percent_text(text).cells[0].source == source
 
+    def test_cell_magic_after_blank_line_is_restored(self):
+        text = emit_py_percent(_parsed("python3", ("code", "\n%%bash\necho hi")))
+
+        compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == "%%bash\necho hi"
+
     def test_indented_magic_adds_and_removes_parseable_placeholder(self):
         source = "if ready:\n    %timeit value + 1"
         text = emit_py_percent(_parsed("python3", ("code", source)))
@@ -112,6 +120,52 @@ class TestEmitPyPercent:
         assert "    pass  # jupyter-jcli: IPython magic placeholder" in text
         assert "    # %timeit value + 1" in text
         compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_user_placeholder_without_magic_is_preserved(self):
+        source = "if ready:\n    pass  # jupyter-jcli: IPython magic placeholder\n    value = 1"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "x = %time expression",
+            "x, y = %some_magic args",
+            'files = !find . -name "*.py"',
+            "a, *rest = !command",
+            "x: object = %time expression",
+            "(\n    x,\n    y,\n) = %some_magic args",
+            "x = %time foo( \\\n    1)",
+        ],
+    )
+    def test_matches_ipython_assignment_grammar(self, source):
+        transformer = TransformerManager()
+        assert transformer.transform_cell(source) != source + "\n"
+
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        ast.parse(text)
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "(x := %time expression)",
+            "print(%time func())",
+            "items.append(!ls)",
+            "foo + %time bar",
+            "x = 1; %time func()",
+        ],
+    )
+    def test_leaves_syntax_ipython_does_not_transform(self, source):
+        transformer = TransformerManager()
+        assert transformer.transform_cell(source) == source + "\n"
+
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert source in text
         assert parse_py_percent_text(text).cells[0].source == source
 
     def test_roundtrip_preserves_commented_magic(self):

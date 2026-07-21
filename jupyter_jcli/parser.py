@@ -5,20 +5,19 @@ from dataclasses import dataclass, field
 import io
 from pathlib import Path
 import re
+from textwrap import dedent
 import tokenize
 
+from IPython.core.inputtransformer2 import TransformerManager
 import nbformat
 
 from jupyter_jcli._enums import CellType
 
 
 _CELL_MARKER_RE = re.compile(r"^# %%(?:\s|$)")
-_MAGIC_RE = re.compile(r"^\s*(?:# ?)*(?:%{1,3}[A-Za-z]|[!?]\s*[A-Za-z.~/\\${}])")
-_MAGIC_ASSIGN_RE = re.compile(r"^\s*(?:# ?)*[A-Za-z_]\w*\s*=\s*(?:%{1,3}|!)\s*[A-Za-z]")
-_HELP_RE = re.compile(r"^\s*(?:# ?)*\S+\?{1,2}\s*$")
-_LINE_CONTINUATION_RE = re.compile(r".*\\\s*$")
 _COMMENTED_CELL_MAGIC_BODY = "# jupyter-jcli: commented cell magic body"
 _MAGIC_PLACEHOLDER = "pass  # jupyter-jcli: IPython magic placeholder"
+_IPYTHON_TRANSFORMER = TransformerManager()
 _PYTHON_BODY_CELL_MAGICS = {
     "%%capture",
     "%%debug",
@@ -34,33 +33,161 @@ _PYTHON_BODY_CELL_MAGICS = {
 }
 
 
-def _lines_in_strings(source: str) -> set[int]:
-    string_lines: set[int] = set()
+def _is_ipython_syntax(source: str) -> bool:
+    candidate = dedent(source)
+    if not candidate.endswith("\n"):
+        candidate += "\n"
+    try:
+        return _IPYTHON_TRANSFORMER.transform_cell(candidate) != candidate
+    except (IndentationError, SyntaxError, tokenize.TokenError):
+        return False
+
+
+def _tokens_by_logical_line(source: str) -> list[list[tokenize.TokenInfo]]:
+    groups: list[list[tokenize.TokenInfo]] = [[]]
+    paren_level = 0
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         for token in tokens:
-            if token.type == tokenize.STRING:
-                string_lines.update(range(token.start[0], token.end[0] + 1))
+            groups[-1].append(token)
+            if token.type == tokenize.NEWLINE or (
+                token.type == tokenize.NL and paren_level <= 0
+            ):
+                groups.append([])
+            elif token.string in {"(", "[", "{"}:
+                paren_level += 1
+            elif (
+                token.string
+                in {
+                    ")",
+                    "]",
+                    "}",
+                }
+                and paren_level > 0
+            ):
+                paren_level -= 1
     except (IndentationError, SyntaxError, tokenize.TokenError):
         pass
-    return string_lines
+    return [group for group in groups if group]
+
+
+def _significant_tokens(tokens: list[tokenize.TokenInfo]) -> list[tokenize.TokenInfo]:
+    ignored = {
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.NEWLINE,
+        tokenize.NL,
+        tokenize.ENDMARKER,
+        tokenize.COMMENT,
+    }
+    return [
+        token
+        for token in tokens
+        if token.type not in ignored and not token.string.isspace()
+    ]
+
+
+def _find_first_magic_range(lines: list[str]) -> tuple[int, int] | None:
+    for logical_line in _tokens_by_logical_line("".join(lines)):
+        tokens = _significant_tokens(logical_line)
+        if not tokens:
+            continue
+
+        special = tokens[0].string in {"%", "!", "?"} or tokens[-1].string == "?"
+        paren_level = 0
+        for index, token in enumerate(tokens):
+            if token.string in {"(", "[", "{"}:
+                paren_level += 1
+            elif token.string in {
+                ")",
+                "]",
+                "}",
+            }:
+                paren_level = max(0, paren_level - 1)
+            elif token.string == "=" and paren_level == 0 and index + 1 < len(tokens):
+                rhs = tokens[index + 1]
+                special = rhs.string in {"%", "!"}
+                break
+
+        if not special:
+            continue
+
+        start = min(token.start[0] for token in logical_line) - 1
+        end = max(token.end[0] for token in logical_line) - 1
+        if _is_ipython_syntax("".join(lines[start : end + 1])):
+            return start, end
+    return None
+
+
+def _magic_ranges(source: str) -> list[tuple[int, int]]:
+    shadow = source.splitlines(keepends=True)
+    ranges: list[tuple[int, int]] = []
+    for _ in range(500):
+        found = _find_first_magic_range(shadow)
+        if found is None:
+            return ranges
+        start, end = found
+        ranges.append(found)
+        indent = shadow[start][: len(shadow[start]) - len(shadow[start].lstrip())]
+        shadow[start] = f"{indent}pass\n"
+        for index in range(start + 1, end + 1):
+            shadow[index] = "\n"
+    raise RuntimeError("IPython magic detection did not converge")
+
+
+def _uncomment_once(line: str) -> str:
+    unindented = line.lstrip()
+    indent = line[: len(line) - len(unindented)]
+    if unindented.startswith("# "):
+        return indent + unindented[2:]
+    if unindented.startswith("#"):
+        return indent + unindented[1:]
+    return line
+
+
+def _fully_uncomment(line: str) -> str:
+    previous = line
+    while previous.lstrip().startswith("#"):
+        current = _uncomment_once(previous)
+        if current == previous:
+            break
+        previous = current
+    return previous
+
+
+def _uncomment_magic_lines(lines: list[str]) -> list[str]:
+    for start, end in _encoded_magic_ranges(lines):
+        for index in range(start, end + 1):
+            lines[index] = _uncomment_once(lines[index])
+    return lines
+
+
+def _encoded_magic_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    probe = [
+        _fully_uncomment(line) if line.lstrip().startswith("#") else line
+        for line in lines
+    ]
+    return [
+        (start, end)
+        for start, end in _magic_ranges("".join(probe))
+        if all(lines[index].lstrip().startswith("#") for index in range(start, end + 1))
+    ]
+
+
+def _commented_magic_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    return _encoded_magic_ranges(lines)
 
 
 def _transform_ipython_magics(source: str, *, comment: bool) -> str:
     lines = source.splitlines(keepends=True)
     if not comment:
+        encoded_ranges = _encoded_magic_ranges(lines)
         for index in range(len(lines) - 2, -1, -1):
-            if lines[index].strip() == _MAGIC_PLACEHOLDER and (
-                _MAGIC_RE.match(lines[index + 1])
-                or _MAGIC_ASSIGN_RE.match(lines[index + 1])
-                or _HELP_RE.match(lines[index + 1])
+            if lines[index].strip() == _MAGIC_PLACEHOLDER and any(
+                start == index + 1 for start, _ in encoded_ranges
             ):
                 lines.pop(index)
 
-    source = "".join(lines)
-    string_lines = _lines_in_strings(source)
-    continuation = False
-    placeholder_indices: list[int] = []
     first_content_index = next(
         (index for index, line in enumerate(lines) if line.strip()),
         None,
@@ -82,7 +209,7 @@ def _transform_ipython_magics(source: str, *, comment: bool) -> str:
     if commented_body_marker:
         lines.pop(first_content_index + 1)
 
-    cell_magic = False
+    comment_entire_cell = False
     if cell_magic_match:
         if comment:
             body = "".join(lines[first_content_index + 1 :])
@@ -91,44 +218,37 @@ def _transform_ipython_magics(source: str, *, comment: bool) -> str:
                 ast.parse(body)
             except SyntaxError:
                 python_body = False
-            cell_magic = not python_body
+            comment_entire_cell = not python_body
         else:
-            cell_magic = commented_body_marker
+            comment_entire_cell = commented_body_marker
 
-    for index, line in enumerate(lines, 1):
-        is_magic = cell_magic or (
-            index not in string_lines
-            and (
-                continuation
-                or _MAGIC_RE.match(line)
-                or _MAGIC_ASSIGN_RE.match(line)
-                or _HELP_RE.match(line)
-            )
-        )
-        if not is_magic:
-            continuation = False
-            continue
+    if comment_entire_cell:
+        if not comment:
+            return "".join(_uncomment_once(line) for line in lines)
+        target_ranges = [(0, len(lines) - 1)]
+    elif comment:
+        target_ranges = _magic_ranges("".join(lines)) + _commented_magic_ranges(lines)
+        target_ranges.sort()
+    else:
+        return "".join(_uncomment_magic_lines(lines))
 
-        if comment:
-            if continuation:
-                lines[index - 1] = f"# {line}"
+    placeholder_indices: list[int] = []
+    for start, end in target_ranges:
+        for index in range(start, end + 1):
+            line = lines[index]
+            if not line.strip():
+                continue
+            if index > start:
+                lines[index] = f"# {line}"
             else:
                 unindented = line.lstrip()
                 indent = line[: len(line) - len(unindented)]
-                lines[index - 1] = f"{indent}# {unindented}"
-                if indent and not cell_magic:
-                    placeholder_indices.append(index - 1)
-        else:
-            unindented = line.lstrip()
-            indent = line[: len(line) - len(unindented)]
-            if unindented.startswith("# "):
-                lines[index - 1] = indent + unindented[2:]
-            elif unindented.startswith("#"):
-                lines[index - 1] = indent + unindented[1:]
+                lines[index] = f"{indent}# {unindented}"
+        indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+        if indent and not comment_entire_cell:
+            placeholder_indices.append(start)
 
-        continuation = bool(_LINE_CONTINUATION_RE.match(line))
-
-    if comment and cell_magic and first_content_index is not None:
+    if comment and comment_entire_cell and first_content_index is not None:
         if not lines[first_content_index].endswith(("\n", "\r")):
             lines[first_content_index] += "\n"
         lines.insert(first_content_index + 1, _COMMENTED_CELL_MAGIC_BODY + "\n")

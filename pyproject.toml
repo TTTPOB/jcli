@@ -16,6 +16,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8",
+    "ipython>=8",
     "jupyter-kernel-client>=0.7.3",
     "jupyter-server-client",
     "nbformat>=5",

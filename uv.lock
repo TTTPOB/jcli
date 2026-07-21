@@ -963,6 +963,9 @@ version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "ipython", version = "9.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "ipython", version = "9.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "jupyter-kernel-client" },
     { name = "jupyter-server-client" },
     { name = "nbformat" },
@@ -983,6 +986,7 @@ test = [
 requires-dist = [
     { name = "click", specifier = ">=8" },
     { name = "ipykernel", marker = "extra == 'test'" },
+    { name = "ipython", specifier = ">=8" },
     { name = "jupyter-kernel-client", specifier = ">=0.7.3" },
     { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
     { name = "jupyter-server-client" },
