@@ -275,6 +275,8 @@ class Cell:
     index: int
     cell_type: CellType  # CellType.CODE, MARKDOWN, or RAW
     source: str
+    source_start_line: int | None = None
+    source_end_line: int | None = None
 
     def __post_init__(self) -> None:
         self.cell_type = CellType(self.cell_type)
@@ -402,19 +404,37 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
     current_type = CellType.CODE
     cell_index = 0
     found_percent_marker = False
+    current_start_line = content_start + 1
 
-    for line in lines[content_start:]:
+    def append_cell(raw_lines: list[str], start_line: int) -> None:
+        nonlocal cell_index
+        source = "".join(raw_lines).strip()
+        if not source:
+            return
+        first_content_line = next(
+            index for index, raw_line in enumerate(raw_lines) if raw_line.strip()
+        )
+        last_content_line = next(
+            index
+            for index, raw_line in reversed(list(enumerate(raw_lines)))
+            if raw_line.strip()
+        )
+        cells.append(
+            Cell(
+                index=cell_index,
+                cell_type=current_type,
+                source=source,
+                source_start_line=start_line + first_content_line,
+                source_end_line=start_line + last_content_line,
+            )
+        )
+        cell_index += 1
+
+    for line_number, line in enumerate(lines[content_start:], content_start + 1):
         stripped = line.rstrip()
         if _CELL_MARKER_RE.match(stripped):
             found_percent_marker = True
-            # Save previous cell if it has content
-            if current_lines:
-                source = "".join(current_lines).strip()
-                if source:
-                    cells.append(
-                        Cell(index=cell_index, cell_type=current_type, source=source)
-                    )
-                    cell_index += 1
+            append_cell(current_lines, current_start_line)
 
             # Determine cell type from marker tag
             tag = stripped[4:].strip().lower()
@@ -425,14 +445,12 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
             else:
                 current_type = CellType.CODE
             current_lines = []
+            current_start_line = line_number + 1
         else:
             current_lines.append(line)
 
     # Don't forget the last cell
-    if current_lines:
-        source = "".join(current_lines).strip()
-        if source:
-            cells.append(Cell(index=cell_index, cell_type=current_type, source=source))
+    append_cell(current_lines, current_start_line)
 
     # Strip leading comment markers from markdown and raw cells
     for cell in cells:
@@ -441,12 +459,18 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
         elif cell.cell_type == CellType.CODE:
             cell.source = uncomment_ipython_magics(cell.source).strip()
 
+    is_py_percent = front_matter_raw is not None or found_percent_marker
+    if not is_py_percent:
+        for cell in cells:
+            cell.source_start_line = None
+            cell.source_end_line = None
+
     return ParsedFile(
         kernel_name=kernel_name,
         cells=cells,
         source_path=source_path,
         front_matter_raw=front_matter_raw,
-        is_py_percent=front_matter_raw is not None or found_percent_marker,
+        is_py_percent=is_py_percent,
         kernel_display_name=kernel_display_name,
         kernel_language=kernel_language,
     )

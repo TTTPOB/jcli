@@ -81,6 +81,8 @@ def test_summary_extracts_python_ast_fields_and_non_code_previews(tmp_path):
 
     code = data["cells"][0]
     assert code["line_count"] == 10
+    assert code["source_start_line"] == 8
+    assert code["source_end_line"] == 17
     assert code["source_preview"] == "import os"
     assert code["imports"] == ["os", "pkg.item as alias"]
     assert code["defines"] == ["Model", "build"]
@@ -174,8 +176,11 @@ def test_summary_human_includes_notebook_metadata_and_cells(tmp_path):
 
     assert result.exit_code == 0
     assert f"path={path} cells=4 kernel=python3" in result.output
-    assert "0 [code] [10L]" in result.output
-    assert "1 [markdown] [3L] source='\\n# Report title\\nMore text'" in result.output
+    assert "0 [code] [10L] [L8-17]" in result.output
+    assert (
+        "1 [markdown] [3L] [L20-22] source='\\n# Report title\\nMore text'"
+        in result.output
+    )
     assert "2 [raw] [1L]" in result.output
 
 

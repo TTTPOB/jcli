@@ -2,7 +2,7 @@
 
 import pytest
 
-from jupyter_jcli.parser import parse_cell_spec
+from jupyter_jcli.parser import parse_cell_spec, parse_py_percent_text
 
 
 @pytest.mark.parametrize(
@@ -28,3 +28,21 @@ def test_parse_cell_spec_accepts_forward_half_open_ranges(spec, num_cells, expec
 def test_parse_cell_spec_rejects_invalid_boundaries_and_syntax(spec):
     with pytest.raises(ValueError):
         parse_cell_spec(spec, 10)
+
+
+def test_parse_py_percent_tracks_source_line_ranges():
+    parsed = parse_py_percent_text(
+        "# ---\n# jupyter:\n# ---\n\n# %%\n\nvalue = 1\nvalue\n\n"
+        "# %% [markdown]\n# Title\n# body\n"
+    )
+
+    assert [
+        (cell.source_start_line, cell.source_end_line) for cell in parsed.cells
+    ] == [(7, 8), (11, 12)]
+
+
+def test_plain_python_has_no_source_line_range():
+    cell = parse_py_percent_text("value = 1\n").cells[0]
+
+    assert cell.source_start_line is None
+    assert cell.source_end_line is None

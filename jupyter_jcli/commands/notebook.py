@@ -482,6 +482,9 @@ def _summarize_cell(cell: Cell) -> dict:
         "source_preview": preview,
         "source_preview_truncated": preview_truncated,
     }
+    if cell.source_start_line is not None and cell.source_end_line is not None:
+        data["source_start_line"] = cell.source_start_line
+        data["source_end_line"] = cell.source_end_line
     if len(cell.source) <= _MAX_SOURCE_PREVIEW_CHARS:
         data["source"] = cell.source
     if cell.cell_type == CellType.CODE:
@@ -869,6 +872,8 @@ def _format_bounded_omission(
 def _format_summary_cell_human(cell: dict, heading: str) -> str:
     cell_type = CellType(cell["type"])
     parts = [f"{heading} [{cell_type.value}] [{cell['line_count']}L]"]
+    if "source_start_line" in cell:
+        parts.append(f"[L{cell['source_start_line']}-{cell['source_end_line']}]")
     if "source" in cell:
         parts.append(f"source={cell['source']!r}")
         return " ".join(parts)
