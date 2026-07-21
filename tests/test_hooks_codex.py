@@ -529,6 +529,37 @@ class TestCodexMultiFilePostMerge:
         assert "---" in context
         assert call_count[0] == 2
 
+    def test_multiple_contexts_have_a_total_character_limit(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
+        (tmp_path / "b.py").write_text("b = 1\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            lambda path, logger=None: f"{path.name}:" + "x" * 80,
+        )
+        monkeypatch.setattr("jupyter_jcli.commands.hooks_cmd._HOOK_CONTEXT_MAX_CHARS", 120)
+        payload = json.dumps({
+            "tool_name": "apply_patch",
+            "tool_input": {
+                "command": [
+                    "apply_patch",
+                    "*** Update File: a.py\n@@\n*** Update File: b.py\n@@\n",
+                ]
+            },
+        })
+
+        result = CliRunner().invoke(
+            main,
+            ["_hooks", "pair-drift-guard-post", "--platform", "codex"],
+            input=payload,
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert len(context) <= 120
+        assert "additional file contexts omitted" in context
+
     def test_single_context_no_separator(self, tmp_path, monkeypatch):
         """Single context message has no merge separator."""
         monkeypatch.chdir(tmp_path)
@@ -615,5 +646,4 @@ class TestCodexMultiFilePostMerge:
         )
         assert result.exit_code == 0
         assert result.stdout.strip() == ""
-
 

@@ -613,6 +613,9 @@ def _post_drift_notice(drift_reason: str) -> str:
 
 
 _MAX_DIFF_CHARS = 6000
+_HOOK_SUMMARY_MAX_CELLS = 16
+_HOOK_SUMMARY_MAX_CHARS = 8000
+_HOOK_CONTEXT_MAX_CHARS = 16000
 
 
 def _diff_section(diff_text: str, py_name: str = "") -> str:
@@ -758,10 +761,33 @@ def _pair_drift_guard_post_codex(debug: bool) -> None:
                 print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
 
         if contexts:
-            merged = "\n\n---\n\n".join(contexts)
+            merged = _merge_post_contexts(contexts)
             _emit_decision(PostToolUseContext(merged), logger=log)
 
         sys.exit(0)
+
+
+def _merge_post_contexts(contexts: list[str]) -> str:
+    separator = "\n\n---\n\n"
+    merged = separator.join(contexts)
+    if len(merged) <= _HOOK_CONTEXT_MAX_CHARS:
+        return merged
+
+    included: list[str] = []
+    for context in contexts:
+        candidate = separator.join([*included, context])
+        omitted = len(contexts) - len(included) - 1
+        suffix = f"\n\n... ({omitted} additional file contexts omitted)"
+        if len(candidate) + len(suffix) > _HOOK_CONTEXT_MAX_CHARS:
+            break
+        included.append(context)
+
+    omitted = len(contexts) - len(included)
+    suffix = f"... ({omitted} additional file contexts omitted)"
+    if not included:
+        available = max(0, _HOOK_CONTEXT_MAX_CHARS - len(suffix) - 2)
+        return f"{contexts[0][:available]}\n\n{suffix}"[:_HOOK_CONTEXT_MAX_CHARS]
+    return f"{separator.join(included)}\n\n{suffix}"
 
 
 def _run_post_drift_check(path: Path, logger=None) -> str | None:
@@ -904,7 +930,11 @@ def _sync_pair_after_edit(
 
                 baseline = parse_py_percent_text(old_baseline_text, source_path=str(py_path))
                 current = parse_py_percent_text(canonical_merged_py, source_path=str(py_path))
-                summary_text = format_summary_human(build_summary_data(current, diff_cells(baseline, current)))
+                summary_text = format_summary_human(
+                    build_summary_data(current, diff_cells(baseline, current)),
+                    max_cells=_HOOK_SUMMARY_MAX_CELLS,
+                    max_chars=_HOOK_SUMMARY_MAX_CHARS,
+                )
             except Exception as exc:  # noqa: BLE001
                 if logger is not None:
                     logger.record_exception(exc)

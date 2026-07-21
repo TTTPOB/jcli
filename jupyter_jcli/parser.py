@@ -43,12 +43,19 @@ def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
         ":5"    -> [0, 1, 2, 3, 4]
     """
     spec = spec.strip()
+    if num_cells < 0 or spec.count(":") > 1:
+        raise ValueError(f"Invalid cell spec: {spec}")
     if ":" in spec:
-        parts = spec.split(":", 1)
+        parts = spec.split(":")
         start = int(parts[0]) if parts[0] else 0
         end = int(parts[1]) if parts[1] else num_cells
+        if start < 0 or end < 0 or (parts[1] and start > end):
+            raise ValueError(f"Invalid cell range: {spec}")
         return list(range(start, min(end, num_cells)))
-    return [int(spec)]
+    index = int(spec)
+    if index < 0:
+        raise ValueError(f"Invalid cell index: {spec}")
+    return [index]
 
 
 def ipynb_path_for_py(py_path: Path) -> Path:

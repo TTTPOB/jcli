@@ -629,6 +629,25 @@ class TestConsecutiveEdits:
         assert "~ 1 [code]" in context
         assert "- old:2 at current:3 [code]" in context
 
+    def test_post_context_keeps_late_change_and_reports_omitted_cells(self, git_repo: Path):
+        sources = [f"value_{index} = {index}" for index in range(40)]
+        py, _ = _make_pair(git_repo, sources, sources)
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(
+            py.read_text(encoding="utf-8").replace("value_39 = 39", "value_39 = 999"),
+            encoding="utf-8",
+        )
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        context = _additional_context(out)
+        assert "~ 39 [code]" in context
+        assert "value_39 = 999" in context
+        assert "omitted:" in context
+        assert "j-cli notebook summary" in context
+
     def test_post_converges_both_sides_when_concurrent_cells_merge(self, git_repo: Path):
         py, ipynb = _make_pair(git_repo, ["x = 1", "y = 1"], ["x = 1", "y = 1"])
         _git(git_repo, "add", "nb.py")

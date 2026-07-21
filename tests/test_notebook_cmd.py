@@ -1,6 +1,9 @@
 """Test notebook inspection commands."""
 
 import json
+import subprocess
+import sys
+from unittest.mock import patch
 
 import nbformat
 from click.testing import CliRunner
@@ -117,6 +120,43 @@ def test_summary_marks_truncated_ast_fields(tmp_path):
     assert cell["imports_truncated"] is True
 
 
+def test_summary_bounds_many_unique_writes_and_calls(tmp_path):
+    path = tmp_path / "many_names.py"
+    path.write_text(
+        "\n".join(
+            [f"value_{index} = {index}" for index in range(100)]
+            + [f"function_{index}()" for index in range(100)]
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(main, ["--json", "notebook", "summary", str(path)])
+
+    assert result.exit_code == 0
+    cell = json.loads(result.output)["cells"][0]
+    assert cell["writes"] == [f"value_{index}" for index in range(8)]
+    assert cell["calls"] == [f"function_{index}" for index in range(8)]
+    assert cell["writes_truncated"] is True
+    assert cell["calls_truncated"] is True
+
+
+def test_summary_formats_relative_imports_without_an_extra_dot(tmp_path):
+    path = tmp_path / "relative.py"
+    path.write_text(
+        "from . import sibling\nfrom .. import parent\nfrom .package import child\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(main, ["--json", "notebook", "summary", str(path)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["cells"][0]["imports"] == [
+        ".sibling",
+        "..parent",
+        ".package.child",
+    ]
+
+
 def test_summary_human_includes_notebook_metadata_and_cells(tmp_path):
     path = tmp_path / "summary.py"
     _write_percent_notebook(path)
@@ -179,6 +219,23 @@ def test_show_no_matching_cell_uses_structured_error(tmp_path):
     }
 
 
+def test_show_invalid_cell_spec_uses_json_parse_error(tmp_path):
+    path = tmp_path / "one.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        ["--json", "notebook", "show", str(path), "--cell", "1:0"],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output) == {
+        "status": "error",
+        "code": "PARSE_ERROR",
+        "message": "Invalid cell spec: 1:0",
+    }
+
+
 def test_cli_registers_notebook_group():
     result = CliRunner().invoke(main, ["--help"])
 
@@ -188,6 +245,23 @@ def test_cli_registers_notebook_group():
     assert subcommand_help.exit_code == 0
     assert "summary" in subcommand_help.output
     assert "show" in subcommand_help.output
+
+
+def test_notebook_helpers_import_without_cli_cycle(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from jupyter_jcli.commands.notebook import diff_cells; print(diff_cells.__name__)",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "diff_cells"
 
 
 def test_cell_diff_classifies_edited_inserted_deleted_and_unequal_replace():
@@ -227,6 +301,23 @@ def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor
     ]
 
 
+def test_large_replace_block_uses_linear_positional_fallback():
+    old = _parsed(*(f"old value {index}" for index in range(150)))
+    current = _parsed(*(f"new value {index}" for index in range(150)))
+
+    with patch(
+        "jupyter_jcli.commands.notebook._cell_edit_cost",
+        side_effect=AssertionError("large replace block allocated similarity DP"),
+    ):
+        changes = diff_cells(old, current)
+
+    assert len(changes) == 150
+    assert all(change.kind == "edited" for change in changes)
+    assert [(change.old_index, change.new_index) for change in changes] == [
+        (index, index) for index in range(150)
+    ]
+
+
 def test_summary_data_has_no_changes_or_markers_without_diff():
     data = build_summary_data(_parsed("value = 1"))
     human = format_summary_human(data)
@@ -258,3 +349,22 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
     assert "+ 1 [code]" in human
     assert "- old:0 at current:0 [code]" in human
     assert "writes=gone" in human
+
+
+def test_bounded_summary_keeps_changed_cell_at_end_and_reports_omissions():
+    old = _parsed(*(f"value_{index} = {index}" for index in range(50)))
+    current_sources = [cell.source for cell in old.cells]
+    current_sources[-1] = "value_49 = 999"
+    current = _parsed(*current_sources)
+
+    human = format_summary_human(
+        build_summary_data(current, diff_cells(old, current)),
+        max_cells=4,
+        max_chars=2000,
+    )
+
+    assert "~ 49 [code]" in human
+    assert "value_49 = 999" in human
+    assert "omitted:" in human
+    assert "j-cli notebook summary" in human
+    assert len(human) <= 2000

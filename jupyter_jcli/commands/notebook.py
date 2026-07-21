@@ -1,19 +1,26 @@
 """jcli notebook -- inspect notebook cell structure without execution."""
 
+from __future__ import annotations
+
 import ast
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from typing import TYPE_CHECKING
 
 import click
 
 from jupyter_jcli._enums import CellType, ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.parser import Cell, ParsedFile, parse_cell_spec, parse_file
+
+if TYPE_CHECKING:
+    from jupyter_jcli.cli import Context
 
 
 _MAX_ANALYSIS_ITEMS = 8
 _MAX_SOURCE_PREVIEW_CHARS = 120
+_MAX_REPLACE_DP_PRODUCT = 10_000
+_MAX_CHANGE_OVERVIEW_ITEMS = 12
 _CHANGE_MARKERS = {"edited": "~", "inserted": "+", "deleted": "-"}
 
 
@@ -36,7 +43,7 @@ def notebook():
 
 @notebook.command("summary")
 @click.argument("file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False))
-@pass_ctx
+@click.pass_obj
 def summary(ctx: Context, file_path: str) -> None:
     """Print a deterministic structural summary for each cell in FILE."""
     parsed = _parse_or_error(ctx, file_path)
@@ -50,7 +57,7 @@ def summary(ctx: Context, file_path: str) -> None:
 @notebook.command("show")
 @click.argument("file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False))
 @click.option("--cell", "cell_spec", required=True, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)")
-@pass_ctx
+@click.pass_obj
 def show(ctx: Context, file_path: str, cell_spec: str) -> None:
     """Print complete source for selected cells in FILE."""
     parsed = _parse_or_error(ctx, file_path)
@@ -156,6 +163,14 @@ def _diff_replaced_cells(
     """Align a replace block so nearby source revisions remain edits."""
     old_count = len(old_cells)
     new_count = len(new_cells)
+    if old_count * new_count > _MAX_REPLACE_DP_PRODUCT:
+        return _diff_replaced_cells_by_position(
+            old_cells,
+            new_cells,
+            all_current_cells,
+            new_start,
+        )
+
     costs = [[0.0] * (new_count + 1) for _ in range(old_count + 1)]
     steps = [[""] * (new_count + 1) for _ in range(old_count + 1)]
 
@@ -226,6 +241,50 @@ def _diff_replaced_cells(
 
     aligned.reverse()
     return aligned
+
+
+def _diff_replaced_cells_by_position(
+    old_cells: list[Cell],
+    new_cells: list[Cell],
+    all_current_cells: list[Cell],
+    new_start: int,
+) -> list[CellChange]:
+    """Classify a large replace block without allocating an alignment matrix."""
+    paired_count = min(len(old_cells), len(new_cells))
+    changes = [
+        CellChange(
+            kind="edited",
+            old_index=old_cells[position].index,
+            new_index=new_cells[position].index,
+            old_cell=old_cells[position],
+            new_cell=new_cells[position],
+            current_insertion_index=new_cells[position].index,
+        )
+        for position in range(paired_count)
+    ]
+    insertion_index = _current_insertion_index(
+        all_current_cells,
+        new_start + paired_count,
+    )
+    for old_cell in old_cells[paired_count:]:
+        changes.append(CellChange(
+            kind="deleted",
+            old_index=old_cell.index,
+            new_index=None,
+            old_cell=old_cell,
+            new_cell=None,
+            current_insertion_index=insertion_index,
+        ))
+    for new_cell in new_cells[paired_count:]:
+        changes.append(CellChange(
+            kind="inserted",
+            old_index=None,
+            new_index=new_cell.index,
+            old_cell=None,
+            new_cell=new_cell,
+            current_insertion_index=new_cell.index,
+        ))
+    return changes
 
 
 def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
@@ -318,7 +377,8 @@ def _summarize_python(source: str) -> dict:
     collector.visit(tree)
     data["ast_parsed"] = True
     for field, values in collector.values().items():
-        data[field], data[f"{field}_truncated"] = _truncate_items(values)
+        data[field] = values
+        data[f"{field}_truncated"] = collector.truncated(field)
     return data
 
 
@@ -328,6 +388,13 @@ class _PythonSummaryCollector(ast.NodeVisitor):
         self.defines: list[str] = []
         self.writes: list[str] = []
         self.calls: list[str] = []
+        self._seen: dict[str, set[str]] = {
+            "imports": set(),
+            "defines": set(),
+            "writes": set(),
+            "calls": set(),
+        }
+        self._overflow: set[str] = set()
 
     def values(self) -> dict[str, list[str]]:
         return {
@@ -337,6 +404,9 @@ class _PythonSummaryCollector(ast.NodeVisitor):
             "calls": self.calls,
         }
 
+    def truncated(self, field: str) -> bool:
+        return field in self._overflow
+
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             self._append("imports", _format_alias(alias.name, alias.asname))
@@ -345,7 +415,8 @@ class _PythonSummaryCollector(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = "." * node.level + (node.module or "")
         for alias in node.names:
-            name = f"{module}.{alias.name}" if module else alias.name
+            separator = "" if module.endswith(".") else "."
+            name = f"{module}{separator}{alias.name}" if module else alias.name
             self._append("imports", _format_alias(name, alias.asname))
         self.generic_visit(node)
 
@@ -422,8 +493,14 @@ class _PythonSummaryCollector(ast.NodeVisitor):
 
     def _append(self, field: str, value: str) -> None:
         values = getattr(self, field)
-        if value not in values:
-            values.append(value)
+        seen = self._seen[field]
+        if value in seen:
+            return
+        if len(values) >= _MAX_ANALYSIS_ITEMS:
+            self._overflow.add(field)
+            return
+        seen.add(value)
+        values.append(value)
 
 
 def _format_alias(name: str, alias: str | None) -> str:
@@ -439,10 +516,6 @@ def _qualified_name(node: ast.expr) -> str | None:
     return None
 
 
-def _truncate_items(values: list[str]) -> tuple[list[str], bool]:
-    return values[:_MAX_ANALYSIS_ITEMS], len(values) > _MAX_ANALYSIS_ITEMS
-
-
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
     return value[:limit], len(value) > limit
 
@@ -451,7 +524,22 @@ def _first_nonempty_line(source: str) -> str | None:
     return next((line for line in source.splitlines() if line.strip()), None)
 
 
-def format_summary_human(data: dict) -> str:
+def format_summary_human(
+    data: dict,
+    *,
+    max_cells: int | None = None,
+    max_chars: int | None = None,
+    neighbor_cells: int = 1,
+) -> str:
+    """Format a summary, optionally prioritizing changes within hook budgets."""
+    if max_cells is not None or max_chars is not None:
+        return _format_summary_human_bounded(
+            data,
+            max_cells=max_cells,
+            max_chars=max_chars,
+            neighbor_cells=neighbor_cells,
+        )
+
     kernel = data["kernel"] if data["kernel"] is not None else "None"
     lines = [f"path={data['path']} cells={data['cell_count']} kernel={kernel}"]
     changes = data.get("changes", [])
@@ -481,16 +569,98 @@ def _format_change_overview(changes: list[dict], kinds: list[str]) -> str:
     parts = []
     for kind in kinds:
         matching = [change for change in changes if change["kind"] == kind]
+        visible = matching[:_MAX_CHANGE_OVERVIEW_ITEMS]
+        omitted = len(matching) - len(visible)
         if kind == "deleted":
             locations = ", ".join(
                 f"old:{change['old_index']} at current:{change['current_insertion_index']}"
-                for change in matching
+                for change in visible
             )
+            if omitted:
+                locations += f", ... +{omitted} more"
             parts.append(f"deleted [{locations}]")
         else:
-            indices = ",".join(str(change["new_index"]) for change in matching)
+            indices = ",".join(str(change["new_index"]) for change in visible)
+            if omitted:
+                indices += f",...+{omitted} more"
             parts.append(f"{kind} current[{indices}]")
     return "; ".join(parts)
+
+
+def _format_summary_human_bounded(
+    data: dict,
+    *,
+    max_cells: int | None,
+    max_chars: int | None,
+    neighbor_cells: int,
+) -> str:
+    cells = data["cells"]
+    changes = data.get("changes", [])
+    deleted = [change for change in changes if change["kind"] == "deleted"]
+    limit = max(0, max_cells) if max_cells is not None else len(cells) + len(deleted)
+
+    current_by_index = {cell["index"]: cell for cell in cells}
+    changed_indices = [cell["index"] for cell in cells if cell.get("change")]
+    candidates: list[tuple[str, dict]] = []
+    seen_current: set[int] = set()
+
+    def add_current(index: int) -> None:
+        if index in current_by_index and index not in seen_current:
+            seen_current.add(index)
+            candidates.append(("current", current_by_index[index]))
+
+    if len(cells) + len(deleted) <= limit:
+        for cell in cells:
+            add_current(cell["index"])
+        candidates.extend(("deleted", change) for change in deleted)
+    else:
+        for index in changed_indices:
+            add_current(index)
+        candidates.extend(("deleted", change) for change in deleted)
+        anchors = changed_indices + [change["current_insertion_index"] for change in deleted]
+        for distance in range(1, max(0, neighbor_cells) + 1):
+            for anchor in anchors:
+                add_current(anchor - distance)
+                add_current(anchor + distance)
+
+    selected = candidates[:limit]
+    kinds = [kind for kind in _CHANGE_MARKERS if any(change["kind"] == kind for change in changes)]
+    kernel = data["kernel"] if data["kernel"] is not None else "None"
+    lines = [f"path={data['path']} cells={data['cell_count']} kernel={kernel}"]
+    if changes:
+        lines.append("changes: " + _format_change_overview(changes, kinds))
+        lines.append("legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds))
+
+    shown_current = 0
+    shown_deleted = 0
+    for item_kind, item in selected:
+        if item_kind == "deleted":
+            heading = f"- old:{item['old_index']} at current:{item['current_insertion_index']}"
+            lines.append(_format_summary_cell_human(item["old_cell"], heading))
+            shown_deleted += 1
+            continue
+        marker = _CHANGE_MARKERS.get(item.get("change"), "")
+        heading = f"{marker} {item['index']}" if marker else str(item["index"])
+        lines.append(_format_summary_cell_human(item, heading))
+        shown_current += 1
+
+    omitted_current = len(cells) - shown_current
+    omitted_deleted = len(deleted) - shown_deleted
+    omission = ""
+    if omitted_current or omitted_deleted:
+        omission = (
+            f"omitted: {omitted_current} current cells, {omitted_deleted} deleted tombstones; "
+            f"run: j-cli notebook summary {data['path']}"
+        )
+        lines.append(omission)
+
+    text = "\n".join(lines)
+    if max_chars is not None and len(text) > max_chars:
+        suffix = omission or f"output omitted; run: j-cli notebook summary {data['path']}"
+        available = max(0, max_chars - len(suffix) - 5)
+        text = f"{text[:available]}\n...\n{suffix}"
+        return text[:max_chars]
+    return text
 
 
 def _format_summary_cell_human(cell: dict, heading: str) -> str:
