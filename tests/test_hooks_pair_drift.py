@@ -12,9 +12,11 @@ import nbformat
 import pytest
 from click.testing import CliRunner
 
+from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.cli import main
-from jupyter_jcli.drift import DriftResult
+from jupyter_jcli.drift import DriftResult, check_drift
 from jupyter_jcli import pair_baseline
+from jupyter_jcli.parser import parse_file
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +628,24 @@ class TestConsecutiveEdits:
         assert "+ 0 [code]" in context
         assert "~ 1 [code]" in context
         assert "- old:2 at current:3 [code]" in context
+
+    def test_post_converges_both_sides_when_concurrent_cells_merge(self, git_repo: Path):
+        py, ipynb = _make_pair(git_repo, ["x = 1", "y = 1"], ["x = 1", "y = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        py.write_text(py.read_text(encoding="utf-8").replace("x = 1", "x = 2"), encoding="utf-8")
+        notebook = nbformat.read(ipynb, as_version=4)
+        notebook.cells[1].source = "y = 2"
+        nbformat.write(notebook, ipynb)
+
+        code, out = _invoke_post({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert "Pair is now in sync" in _additional_context(out)
+        assert [cell.source for cell in parse_file(str(py)).cells] == ["x = 2", "y = 2"]
+        assert [cell.source for cell in parse_file(str(ipynb)).cells] == ["x = 2", "y = 2"]
+        assert check_drift(py, ipynb).status == DriftStatus.IN_SYNC
 
     def test_post_uses_sticky_ref_to_avoid_false_conflict(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch):
         py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])

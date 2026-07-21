@@ -851,15 +851,17 @@ def _sync_pair_after_edit(
 
     # Read before write_baseline advances the sticky pair-sync reference.
     old_baseline_text = pair_baseline.read_baseline(py_path)
-    synced = False
+    both_sides_need_update = result.ipynb_needs_update and result.py_needs_update
+    ipynb_converged = not result.ipynb_needs_update
+    py_converged = not result.py_needs_update
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
     summary_text: str | None = None
 
-    if result.ipynb_needs_update and ipynb_path != edited:
+    if result.ipynb_needs_update and (ipynb_path != edited or both_sides_need_update):
         try:
             update_ipynb_sources(ipynb_path, result.merged_cells)
-            synced = True
+            ipynb_converged = True
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
@@ -868,14 +870,14 @@ def _sync_pair_after_edit(
                 file=sys.stderr,
             )
 
-    if result.py_needs_update and py_path != edited:
+    if result.py_needs_update and (py_path != edited or both_sides_need_update):
         try:
             if merged_py_text is None:
                 merged_py_text, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
             if merged_py_text is None:
                 raise RuntimeError("could not prepare merged py text")
             py_path.write_text(merged_py_text, encoding="utf-8")
-            synced = True
+            py_converged = True
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
@@ -884,9 +886,13 @@ def _sync_pair_after_edit(
                 file=sys.stderr,
             )
 
+    synced = ipynb_converged and py_converged
     if synced:
         if canonical_merged_py is None:
             _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+    if synced and canonical_merged_py is not None:
+        pair_baseline.write_baseline(py_path, canonical_merged_py)
+    if synced:
         if old_baseline_text is not None and canonical_merged_py is not None:
             try:
                 from jupyter_jcli.commands.notebook import (
@@ -902,8 +908,6 @@ def _sync_pair_after_edit(
             except Exception as exc:  # noqa: BLE001
                 if logger is not None:
                     logger.record_exception(exc)
-    if synced and canonical_merged_py is not None:
-        pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced:
         other = ipynb_path if edited == py_path else py_path
         context = (
