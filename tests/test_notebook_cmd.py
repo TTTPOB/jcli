@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from difflib import SequenceMatcher as RealSequenceMatcher
 from unittest.mock import patch
 
 import nbformat
@@ -318,6 +319,104 @@ def test_large_replace_block_uses_linear_positional_fallback():
     ]
 
 
+def test_large_equal_repeated_sequence_skips_sequence_matcher():
+    old = _parsed(*("same" for _ in range(4_000)))
+    current = _parsed(*("same" for _ in range(4_000)))
+
+    with patch(
+        "jupyter_jcli.commands.notebook.SequenceMatcher",
+        side_effect=AssertionError("equal sequence used SequenceMatcher"),
+    ):
+        assert diff_cells(old, current) == []
+
+
+def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
+    old = _parsed(*("same" for _ in range(4_000)))
+    current_sources = [cell.source for cell in old.cells]
+    current_sources[100] = "changed first"
+    current_sources[3_900] = "changed last"
+    current = _parsed(*current_sources)
+
+    with patch(
+        "jupyter_jcli.commands.notebook.SequenceMatcher",
+        side_effect=AssertionError("sparse sequence used SequenceMatcher"),
+    ):
+        changes = diff_cells(old, current)
+
+    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+        ("edited", 100, 100),
+        ("edited", 3_900, 3_900),
+    ]
+
+
+def test_large_replace_fallback_detects_leading_insertion_before_edits():
+    old = _parsed(*(f"value_{index} = 0" for index in range(101)))
+    current = _parsed(
+        "inserted = True",
+        *(f"value_{index} = 1" for index in range(101)),
+    )
+
+    autojunk_values = []
+
+    def recording_matcher(*args, **kwargs):
+        autojunk_values.append(kwargs.get("autojunk"))
+        return RealSequenceMatcher(*args, **kwargs)
+
+    with patch("jupyter_jcli.commands.notebook.SequenceMatcher", side_effect=recording_matcher):
+        changes = diff_cells(old, current)
+
+    assert autojunk_values[0] is True
+    assert (changes[0].kind, changes[0].old_index, changes[0].new_index) == (
+        "inserted",
+        None,
+        0,
+    )
+    assert [(change.kind, change.old_index, change.new_index) for change in changes[1:]] == [
+        ("edited", index, index + 1) for index in range(101)
+    ]
+
+
+def test_large_replace_fallback_detects_leading_deletion_before_edits():
+    old = _parsed(
+        "removed = True",
+        *(f"value_{index} = 0" for index in range(101)),
+    )
+    current = _parsed(*(f"value_{index} = 1" for index in range(101)))
+
+    changes = diff_cells(old, current)
+
+    assert (changes[0].kind, changes[0].old_index, changes[0].new_index) == (
+        "deleted",
+        0,
+        None,
+    )
+    assert [(change.kind, change.old_index, change.new_index) for change in changes[1:]] == [
+        ("edited", index + 1, index) for index in range(101)
+    ]
+
+
+def test_large_replace_fallback_detects_trailing_insert_and_delete():
+    old = _parsed(*(f"value_{index} = 0" for index in range(101)))
+    edited = [f"value_{index} = 1" for index in range(101)]
+
+    inserted = diff_cells(old, _parsed(*edited, "trailing_insert = True"))
+    deleted = diff_cells(
+        _parsed(*(cell.source for cell in old.cells), "trailing_delete = True"),
+        _parsed(*edited),
+    )
+
+    assert (inserted[-1].kind, inserted[-1].old_index, inserted[-1].new_index) == (
+        "inserted",
+        None,
+        101,
+    )
+    assert (deleted[-1].kind, deleted[-1].old_index, deleted[-1].new_index) == (
+        "deleted",
+        101,
+        None,
+    )
+
+
 def test_summary_data_has_no_changes_or_markers_without_diff():
     data = build_summary_data(_parsed("value = 1"))
     human = format_summary_human(data)
@@ -368,3 +467,45 @@ def test_bounded_summary_keeps_changed_cell_at_end_and_reports_omissions():
     assert "omitted:" in human
     assert "j-cli notebook summary" in human
     assert len(human) <= 2000
+
+
+def test_bounded_summary_preserves_change_marker_with_long_kernel():
+    old = _parsed("value = 1")
+    current = ParsedFile(
+        kernel_name="kernel" * 2_000,
+        cells=[Cell(index=0, cell_type=CellType.CODE, source="value = 2")],
+        source_path="notebook.py",
+    )
+
+    human = format_summary_human(
+        build_summary_data(current, diff_cells(old, current)),
+        max_cells=16,
+        max_chars=8_000,
+    )
+
+    assert "path=notebook.py cells=1 kernel=" in human
+    assert "changes: edited current[0]" in human
+    assert "legend: ~ edited" in human
+    assert "~ 0 [code]" in human
+    assert human.endswith("j-cli notebook summary notebook.py")
+    assert len(human) <= 8_000
+
+
+def test_bounded_summary_counts_only_rendered_long_changed_cells():
+    old = _parsed(*(f"value_{index} = 0" for index in range(30)))
+    long_identifier = "identifier" * 400
+    current = _parsed(*(f"{long_identifier}_{index} = 1" for index in range(16)), *(
+        cell.source for cell in old.cells[16:]
+    ))
+
+    human = format_summary_human(
+        build_summary_data(current, diff_cells(old, current)),
+        max_cells=16,
+        max_chars=8_000,
+    )
+    rendered_markers = sum(f"~ {index} [code]" in human for index in range(16))
+
+    assert rendered_markers >= 1
+    assert f"omitted: {30 - rendered_markers} current cells, 0 deleted tombstones" in human
+    assert human.endswith("j-cli notebook summary ")
+    assert len(human) <= 8_000

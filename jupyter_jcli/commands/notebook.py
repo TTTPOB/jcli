@@ -20,7 +20,14 @@ if TYPE_CHECKING:
 _MAX_ANALYSIS_ITEMS = 8
 _MAX_SOURCE_PREVIEW_CHARS = 120
 _MAX_REPLACE_DP_PRODUCT = 10_000
+_MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
+_MAX_LARGE_POSITIONAL_CHANGES = 64
+_FALLBACK_SOURCE_COMPARE_CHARS = 512
+_FALLBACK_SHIFT_MIN_SIMILARITY = 0.5
+_FALLBACK_SHIFT_ADVANTAGE = 0.2
 _MAX_CHANGE_OVERVIEW_ITEMS = 12
+_MAX_BOUNDED_METADATA_FIELD_CHARS = 1000
+_MAX_BOUNDED_CELL_LINE_CHARS = 1000
 _CHANGE_MARKERS = {"edited": "~", "inserted": "+", "deleted": "-"}
 
 
@@ -111,11 +118,36 @@ def diff_cells(
     """Classify exact cell changes while preserving unchanged-cell alignment."""
     old_cells = old.cells if isinstance(old, ParsedFile) else old
     current_cells = current.cells if isinstance(current, ParsedFile) else current
+    old_keys = [(cell.cell_type.value, cell.source) for cell in old_cells]
+    current_keys = [(cell.cell_type.value, cell.source) for cell in current_cells]
+    if old_keys == current_keys:
+        return []
+
+    product = len(old_cells) * len(current_cells)
+    if product > _MAX_SEQUENCE_MATCHER_PRODUCT and len(old_cells) == len(current_cells):
+        changed_positions = [
+            index
+            for index, (old_key, current_key) in enumerate(zip(old_keys, current_keys))
+            if old_key != current_key
+        ]
+        if len(changed_positions) <= _MAX_LARGE_POSITIONAL_CHANGES:
+            return [
+                CellChange(
+                    kind="edited",
+                    old_index=old_cells[index].index,
+                    new_index=current_cells[index].index,
+                    old_cell=old_cells[index],
+                    new_cell=current_cells[index],
+                    current_insertion_index=current_cells[index].index,
+                )
+                for index in changed_positions
+            ]
+
     matcher = SequenceMatcher(
         None,
-        [(cell.cell_type.value, cell.source) for cell in old_cells],
-        [(cell.cell_type.value, cell.source) for cell in current_cells],
-        autojunk=False,
+        old_keys,
+        current_keys,
+        autojunk=product > _MAX_SEQUENCE_MATCHER_PRODUCT,
     )
     changes: list[CellChange] = []
     for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
@@ -249,24 +281,69 @@ def _diff_replaced_cells_by_position(
     all_current_cells: list[Cell],
     new_start: int,
 ) -> list[CellChange]:
-    """Classify a large replace block without allocating an alignment matrix."""
-    paired_count = min(len(old_cells), len(new_cells))
-    changes = [
-        CellChange(
-            kind="edited",
-            old_index=old_cells[position].index,
-            new_index=new_cells[position].index,
-            old_cell=old_cells[position],
-            new_cell=new_cells[position],
-            current_insertion_index=new_cells[position].index,
+    """Classify a large replace block with bounded one-cell lookahead."""
+    changes: list[CellChange] = []
+    old_pos = 0
+    new_pos = 0
+    while old_pos < len(old_cells) and new_pos < len(new_cells):
+        old_cell = old_cells[old_pos]
+        new_cell = new_cells[new_pos]
+        direct_similarity = _fallback_cell_similarity(old_cell, new_cell)
+        insertion_similarity = (
+            _fallback_cell_similarity(old_cell, new_cells[new_pos + 1])
+            if new_pos + 1 < len(new_cells)
+            else -1.0
         )
-        for position in range(paired_count)
-    ]
-    insertion_index = _current_insertion_index(
-        all_current_cells,
-        new_start + paired_count,
-    )
-    for old_cell in old_cells[paired_count:]:
+        deletion_similarity = (
+            _fallback_cell_similarity(old_cells[old_pos + 1], new_cell)
+            if old_pos + 1 < len(old_cells)
+            else -1.0
+        )
+
+        if (
+            insertion_similarity >= _FALLBACK_SHIFT_MIN_SIMILARITY
+            and insertion_similarity >= deletion_similarity
+            and insertion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
+        ):
+            changes.append(CellChange(
+                kind="inserted",
+                old_index=None,
+                new_index=new_cell.index,
+                old_cell=None,
+                new_cell=new_cell,
+                current_insertion_index=new_cell.index,
+            ))
+            new_pos += 1
+            continue
+        if (
+            deletion_similarity >= _FALLBACK_SHIFT_MIN_SIMILARITY
+            and deletion_similarity > insertion_similarity
+            and deletion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
+        ):
+            changes.append(CellChange(
+                kind="deleted",
+                old_index=old_cell.index,
+                new_index=None,
+                old_cell=old_cell,
+                new_cell=None,
+                current_insertion_index=new_cell.index,
+            ))
+            old_pos += 1
+            continue
+
+        changes.append(CellChange(
+            kind="edited",
+            old_index=old_cell.index,
+            new_index=new_cell.index,
+            old_cell=old_cell,
+            new_cell=new_cell,
+            current_insertion_index=new_cell.index,
+        ))
+        old_pos += 1
+        new_pos += 1
+
+    insertion_index = _current_insertion_index(all_current_cells, new_start + new_pos)
+    for old_cell in old_cells[old_pos:]:
         changes.append(CellChange(
             kind="deleted",
             old_index=old_cell.index,
@@ -275,7 +352,7 @@ def _diff_replaced_cells_by_position(
             new_cell=None,
             current_insertion_index=insertion_index,
         ))
-    for new_cell in new_cells[paired_count:]:
+    for new_cell in new_cells[new_pos:]:
         changes.append(CellChange(
             kind="inserted",
             old_index=None,
@@ -285,6 +362,17 @@ def _diff_replaced_cells_by_position(
             current_insertion_index=new_cell.index,
         ))
     return changes
+
+
+def _fallback_cell_similarity(old_cell: Cell, new_cell: Cell) -> float:
+    if old_cell.cell_type != new_cell.cell_type:
+        return 0.0
+    return SequenceMatcher(
+        None,
+        old_cell.source[:_FALLBACK_SOURCE_COMPARE_CHARS],
+        new_cell.source[:_FALLBACK_SOURCE_COMPARE_CHARS],
+        autojunk=True,
+    ).ratio()
 
 
 def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
@@ -626,41 +714,93 @@ def _format_summary_human_bounded(
     selected = candidates[:limit]
     kinds = [kind for kind in _CHANGE_MARKERS if any(change["kind"] == kind for change in changes)]
     kernel = data["kernel"] if data["kernel"] is not None else "None"
-    lines = [f"path={data['path']} cells={data['cell_count']} kernel={kernel}"]
+    path = _truncate_bounded_field(str(data["path"]))
+    kernel = _truncate_bounded_field(str(kernel))
+    lines = [f"path={path} cells={data['cell_count']} kernel={kernel}"]
     if changes:
         lines.append("changes: " + _format_change_overview(changes, kinds))
         lines.append("legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds))
 
     shown_current = 0
     shown_deleted = 0
+    details_truncated = path != str(data["path"]) or kernel != str(
+        data["kernel"] if data["kernel"] is not None else "None"
+    )
+
     for item_kind, item in selected:
         if item_kind == "deleted":
             heading = f"- old:{item['old_index']} at current:{item['current_insertion_index']}"
-            lines.append(_format_summary_cell_human(item["old_cell"], heading))
-            shown_deleted += 1
-            continue
-        marker = _CHANGE_MARKERS.get(item.get("change"), "")
-        heading = f"{marker} {item['index']}" if marker else str(item["index"])
-        lines.append(_format_summary_cell_human(item, heading))
-        shown_current += 1
+            raw_line = _format_summary_cell_human(item["old_cell"], heading)
+        else:
+            marker = _CHANGE_MARKERS.get(item.get("change"), "")
+            heading = f"{marker} {item['index']}" if marker else str(item["index"])
+            raw_line = _format_summary_cell_human(item, heading)
+        line = _truncate_bounded_line(raw_line, _MAX_BOUNDED_CELL_LINE_CHARS)
+        line_truncated = line != raw_line
+
+        next_current = shown_current + (item_kind == "current")
+        next_deleted = shown_deleted + (item_kind == "deleted")
+        suffix = _format_bounded_omission(
+            data,
+            len(cells) - next_current,
+            len(deleted) - next_deleted,
+            details_truncated or line_truncated,
+        )
+        tentative = "\n".join([*lines, line, suffix])
+        if max_chars is not None and len(tentative) > max_chars:
+            break
+        lines.append(line)
+        shown_current = next_current
+        shown_deleted = next_deleted
+        details_truncated = details_truncated or line_truncated
 
     omitted_current = len(cells) - shown_current
     omitted_deleted = len(deleted) - shown_deleted
-    omission = ""
-    if omitted_current or omitted_deleted:
-        omission = (
-            f"omitted: {omitted_current} current cells, {omitted_deleted} deleted tombstones; "
-            f"run: j-cli notebook summary {data['path']}"
-        )
-        lines.append(omission)
+    suffix = _format_bounded_omission(
+        data,
+        omitted_current,
+        omitted_deleted,
+        details_truncated,
+    )
+    if suffix:
+        lines.append(suffix)
 
     text = "\n".join(lines)
     if max_chars is not None and len(text) > max_chars:
-        suffix = omission or f"output omitted; run: j-cli notebook summary {data['path']}"
-        available = max(0, max_chars - len(suffix) - 5)
-        text = f"{text[:available]}\n...\n{suffix}"
-        return text[:max_chars]
+        # Metadata and change lines have fixed caps; this only handles very small
+        # caller-provided budgets while preserving the command hint at the end.
+        hint = _format_bounded_omission(data, len(cells), len(deleted), True)
+        available = max(0, max_chars - len(hint) - 1)
+        prefix = "\n".join(lines[:3])[:available]
+        return f"{prefix}\n{hint}"[-max_chars:] if max_chars else ""
     return text
+
+
+def _truncate_bounded_field(value: str) -> str:
+    return _truncate_bounded_line(value, _MAX_BOUNDED_METADATA_FIELD_CHARS)
+
+
+def _truncate_bounded_line(value: str, limit: int) -> str:
+    suffix = "... [truncated]"
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - len(suffix))] + suffix
+
+
+def _format_bounded_omission(
+    data: dict,
+    omitted_current: int,
+    omitted_deleted: int,
+    details_truncated: bool,
+) -> str:
+    if not omitted_current and not omitted_deleted and not details_truncated:
+        return ""
+    path = _truncate_bounded_field(str(data["path"]))
+    detail = "; cell details truncated" if details_truncated else ""
+    return (
+        f"omitted: {omitted_current} current cells, {omitted_deleted} deleted tombstones"
+        f"{detail}; run: j-cli notebook summary {path}"
+    )
 
 
 def _format_summary_cell_human(cell: dict, heading: str) -> str:
