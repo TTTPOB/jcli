@@ -432,6 +432,58 @@ class TestUpdateIpynbSources:
         assert nb2.cells[0].outputs == []
         assert nb2.cells[1].outputs[0]["text"] == "1\n"
 
+    def test_insert_before_edited_cell_preserves_aligned_output(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["x\n"]), ("code", "y = 2", ["y\n"])])
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(
+            p,
+            [
+                Cell(0, "code", "inserted = True"),
+                Cell(1, "code", "x = 10"),
+                Cell(2, "code", "y = 2"),
+            ],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs[0]["text"] == "x\n"
+        assert nb2.cells[2].outputs[0]["text"] == "y\n"
+
+    def test_delete_before_edited_cell_preserves_aligned_output(self, tmp_path):
+        nb = _make_ipynb(
+            [
+                ("code", "a = 1", ["a\n"]),
+                ("code", "remove = True", ["remove\n"]),
+                ("code", "c = 3", ["c\n"]),
+            ]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(
+            p,
+            [Cell(0, "code", "a = 1"), Cell(1, "code", "c = 30")],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs[0]["text"] == "a\n"
+        assert nb2.cells[1].outputs[0]["text"] == "c\n"
+
+    def test_duplicate_sources_preserve_distinct_outputs(self, tmp_path):
+        nb = _make_ipynb(
+            [("code", "value", ["first\n"]), ("code", "value", ["second\n"])]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(p, [Cell(0, "code", "value"), Cell(1, "code", "value")])
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs[0]["text"] == "first\n"
+        assert nb2.cells[1].outputs[0]["text"] == "second\n"
+
     def test_supports_count_change_delete(self, tmp_path):
         """Deleting a cell (count shrinks) works without error."""
         nb = _make_ipynb(

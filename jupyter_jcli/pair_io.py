@@ -7,6 +7,7 @@ from pathlib import Path
 import nbformat
 
 from jupyter_jcli._enums import CellType
+from jupyter_jcli.cell_alignment import align_cells
 from jupyter_jcli.parser import Cell, ParsedFile, comment_ipython_magics
 
 
@@ -69,57 +70,43 @@ def update_ipynb_sources(
 ) -> None:
     """Rewrite .ipynb so its non-empty cells equal `cells`.
 
-    Outputs follow source-matched cells and otherwise stay at the same position.
-    When clean_outputs is true, changed and new cells start with empty outputs.
+    Outputs follow cells through two-way source alignment. When clean_outputs is
+    true, changed and new cells start with empty outputs.
     """
-    import hashlib
-
-    def _src_hash(source: str) -> str:
-        return hashlib.md5(source.encode()).hexdigest()
-
     nb = nbformat.read(str(ipynb_path), as_version=4)
     old_nonempty = [c for c in nb.cells if c.source.strip()]
-
-    # Build hash -> (index, outputs, execution_count) from old code cells.
-    # First occurrence wins (avoids duplicate-source ambiguity).
-    old_by_hash: dict[str, tuple[int, list, int | None]] = {}
-    for index, c in enumerate(old_nonempty):
-        if c.cell_type != CellType.CODE:
+    old_cells = [
+        Cell(index=index, cell_type=cell.cell_type, source=cell.source)
+        for index, cell in enumerate(old_nonempty)
+    ]
+    current_cells = [
+        Cell(index=index, cell_type=cell.cell_type, source=cell.source)
+        for index, cell in enumerate(cells)
+    ]
+    preserved_outputs: dict[int, tuple[list, int | None]] = {}
+    for alignment in align_cells(old_cells, current_cells):
+        if (
+            alignment.old_index is None
+            or alignment.new_index is None
+            or alignment.old_cell is None
+            or alignment.new_cell is None
+            or alignment.old_cell.cell_type != CellType.CODE
+            or alignment.new_cell.cell_type != CellType.CODE
+            or (clean_outputs and alignment.kind == "edited")
+        ):
             continue
-        key = _src_hash(c.source)
-        if key not in old_by_hash:
-            old_by_hash[key] = (
-                index,
-                c.get("outputs", []),
-                c.get("execution_count"),
-            )
-
-    matched_outputs: dict[int, tuple[list, int | None]] = {}
-    matched_old_indices: set[int] = set()
-    for index, cell in enumerate(cells):
-        if cell.cell_type != CellType.CODE:
-            continue
-        if match := old_by_hash.get(_src_hash(cell.source)):
-            old_index, outputs, execution_count = match
-            matched_outputs[index] = (outputs, execution_count)
-            matched_old_indices.add(old_index)
+        old_cell = old_nonempty[alignment.old_index]
+        preserved_outputs[alignment.new_index] = (
+            old_cell.get("outputs", []),
+            old_cell.get("execution_count"),
+        )
 
     new_cells = []
     for index, cell in enumerate(cells):
         if cell.cell_type == CellType.CODE:
             nc = nbformat.v4.new_code_cell(cell.source)
-            outputs = matched_outputs.get(index)
-            if (
-                outputs is None
-                and not clean_outputs
-                and index < len(old_nonempty)
-                and index not in matched_old_indices
-                and old_nonempty[index].cell_type == CellType.CODE
-            ):
-                old_cell = old_nonempty[index]
-                outputs = (old_cell.get("outputs", []), old_cell.get("execution_count"))
-            if outputs is not None:
-                nc["outputs"], nc["execution_count"] = outputs
+            if preserved := preserved_outputs.get(index):
+                nc["outputs"], nc["execution_count"] = preserved
         elif cell.cell_type == CellType.MARKDOWN:
             nc = nbformat.v4.new_markdown_cell(cell.source)
         else:
