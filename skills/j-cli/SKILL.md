@@ -498,14 +498,17 @@ j-cli convert ipynb-to-py analysis.ipynb analysis.py
 # 2. Edit analysis.py using normal text tools (Edit tool, etc.)
 #    Cell markers: # %% (code), # %% [markdown], # %% [raw]
 
-# 3. Write edited sources back — outputs/metadata in the .ipynb are untouched
+# 3. Write edited sources back; existing cell outputs are preserved
 j-cli convert py-to-ipynb analysis.py analysis.ipynb
+
+# Add --clean to clear outputs from edited cells
+j-cli convert py-to-ipynb --clean analysis.py analysis.ipynb
 ```
 
 If a paired `.py` already exists (same stem), you can go directly to step 2 and then step 3.
 
 The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exists:
-- **Exists** → source-only update (outputs, execution counts, metadata preserved)
+- **Exists** → source-only update (outputs and execution counts preserved by default)
 - **Does not exist** → new notebook created from the py cells
 
 > **Policy**: The `NotebookEdit` tool is disabled by the `notebook-edit-guard` hook

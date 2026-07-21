@@ -64,12 +64,13 @@ def emit_py_percent(parsed: ParsedFile) -> str:
     return "".join(parts)
 
 
-def update_ipynb_sources(ipynb_path: Path, cells: list[Cell]) -> None:
+def update_ipynb_sources(
+    ipynb_path: Path, cells: list[Cell], *, clean_outputs: bool = False
+) -> None:
     """Rewrite .ipynb so its non-empty cells equal `cells`.
 
-    Outputs are preserved for cells whose source exactly matches an old
-    non-empty cell (matched by MD5 of source). Changed or new cells start
-    with empty outputs — they should be re-run via j-cli exec.
+    Outputs follow source-matched cells and otherwise stay at the same position.
+    When clean_outputs is true, changed and new cells start with empty outputs.
     """
     import hashlib
 
@@ -79,22 +80,46 @@ def update_ipynb_sources(ipynb_path: Path, cells: list[Cell]) -> None:
     nb = nbformat.read(str(ipynb_path), as_version=4)
     old_nonempty = [c for c in nb.cells if c.source.strip()]
 
-    # Build hash -> (outputs, execution_count) from old non-empty cells.
+    # Build hash -> (index, outputs, execution_count) from old code cells.
     # First occurrence wins (avoids duplicate-source ambiguity).
-    old_by_hash: dict[str, tuple] = {}
-    for c in old_nonempty:
+    old_by_hash: dict[str, tuple[int, list, int | None]] = {}
+    for index, c in enumerate(old_nonempty):
+        if c.cell_type != CellType.CODE:
+            continue
         key = _src_hash(c.source)
         if key not in old_by_hash:
-            old_by_hash[key] = (c.get("outputs", []), c.get("execution_count"))
+            old_by_hash[key] = (
+                index,
+                c.get("outputs", []),
+                c.get("execution_count"),
+            )
+
+    matched_outputs: dict[int, tuple[list, int | None]] = {}
+    matched_old_indices: set[int] = set()
+    for index, cell in enumerate(cells):
+        if cell.cell_type != CellType.CODE:
+            continue
+        if match := old_by_hash.get(_src_hash(cell.source)):
+            old_index, outputs, execution_count = match
+            matched_outputs[index] = (outputs, execution_count)
+            matched_old_indices.add(old_index)
 
     new_cells = []
-    for cell in cells:
+    for index, cell in enumerate(cells):
         if cell.cell_type == CellType.CODE:
             nc = nbformat.v4.new_code_cell(cell.source)
-            key = _src_hash(cell.source)
-            if key in old_by_hash:
-                nc["outputs"] = old_by_hash[key][0]
-                nc["execution_count"] = old_by_hash[key][1]
+            outputs = matched_outputs.get(index)
+            if (
+                outputs is None
+                and not clean_outputs
+                and index < len(old_nonempty)
+                and index not in matched_old_indices
+                and old_nonempty[index].cell_type == CellType.CODE
+            ):
+                old_cell = old_nonempty[index]
+                outputs = (old_cell.get("outputs", []), old_cell.get("execution_count"))
+            if outputs is not None:
+                nc["outputs"], nc["execution_count"] = outputs
         elif cell.cell_type == CellType.MARKDOWN:
             nc = nbformat.v4.new_markdown_cell(cell.source)
         else:

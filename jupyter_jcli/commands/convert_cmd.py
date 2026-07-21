@@ -64,11 +64,17 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     default=None,
     type=click.Path(dir_okay=False),
 )
-def py_to_ipynb(in_py: str, out_ipynb: str | None) -> None:
+@click.option(
+    "--clean",
+    "clean_outputs",
+    is_flag=True,
+    help="Clear outputs from changed or new code cells.",
+)
+def py_to_ipynb(in_py: str, out_ipynb: str | None, clean_outputs: bool) -> None:
     """Convert a py:percent file to .ipynb format.
 
-    If out.ipynb already exists, only cell sources are updated
-    (outputs and metadata are preserved). Otherwise a new notebook is created.
+    If out.ipynb already exists, only cell sources are updated. Outputs are
+    preserved unless --clean is set. Otherwise a new notebook is created.
     """
     parsed = parse_py_percent(in_py)
     in_py_path = Path(in_py)
@@ -84,7 +90,7 @@ def py_to_ipynb(in_py: str, out_ipynb: str | None) -> None:
 
     if out_path.exists():
         # Update existing notebook sources only
-        update_ipynb_sources(out_path, parsed.cells)
+        update_ipynb_sources(out_path, parsed.cells, clean_outputs=clean_outputs)
         if _is_canonical_pair(in_py_path, out_path):
             _refresh_pair_baseline(in_py_path)
         click.echo(f"Updated {out_ipynb}")

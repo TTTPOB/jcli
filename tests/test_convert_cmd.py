@@ -297,8 +297,7 @@ class TestPyToIpynbCreate:
 
 
 class TestPyToIpynbUpdate:
-    def test_update_preserves_outputs_for_unchanged_cells(self, tmp_path):
-        """Cells whose source is unchanged keep outputs; changed cells lose them."""
+    def test_update_preserves_outputs_by_default(self, tmp_path):
         nb = _make_ipynb(
             [
                 ("code", "x = 1", ["1\n"]),
@@ -309,8 +308,6 @@ class TestPyToIpynbUpdate:
         nbformat.write(nb, str(ipynb))
 
         py = tmp_path / "script.py"
-        # x = 1 is unchanged (hash matches -> outputs preserved)
-        # y = 20 is changed (hash mismatch -> outputs lost)
         py.write_text("# %%\nx = 1\n\n# %%\ny = 20\n", encoding="utf-8")
 
         result = _invoke("convert", "py-to-ipynb", str(py), str(ipynb))
@@ -319,11 +316,24 @@ class TestPyToIpynbUpdate:
         nb2 = nbformat.read(str(ipynb), as_version=4)
         assert nb2.cells[0].source == "x = 1"
         assert nb2.cells[1].source == "y = 20"
-        # Unchanged cell: outputs preserved
         assert nb2.cells[0].outputs[0]["text"] == "1\n"
         assert nb2.cells[0].execution_count == 1
-        # Changed cell: outputs lost (user should re-run)
-        assert nb2.cells[1].outputs == []
+        assert nb2.cells[1].outputs[0]["text"] == "2\n"
+        assert nb2.cells[1].execution_count == 1
+
+    def test_clean_removes_outputs_from_changed_cells(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
+        ipynb = tmp_path / "script.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = tmp_path / "script.py"
+        py.write_text("# %%\nx = 10\n", encoding="utf-8")
+
+        result = _invoke("convert", "py-to-ipynb", "--clean", str(py), str(ipynb))
+
+        assert result.exit_code == 0
+        cell = nbformat.read(str(ipynb), as_version=4).cells[0]
+        assert cell.outputs == []
+        assert cell.execution_count is None
 
     def test_update_outputs_updated_message(self, tmp_path, capsys):
         nb = _make_ipynb([("code", "x = 1", [])])

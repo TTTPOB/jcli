@@ -365,8 +365,7 @@ class TestUpdateIpynbSources:
         assert nb2.cells[0].outputs[0]["text"] == "1\n"
         assert nb2.cells[1].outputs[0]["text"] == "2\n"
 
-    def test_changed_cell_loses_outputs(self, tmp_path):
-        """Cells with changed source lose their outputs (no hash match)."""
+    def test_changed_cell_preserves_outputs_by_default(self, tmp_path):
         nb = _make_ipynb(
             [
                 ("code", "x = 1", ["1\n"]),
@@ -384,9 +383,21 @@ class TestUpdateIpynbSources:
 
         nb2 = nbformat.read(str(p), as_version=4)
         assert nb2.cells[0].source == "x = 10"
-        assert nb2.cells[0].outputs == []  # lost outputs (source changed)
+        assert nb2.cells[0].outputs[0]["text"] == "1\n"
+        assert nb2.cells[0].execution_count == 1
         assert nb2.cells[1].source == "y = 2"
-        assert nb2.cells[1].outputs[0]["text"] == "2\n"  # preserved
+        assert nb2.cells[1].outputs[0]["text"] == "2\n"
+
+    def test_clean_outputs_removes_changed_cell_outputs(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(p, [Cell(0, "code", "x = 10")], clean_outputs=True)
+
+        cell = nbformat.read(str(p), as_version=4).cells[0]
+        assert cell.outputs == []
+        assert cell.execution_count is None
 
     def test_supports_count_change_insert(self, tmp_path):
         """Inserting a new cell (count grows) works without error."""
@@ -406,6 +417,20 @@ class TestUpdateIpynbSources:
         assert nb2.cells[0].outputs[0]["text"] == "1\n"
         assert nb2.cells[1].source == "y = 2"
         assert nb2.cells[1].outputs == []
+
+    def test_insert_before_existing_cell_does_not_copy_its_outputs(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(
+            p,
+            [Cell(0, "code", "inserted = True"), Cell(1, "code", "x = 1")],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs[0]["text"] == "1\n"
 
     def test_supports_count_change_delete(self, tmp_path):
         """Deleting a cell (count shrinks) works without error."""
