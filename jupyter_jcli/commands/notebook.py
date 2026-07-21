@@ -482,6 +482,8 @@ def _summarize_cell(cell: Cell) -> dict:
         "source_preview": preview,
         "source_preview_truncated": preview_truncated,
     }
+    if len(cell.source) <= _MAX_SOURCE_PREVIEW_CHARS:
+        data["source"] = cell.source
     if cell.cell_type == CellType.CODE:
         data.update(_summarize_python(cell.source))
     elif cell.cell_type == CellType.MARKDOWN:
@@ -867,6 +869,9 @@ def _format_bounded_omission(
 def _format_summary_cell_human(cell: dict, heading: str) -> str:
     cell_type = CellType(cell["type"])
     parts = [f"{heading} [{cell_type.value}] [{cell['line_count']}L]"]
+    if "source" in cell:
+        parts.append(f"source={cell['source']!r}")
+        return " ".join(parts)
     if cell_type == CellType.CODE:
         for field in ("imports", "defines", "writes", "calls"):
             if not cell[field]:

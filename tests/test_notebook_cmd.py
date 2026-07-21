@@ -175,13 +175,16 @@ def test_summary_human_includes_notebook_metadata_and_cells(tmp_path):
     assert result.exit_code == 0
     assert f"path={path} cells=4 kernel=python3" in result.output
     assert "0 [code] [10L]" in result.output
-    assert "1 [markdown] [3L] first_line='# Report title'" in result.output
+    assert "1 [markdown] [3L] source='\\n# Report title\\nMore text'" in result.output
     assert "2 [raw] [1L]" in result.output
 
 
 def test_summary_human_omits_empty_code_categories(tmp_path):
     path = tmp_path / "summary.py"
-    path.write_text("# %%\nresult = calculate()\n", encoding="utf-8")
+    path.write_text(
+        "# %%\nresult = calculate()\n" + "# padding\n" * 20,
+        encoding="utf-8",
+    )
 
     result = CliRunner().invoke(main, ["notebook", "summary", str(path)])
 
@@ -190,6 +193,22 @@ def test_summary_human_omits_empty_code_categories(tmp_path):
     assert "calls=calculate" in result.output
     assert "imports=" not in result.output
     assert "defines=" not in result.output
+
+
+def test_summary_shows_full_source_for_short_cell(tmp_path):
+    path = tmp_path / "summary.py"
+    source = "value = load()\nvalue"
+    path.write_text(f"# %%\n{source}\n", encoding="utf-8")
+
+    json_result = CliRunner().invoke(main, ["--json", "notebook", "summary", str(path)])
+    human_result = CliRunner().invoke(main, ["notebook", "summary", str(path)])
+
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.output)["cells"][0]["source"] == source
+    assert human_result.exit_code == 0
+    assert f"source={source!r}" in human_result.output
+    assert "writes=" not in human_result.output
+    assert "calls=" not in human_result.output
 
 
 def test_show_returns_one_cell_and_full_source_json(tmp_path):
@@ -511,7 +530,7 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
     assert "~ 0 [code]" in human
     assert "+ 1 [code]" in human
     assert "- old:0 at current:0 [code]" in human
-    assert "writes=gone" in human
+    assert "source='gone = 1'" in human
 
 
 def test_bounded_summary_keeps_changed_cell_at_end_and_reports_omissions():

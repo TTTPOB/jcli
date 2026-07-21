@@ -305,9 +305,10 @@ For an existing notebook or py:percent file, use `summary -> show -> exec`: loca
 relevant cells, read their complete source, then execute only the cells the task
 requires. `summary` and `show` do not execute code or display stored outputs.
 
-Python summaries report `imports`, `defines`, `writes`, and qualified `calls`
-extracted from the AST, plus an original source preview. Cells containing IPython
-syntax still report the preview when AST parsing fails.
+Summaries show complete source for short cells. Longer Python cells report
+`imports`, `defines`, `writes`, and qualified `calls` extracted from the AST, plus
+an original source preview. Cells containing IPython syntax still report the
+preview when AST parsing fails.
 
 ```bash
 j-cli notebook summary analysis.py

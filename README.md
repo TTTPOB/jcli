@@ -142,9 +142,10 @@ j-cli kernel restart <session_id>
 
 ### `notebook summary` and `notebook show`
 
-Inspect notebook cells without executing them. `summary` extracts Python imports,
-definitions, writes, and calls when the cell parses as Python, and always includes
-an original source preview. `show` prints complete source for a cell or range.
+Inspect notebook cells without executing them. `summary` shows the complete source
+for short cells. For longer Python cells, it extracts imports, definitions, writes,
+and calls and includes a source preview. `show` prints complete source for a cell
+or range.
 
 ```bash
 j-cli notebook summary analysis.py
