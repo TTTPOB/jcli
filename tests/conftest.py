@@ -121,8 +121,8 @@ def jupyter_server():
             "--no-browser",
             "--ServerApp.disable_check_xsrf=True",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         env=env,
     )
 
@@ -132,10 +132,10 @@ def jupyter_server():
     finally:
         proc.send_signal(signal.SIGTERM)
         try:
-            proc.communicate(timeout=10)
+            proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.communicate()
+            proc.wait()
 
 
 @pytest.fixture(scope="module")
