@@ -380,6 +380,26 @@ def test_large_replace_block_uses_linear_positional_fallback():
     ]
 
 
+def test_long_cell_edit_uses_bounded_similarity_input():
+    compared_lengths = []
+
+    def recording_matcher(*args, **kwargs):
+        if isinstance(args[1], str):
+            compared_lengths.extend((len(args[1]), len(args[2])))
+        return RealSequenceMatcher(*args, **kwargs)
+
+    with patch(
+        "jupyter_jcli.cell_alignment.SequenceMatcher", side_effect=recording_matcher
+    ):
+        changes = diff_cells(_parsed("a" * 10_000 + "x"), _parsed("a" * 10_000 + "y"))
+
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes
+    ] == [("edited", 0, 0)]
+    assert compared_lengths
+    assert max(compared_lengths) <= 512
+
+
 def test_large_equal_repeated_sequence_skips_sequence_matcher():
     old = _parsed(*("same" for _ in range(4_000)))
     current = _parsed(*("same" for _ in range(4_000)))

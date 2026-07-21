@@ -541,6 +541,52 @@ class TestUpdateIpynbSources:
         assert nb2.cells[2].outputs[0]["text"] == "out-0\n"
         assert nb2.cells[-1].outputs[0]["text"] == "out-100\n"
 
+    def test_large_fallback_compares_long_source_suffixes(self, tmp_path):
+        prefix = "common = " + "x" * 512
+        nb = _make_ipynb(
+            [
+                ("code", f"{prefix}\nold_{index}", [f"out-{index}\n"])
+                for index in range(51)
+            ]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        new_cells = [
+            Cell(0, "code", f"{prefix}\nfirst_insert"),
+            Cell(1, "code", f"{prefix}\nsecond_insert"),
+        ]
+        new_cells.extend(
+            Cell(index + 2, "code", f"{prefix}\nnew_{index}") for index in range(51)
+        )
+
+        update_ipynb_sources(p, new_cells)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs == []
+        assert nb2.cells[1].outputs == []
+        assert nb2.cells[2].outputs[0]["text"] == "out-0\n"
+        assert nb2.cells[-1].outputs[0]["text"] == "out-50\n"
+
+    def test_large_fallback_uses_net_shift_beyond_lookahead(self, tmp_path):
+        nb = _make_ipynb(
+            [("code", f"value_{index} = 0", [f"out-{index}\n"]) for index in range(51)]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        new_cells = [
+            Cell(index, "code", f"insert_{index} = True") for index in range(9)
+        ]
+        new_cells.extend(
+            Cell(index + 9, "code", f"value_{index} = 1") for index in range(51)
+        )
+
+        update_ipynb_sources(p, new_cells)
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert all(cell.outputs == [] for cell in nb2.cells[:9])
+        assert nb2.cells[9].outputs[0]["text"] == "out-0\n"
+        assert nb2.cells[-1].outputs[0]["text"] == "out-50\n"
+
     def test_supports_count_change_delete(self, tmp_path):
         """Deleting a cell (count shrinks) works without error."""
         nb = _make_ipynb(

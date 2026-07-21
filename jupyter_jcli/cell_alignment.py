@@ -12,7 +12,7 @@ _MAX_REPLACE_DP_PRODUCT = 2_500
 _MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
 _MAX_LARGE_POSITIONAL_CHANGES = 64
 _MIN_REPEATED_CELL_FRACTION = 0.5
-_FALLBACK_SOURCE_COMPARE_CHARS = 512
+_SOURCE_COMPARE_CHARS = 512
 _FALLBACK_SHIFT_LOOKAHEAD = 8
 _FALLBACK_SHIFT_MIN_SIMILARITY = 0.5
 _FALLBACK_SHIFT_ADVANTAGE = 0.2
@@ -287,11 +287,18 @@ def _align_replaced_cells_by_position(
         old_cell = old_cells[old_pos]
         new_cell = new_cells[new_pos]
         direct_similarity = _fallback_cell_similarity(old_cell, new_cell)
+        remaining_difference = (len(new_cells) - new_pos) - (len(old_cells) - old_pos)
         insertion_offset, insertion_similarity = _best_forward_match(
-            old_cell, new_cells, new_pos
+            old_cell,
+            new_cells,
+            new_pos,
+            expected_offset=max(0, remaining_difference),
         )
         deletion_offset, deletion_similarity = _best_forward_match(
-            new_cell, old_cells, old_pos
+            new_cell,
+            old_cells,
+            old_pos,
+            expected_offset=max(0, -remaining_difference),
         )
 
         if (
@@ -366,19 +373,22 @@ def _align_replaced_cells_by_position(
 def _fallback_cell_similarity(old_cell: Cell, new_cell: Cell) -> float:
     if old_cell.cell_type != new_cell.cell_type:
         return 0.0
-    return SequenceMatcher(
-        None,
-        old_cell.source[:_FALLBACK_SOURCE_COMPARE_CHARS],
-        new_cell.source[:_FALLBACK_SOURCE_COMPARE_CHARS],
-        autojunk=True,
-    ).ratio()
+    return _bounded_source_similarity(old_cell.source, new_cell.source)
 
 
 def _best_forward_match(
-    reference: Cell, candidates: list[Cell], position: int
+    reference: Cell,
+    candidates: list[Cell],
+    position: int,
+    *,
+    expected_offset: int,
 ) -> tuple[int, float]:
-    max_offset = min(_FALLBACK_SHIFT_LOOKAHEAD, len(candidates) - position - 1)
-    if max_offset <= 0:
+    remaining = len(candidates) - position - 1
+    max_offset = min(_FALLBACK_SHIFT_LOOKAHEAD, remaining)
+    offsets = set(range(1, max_offset + 1))
+    if 0 < expected_offset <= remaining:
+        offsets.add(expected_offset)
+    if not offsets:
         return 0, -1.0
     return max(
         (
@@ -386,7 +396,7 @@ def _best_forward_match(
                 offset,
                 _fallback_cell_similarity(reference, candidates[position + offset]),
             )
-            for offset in range(1, max_offset + 1)
+            for offset in offsets
         ),
         key=lambda item: (item[1], -item[0]),
     )
@@ -399,14 +409,37 @@ def _paired_kind(old_cell: Cell, new_cell: Cell) -> str:
 
 
 def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
-    similarity = SequenceMatcher(
-        None,
-        old_cell.source,
-        new_cell.source,
-        autojunk=False,
-    ).ratio()
+    similarity = _bounded_source_similarity(old_cell.source, new_cell.source)
     type_penalty = 0.25 if old_cell.cell_type != new_cell.cell_type else 0.0
     return 1.0 - similarity + type_penalty
+
+
+def _bounded_source_similarity(old_source: str, new_source: str) -> float:
+    sample_similarity = SequenceMatcher(
+        None,
+        _source_sample(old_source),
+        _source_sample(new_source),
+        autojunk=True,
+    ).ratio()
+    old_lines = old_source.splitlines() or [""]
+    new_lines = new_source.splitlines() or [""]
+    head_similarity = SequenceMatcher(
+        None, old_lines[0][:_SOURCE_COMPARE_CHARS], new_lines[0][:_SOURCE_COMPARE_CHARS]
+    ).ratio()
+    tail_similarity = SequenceMatcher(
+        None,
+        old_lines[-1][-_SOURCE_COMPARE_CHARS:],
+        new_lines[-1][-_SOURCE_COMPARE_CHARS:],
+    ).ratio()
+    boundary_similarity = min(head_similarity, tail_similarity)
+    return 0.25 * sample_similarity + 0.75 * boundary_similarity
+
+
+def _source_sample(source: str) -> str:
+    if len(source) <= _SOURCE_COMPARE_CHARS:
+        return source
+    half = _SOURCE_COMPARE_CHARS // 2
+    return source[:half] + source[-half:]
 
 
 def _current_insertion_index(cells: list[Cell], position: int) -> int:
