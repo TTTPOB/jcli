@@ -541,22 +541,24 @@ class TestUpdateIpynbSources:
         assert nb2.cells[2].outputs[0]["text"] == "out-0\n"
         assert nb2.cells[-1].outputs[0]["text"] == "out-100\n"
 
-    def test_large_fallback_compares_long_source_suffixes(self, tmp_path):
-        prefix = "common = " + "x" * 512
+    def test_large_fallback_compares_long_single_line_suffixes(self, tmp_path):
+        prefix = "x" * 512
+        old_sources = [prefix + f"-old-{index:03}" for index in range(51)]
         nb = _make_ipynb(
             [
-                ("code", f"{prefix}\nold_{index}", [f"out-{index}\n"])
-                for index in range(51)
+                ("code", source, [f"out-{index}\n"])
+                for index, source in enumerate(old_sources)
             ]
         )
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
         new_cells = [
-            Cell(0, "code", f"{prefix}\nfirst_insert"),
-            Cell(1, "code", f"{prefix}\nsecond_insert"),
+            Cell(0, "code", prefix + "-insert-a"),
+            Cell(1, "code", prefix + "-insert-b"),
         ]
         new_cells.extend(
-            Cell(index + 2, "code", f"{prefix}\nnew_{index}") for index in range(51)
+            Cell(index + 2, "code", source + "-edited")
+            for index, source in enumerate(old_sources)
         )
 
         update_ipynb_sources(p, new_cells)
@@ -566,6 +568,60 @@ class TestUpdateIpynbSources:
         assert nb2.cells[1].outputs == []
         assert nb2.cells[2].outputs[0]["text"] == "out-0\n"
         assert nb2.cells[-1].outputs[0]["text"] == "out-50\n"
+
+    def test_alignment_compares_middle_lines_with_shared_boundaries(self, tmp_path):
+        boundary = "x" * 512
+        nb = _make_ipynb(
+            [
+                ("code", f"{boundary}\nold_a\n{boundary}", ["a\n"]),
+                ("code", f"{boundary}\nold_b\n{boundary}", ["b\n"]),
+            ]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(
+            p,
+            [
+                Cell(0, "code", f"{boundary}\nnew_a\n{boundary}"),
+                Cell(1, "code", f"{boundary}\ninserted\n{boundary}"),
+                Cell(2, "code", f"{boundary}\nnew_b\n{boundary}"),
+            ],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs[0]["text"] == "a\n"
+        assert nb2.cells[1].outputs == []
+        assert nb2.cells[2].outputs[0]["text"] == "b\n"
+
+    def test_alignment_resolves_unsampled_middle_line_collision(self, tmp_path):
+        def source(marker):
+            return "\n".join(
+                marker if index == 100 else f"common-{index:03}" for index in range(200)
+            )
+
+        nb = _make_ipynb(
+            [
+                ("code", source("old-A"), ["a\n"]),
+                ("code", source("old-B"), ["b\n"]),
+            ]
+        )
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(
+            p,
+            [
+                Cell(0, "code", source("new-A")),
+                Cell(1, "code", source("inserted")),
+                Cell(2, "code", source("new-B")),
+            ],
+        )
+
+        nb2 = nbformat.read(str(p), as_version=4)
+        assert nb2.cells[0].outputs[0]["text"] == "a\n"
+        assert nb2.cells[1].outputs == []
+        assert nb2.cells[2].outputs[0]["text"] == "b\n"
 
     def test_large_fallback_uses_net_shift_beyond_lookahead(self, tmp_path):
         nb = _make_ipynb(

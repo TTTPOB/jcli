@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import re
+from collections import Counter, deque
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
@@ -12,10 +13,14 @@ _MAX_REPLACE_DP_PRODUCT = 2_500
 _MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
 _MAX_LARGE_POSITIONAL_CHANGES = 64
 _MIN_REPEATED_CELL_FRACTION = 0.5
-_SOURCE_COMPARE_CHARS = 512
+_SIGNATURE_LINES = 16
+_SIGNATURE_LINE_CHARS = 128
+_SIGNATURE_TOKENS_PER_EDGE = 64
 _FALLBACK_SHIFT_LOOKAHEAD = 8
 _FALLBACK_SHIFT_MIN_SIMILARITY = 0.5
 _FALLBACK_SHIFT_ADVANTAGE = 0.2
+_FALLBACK_EXPECTED_SHIFT_ADVANTAGE = 0.1
+_TOKEN_RE = re.compile(r"\w+|[^\w\s]")
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,12 @@ class CellChange:
     old_cell: Cell | None
     new_cell: Cell | None
     current_insertion_index: int
+
+
+@dataclass(frozen=True)
+class _SourceSignature:
+    lines: tuple[str, ...]
+    tokens: frozenset[str]
 
 
 def align_cells(
@@ -97,6 +108,8 @@ def _align_cells(
         current_keys,
         autojunk=product > _MAX_SEQUENCE_MATCHER_PRODUCT,
     )
+    sources = {cell.source for cell in [*old_cells, *current_cells]}
+    signatures = {source: _source_signature(source) for source in sources}
     alignments: list[CellChange] = []
     for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
         if tag == "equal":
@@ -142,6 +155,7 @@ def _align_cells(
                 current_cells[new_start:new_end],
                 current_cells,
                 new_start,
+                signatures,
             )
         )
     if include_equal:
@@ -189,16 +203,18 @@ def _align_replaced_cells(
     new_cells: list[Cell],
     all_current_cells: list[Cell],
     new_start: int,
+    signatures: dict[str, _SourceSignature],
 ) -> list[CellChange]:
     """Align a replace block so nearby source revisions remain edits."""
     old_count = len(old_cells)
     new_count = len(new_cells)
-    if old_count * new_count > _MAX_REPLACE_DP_PRODUCT:
+    if old_count * new_count >= _MAX_REPLACE_DP_PRODUCT:
         return _align_replaced_cells_by_position(
             old_cells,
             new_cells,
             all_current_cells,
             new_start,
+            signatures,
         )
 
     costs = [[0.0] * (new_count + 1) for _ in range(old_count + 1)]
@@ -216,7 +232,11 @@ def _align_replaced_cells(
             candidates = (
                 (
                     costs[old_pos - 1][new_pos - 1]
-                    + _cell_edit_cost(old_cells[old_pos - 1], new_cells[new_pos - 1]),
+                    + _cell_edit_cost(
+                        old_cells[old_pos - 1],
+                        new_cells[new_pos - 1],
+                        signatures,
+                    ),
                     0,
                     "edited",
                 ),
@@ -278,6 +298,7 @@ def _align_replaced_cells_by_position(
     new_cells: list[Cell],
     all_current_cells: list[Cell],
     new_start: int,
+    signatures: dict[str, _SourceSignature],
 ) -> list[CellChange]:
     """Classify a large replace block with bounded one-cell lookahead."""
     changes: list[CellChange] = []
@@ -286,25 +307,37 @@ def _align_replaced_cells_by_position(
     while old_pos < len(old_cells) and new_pos < len(new_cells):
         old_cell = old_cells[old_pos]
         new_cell = new_cells[new_pos]
-        direct_similarity = _fallback_cell_similarity(old_cell, new_cell)
+        direct_similarity = _fallback_cell_similarity(old_cell, new_cell, signatures)
         remaining_difference = (len(new_cells) - new_pos) - (len(old_cells) - old_pos)
         insertion_offset, insertion_similarity = _best_forward_match(
             old_cell,
             new_cells,
             new_pos,
             expected_offset=max(0, remaining_difference),
+            signatures=signatures,
         )
         deletion_offset, deletion_similarity = _best_forward_match(
             new_cell,
             old_cells,
             old_pos,
             expected_offset=max(0, -remaining_difference),
+            signatures=signatures,
+        )
+        insertion_advantage = (
+            _FALLBACK_EXPECTED_SHIFT_ADVANTAGE
+            if insertion_offset == max(0, remaining_difference)
+            else _FALLBACK_SHIFT_ADVANTAGE
+        )
+        deletion_advantage = (
+            _FALLBACK_EXPECTED_SHIFT_ADVANTAGE
+            if deletion_offset == max(0, -remaining_difference)
+            else _FALLBACK_SHIFT_ADVANTAGE
         )
 
         if (
             insertion_similarity >= _FALLBACK_SHIFT_MIN_SIMILARITY
             and insertion_similarity >= deletion_similarity
-            and insertion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
+            and insertion_similarity >= direct_similarity + insertion_advantage
         ):
             changes.extend(
                 CellChange(
@@ -322,7 +355,7 @@ def _align_replaced_cells_by_position(
         if (
             deletion_similarity >= _FALLBACK_SHIFT_MIN_SIMILARITY
             and deletion_similarity > insertion_similarity
-            and deletion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
+            and deletion_similarity >= direct_similarity + deletion_advantage
         ):
             changes.extend(
                 CellChange(
@@ -370,10 +403,14 @@ def _align_replaced_cells_by_position(
     return changes
 
 
-def _fallback_cell_similarity(old_cell: Cell, new_cell: Cell) -> float:
+def _fallback_cell_similarity(
+    old_cell: Cell, new_cell: Cell, signatures: dict[str, _SourceSignature]
+) -> float:
     if old_cell.cell_type != new_cell.cell_type:
         return 0.0
-    return _bounded_source_similarity(old_cell.source, new_cell.source)
+    return _signature_similarity(
+        signatures[old_cell.source], signatures[new_cell.source]
+    )
 
 
 def _best_forward_match(
@@ -382,6 +419,7 @@ def _best_forward_match(
     position: int,
     *,
     expected_offset: int,
+    signatures: dict[str, _SourceSignature],
 ) -> tuple[int, float]:
     remaining = len(candidates) - position - 1
     max_offset = min(_FALLBACK_SHIFT_LOOKAHEAD, remaining)
@@ -394,7 +432,9 @@ def _best_forward_match(
         (
             (
                 offset,
-                _fallback_cell_similarity(reference, candidates[position + offset]),
+                _fallback_cell_similarity(
+                    reference, candidates[position + offset], signatures
+                ),
             )
             for offset in offsets
         ),
@@ -408,38 +448,76 @@ def _paired_kind(old_cell: Cell, new_cell: Cell) -> str:
     return "edited"
 
 
-def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
-    similarity = _bounded_source_similarity(old_cell.source, new_cell.source)
+def _cell_edit_cost(
+    old_cell: Cell, new_cell: Cell, signatures: dict[str, _SourceSignature]
+) -> float:
+    similarity = _signature_similarity(
+        signatures[old_cell.source], signatures[new_cell.source]
+    )
+    if similarity == 1.0 and old_cell.source != new_cell.source:
+        similarity = _full_source_similarity(old_cell.source, new_cell.source)
     type_penalty = 0.25 if old_cell.cell_type != new_cell.cell_type else 0.0
     return 1.0 - similarity + type_penalty
 
 
-def _bounded_source_similarity(old_source: str, new_source: str) -> float:
-    sample_similarity = SequenceMatcher(
-        None,
-        _source_sample(old_source),
-        _source_sample(new_source),
-        autojunk=True,
-    ).ratio()
+def _full_source_similarity(old_source: str, new_source: str) -> float:
     old_lines = old_source.splitlines() or [""]
     new_lines = new_source.splitlines() or [""]
-    head_similarity = SequenceMatcher(
-        None, old_lines[0][:_SOURCE_COMPARE_CHARS], new_lines[0][:_SOURCE_COMPARE_CHARS]
-    ).ratio()
-    tail_similarity = SequenceMatcher(
-        None,
-        old_lines[-1][-_SOURCE_COMPARE_CHARS:],
-        new_lines[-1][-_SOURCE_COMPARE_CHARS:],
-    ).ratio()
-    boundary_similarity = min(head_similarity, tail_similarity)
-    return 0.25 * sample_similarity + 0.75 * boundary_similarity
+    line_count = max(len(old_lines), len(new_lines))
+    return sum(
+        SequenceMatcher(None, old_line, new_line, autojunk=True).ratio()
+        for old_line, new_line in zip(old_lines, new_lines)
+    ) / max(line_count, 1)
 
 
-def _source_sample(source: str) -> str:
-    if len(source) <= _SOURCE_COMPARE_CHARS:
-        return source
-    half = _SOURCE_COMPARE_CHARS // 2
-    return source[:half] + source[-half:]
+def _signature_similarity(
+    old_signature: _SourceSignature, new_signature: _SourceSignature
+) -> float:
+    line_count = max(len(old_signature.lines), len(new_signature.lines))
+    if line_count == 0:
+        line_similarity = 1.0
+    else:
+        paired_similarity = sum(
+            SequenceMatcher(None, old_line, new_line, autojunk=False).ratio()
+            for old_line, new_line in zip(old_signature.lines, new_signature.lines)
+        )
+        line_similarity = paired_similarity / line_count
+    token_union = old_signature.tokens | new_signature.tokens
+    token_similarity = (
+        len(old_signature.tokens & new_signature.tokens) / len(token_union)
+        if token_union
+        else 1.0
+    )
+    return 0.5 * line_similarity + 0.5 * token_similarity
+
+
+def _source_signature(source: str) -> _SourceSignature:
+    lines = source.splitlines() or [""]
+    if len(lines) <= _SIGNATURE_LINES:
+        selected = lines
+    else:
+        selected = [
+            lines[index * (len(lines) - 1) // (_SIGNATURE_LINES - 1)]
+            for index in range(_SIGNATURE_LINES)
+        ]
+    half = _SIGNATURE_LINE_CHARS // 2
+    line_signature = tuple(
+        line if len(line) <= _SIGNATURE_LINE_CHARS else line[:half] + line[-half:]
+        for line in selected
+    )
+    first_tokens: list[str] = []
+    last_tokens: deque[str] = deque(maxlen=_SIGNATURE_TOKENS_PER_EDGE)
+    for match in _TOKEN_RE.finditer(source):
+        token = match.group()
+        if len(token) > _SIGNATURE_LINE_CHARS:
+            token = token[:half] + token[-half:]
+        if len(first_tokens) < _SIGNATURE_TOKENS_PER_EDGE:
+            first_tokens.append(token)
+        last_tokens.append(token)
+    return _SourceSignature(
+        lines=line_signature,
+        tokens=frozenset([*first_tokens, *last_tokens]),
+    )
 
 
 def _current_insertion_index(cells: list[Cell], position: int) -> int:
