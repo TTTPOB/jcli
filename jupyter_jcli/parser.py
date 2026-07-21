@@ -1,17 +1,158 @@
 """Parse py:percent and .ipynb files into cells."""
 
+import ast
 from dataclasses import dataclass, field
+import io
 from pathlib import Path
 import re
+import tokenize
 
 import nbformat
 
 from jupyter_jcli._enums import CellType
 
 
+_CELL_MARKER_RE = re.compile(r"^# %%(?:\s|$)")
+_MAGIC_RE = re.compile(r"^\s*(?:# ?)*(?:%{1,3}[A-Za-z]|[!?]\s*[A-Za-z.~/\\${}])")
+_MAGIC_ASSIGN_RE = re.compile(r"^\s*(?:# ?)*[A-Za-z_]\w*\s*=\s*(?:%{1,3}|!)\s*[A-Za-z]")
+_HELP_RE = re.compile(r"^\s*(?:# ?)*\S+\?{1,2}\s*$")
+_LINE_CONTINUATION_RE = re.compile(r".*\\\s*$")
+_COMMENTED_CELL_MAGIC_BODY = "# jupyter-jcli: commented cell magic body"
+_MAGIC_PLACEHOLDER = "pass  # jupyter-jcli: IPython magic placeholder"
+_PYTHON_BODY_CELL_MAGICS = {
+    "%%capture",
+    "%%debug",
+    "%%file",
+    "%%prun",
+    "%%pypy",
+    "%%python",
+    "%%python2",
+    "%%python3",
+    "%%time",
+    "%%timeit",
+    "%%writefile",
+}
+
+
+def _lines_in_strings(source: str) -> set[int]:
+    string_lines: set[int] = set()
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        for token in tokens:
+            if token.type == tokenize.STRING:
+                string_lines.update(range(token.start[0], token.end[0] + 1))
+    except (IndentationError, SyntaxError, tokenize.TokenError):
+        pass
+    return string_lines
+
+
+def _transform_ipython_magics(source: str, *, comment: bool) -> str:
+    lines = source.splitlines(keepends=True)
+    if not comment:
+        for index in range(len(lines) - 2, -1, -1):
+            if lines[index].strip() == _MAGIC_PLACEHOLDER and (
+                _MAGIC_RE.match(lines[index + 1])
+                or _MAGIC_ASSIGN_RE.match(lines[index + 1])
+                or _HELP_RE.match(lines[index + 1])
+            ):
+                lines.pop(index)
+
+    source = "".join(lines)
+    string_lines = _lines_in_strings(source)
+    continuation = False
+    placeholder_indices: list[int] = []
+    first_content_index = next(
+        (index for index, line in enumerate(lines) if line.strip()),
+        None,
+    )
+    first_content = (
+        lines[first_content_index] if first_content_index is not None else ""
+    )
+    if comment:
+        cell_magic_match = re.match(r"^\s*(%%{1,2}[A-Za-z]+)", first_content)
+    else:
+        cell_magic_match = re.match(r"^\s*# (%%{1,2}[A-Za-z]+)", first_content)
+
+    commented_body_marker = (
+        not comment
+        and first_content_index is not None
+        and first_content_index + 1 < len(lines)
+        and lines[first_content_index + 1].rstrip() == _COMMENTED_CELL_MAGIC_BODY
+    )
+    if commented_body_marker:
+        lines.pop(first_content_index + 1)
+
+    cell_magic = False
+    if cell_magic_match:
+        if comment:
+            body = "".join(lines[first_content_index + 1 :])
+            python_body = cell_magic_match.group(1) in _PYTHON_BODY_CELL_MAGICS
+            try:
+                ast.parse(body)
+            except SyntaxError:
+                python_body = False
+            cell_magic = not python_body
+        else:
+            cell_magic = commented_body_marker
+
+    for index, line in enumerate(lines, 1):
+        is_magic = cell_magic or (
+            index not in string_lines
+            and (
+                continuation
+                or _MAGIC_RE.match(line)
+                or _MAGIC_ASSIGN_RE.match(line)
+                or _HELP_RE.match(line)
+            )
+        )
+        if not is_magic:
+            continuation = False
+            continue
+
+        if comment:
+            if continuation:
+                lines[index - 1] = f"# {line}"
+            else:
+                unindented = line.lstrip()
+                indent = line[: len(line) - len(unindented)]
+                lines[index - 1] = f"{indent}# {unindented}"
+                if indent and not cell_magic:
+                    placeholder_indices.append(index - 1)
+        else:
+            unindented = line.lstrip()
+            indent = line[: len(line) - len(unindented)]
+            if unindented.startswith("# "):
+                lines[index - 1] = indent + unindented[2:]
+            elif unindented.startswith("#"):
+                lines[index - 1] = indent + unindented[1:]
+
+        continuation = bool(_LINE_CONTINUATION_RE.match(line))
+
+    if comment and cell_magic and first_content_index is not None:
+        if not lines[first_content_index].endswith(("\n", "\r")):
+            lines[first_content_index] += "\n"
+        lines.insert(first_content_index + 1, _COMMENTED_CELL_MAGIC_BODY + "\n")
+    for index in reversed(placeholder_indices):
+        indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+        lines.insert(index, f"{indent}{_MAGIC_PLACEHOLDER}\n")
+
+    return "".join(lines)
+
+
+def comment_ipython_magics(source: str) -> str:
+    """Comment IPython magic commands for parseable py:percent output."""
+    return _transform_ipython_magics(source, comment=True)
+
+
+def uncomment_ipython_magics(source: str) -> str:
+    """Restore IPython magic commands from py:percent comments."""
+    return _transform_ipython_magics(source, comment=False)
+
+
 @dataclass
 class Cell:
     """A single cell parsed from a file."""
+
     index: int
     cell_type: CellType  # CellType.CODE, MARKDOWN, or RAW
     source: str
@@ -23,6 +164,7 @@ class Cell:
 @dataclass
 class ParsedFile:
     """Parsed file with cells and metadata."""
+
     kernel_name: str | None
     cells: list[Cell] = field(default_factory=list)
     source_path: str = ""
@@ -124,7 +266,9 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
                 m = re.search(r"^#\s+name:\s*(\S+)", front_matter, re.MULTILINE)
                 if m:
                     kernel_name = m.group(1)
-                m = re.search(r"^#\s+display_name:\s*(.+?)\s*$", front_matter, re.MULTILINE)
+                m = re.search(
+                    r"^#\s+display_name:\s*(.+?)\s*$", front_matter, re.MULTILINE
+                )
                 if m:
                     kernel_display_name = m.group(1)
                 m = re.search(r"^#\s+language:\s*(\S+)", front_matter, re.MULTILINE)
@@ -142,13 +286,15 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
 
     for line in lines[content_start:]:
         stripped = line.rstrip()
-        if stripped.startswith("# %%"):
+        if _CELL_MARKER_RE.match(stripped):
             found_percent_marker = True
             # Save previous cell if it has content
             if current_lines:
                 source = "".join(current_lines).strip()
                 if source:
-                    cells.append(Cell(index=cell_index, cell_type=current_type, source=source))
+                    cells.append(
+                        Cell(index=cell_index, cell_type=current_type, source=source)
+                    )
                     cell_index += 1
 
             # Determine cell type from marker tag
@@ -173,6 +319,8 @@ def parse_py_percent_text(text: str, source_path: str = "") -> ParsedFile:
     for cell in cells:
         if cell.cell_type in (CellType.MARKDOWN, CellType.RAW):
             cell.source = re.sub(r"^# ?", "", cell.source, flags=re.MULTILINE)
+        elif cell.cell_type == CellType.CODE:
+            cell.source = uncomment_ipython_magics(cell.source).strip()
 
     return ParsedFile(
         kernel_name=kernel_name,
@@ -207,11 +355,13 @@ def parse_ipynb(path: str) -> ParsedFile:
 
     cells = []
     for i, cell in enumerate(nb.cells):
-        cells.append(Cell(
-            index=i,
-            cell_type=cell.cell_type,
-            source=cell.source,
-        ))
+        cells.append(
+            Cell(
+                index=i,
+                cell_type=cell.cell_type,
+                source=cell.source,
+            )
+        )
 
     return ParsedFile(
         kernel_name=kernel_name,

@@ -145,6 +145,19 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
 
+    def test_commented_magic_is_in_sync_with_notebook_magic(self, tmp_path):
+        py, ipynb = _write_pair(
+            tmp_path,
+            ["# %load_ext autoreload\n# %autoreload 2"],
+            ["%load_ext autoreload\n%autoreload 2"],
+        )
+        base_py = _make_py_text("# %load_ext autoreload\n# %autoreload 2")
+
+        with self._patch_git(base_py):
+            result = check_drift(py, ipynb)
+
+        assert result.status == "in_sync"
+
     def test_py_only_changed(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 10", "y = 2"], ["x = 1", "y = 2"])
         base_py = _make_py_text("x = 1", "y = 2")

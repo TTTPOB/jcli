@@ -130,6 +130,31 @@ class TestIpynbToPy:
         assert parsed.cells[0].source == "a = 1"
         assert parsed.cells[1].source == "b = 2"
 
+    def test_roundtrip_comments_and_restores_ipython_magics(self, tmp_path):
+        line_magics = "%load_ext autoreload\n%autoreload 2"
+        cell_magic = "%%bash\necho hello"
+        ipynb = tmp_path / "nb.ipynb"
+        nbformat.write(
+            _make_ipynb([("code", line_magics, []), ("code", cell_magic, [])]),
+            str(ipynb),
+        )
+        py = tmp_path / "nb.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        py_text = py.read_text(encoding="utf-8")
+        assert "# %load_ext autoreload" in py_text
+        assert "# %autoreload 2" in py_text
+        assert "# %%bash" in py_text
+        assert "# echo hello" in py_text
+        compile(py_text, str(py), "exec")
+
+        result = _invoke("convert", "py-to-ipynb", str(py), str(ipynb))
+        assert result.exit_code == 0
+        roundtripped = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in roundtripped.cells] == [line_magics, cell_magic]
+
     def test_canonical_ipynb_to_py_refreshes_baseline(self, git_repo):
         nb = _make_ipynb([("code", "x = 1", [])])
         ipynb = git_repo / "nb.ipynb"

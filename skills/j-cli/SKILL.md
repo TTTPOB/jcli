@@ -475,6 +475,11 @@ fig
 # The plot above shows a sine wave.
 ```
 
+j-cli comments IPython magic commands in py:percent files so Python tools can
+parse them, then restores the commands when syncing to `.ipynb`. Python-body
+cell magics such as `%%timeit` and `%%writefile` keep their body as Python code;
+other cell magics are commented through the end of the cell.
+
 `j-cli exec --file` displays the final expression in each code cell by default. Leave a
 table or figure as the final bare expression, such as `df` or `fig`, to display it without
 an explicit `display(...)` or `plt.show()` call. Pass `--display-mode all` when the cell

@@ -400,6 +400,11 @@ x = np.random.randn(100)
 print(x.mean())
 ```
 
+j-cli comments IPython magic commands in py:percent files so Python tools can
+parse them, then restores the commands when syncing to `.ipynb`. Python-body
+cell magics such as `%%timeit` and `%%writefile` keep their body as Python code;
+other cell magics are commented through the end of the cell.
+
 ## Development
 
 ```bash

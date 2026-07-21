@@ -7,7 +7,7 @@ from pathlib import Path
 import nbformat
 
 from jupyter_jcli._enums import CellType
-from jupyter_jcli.parser import Cell, ParsedFile
+from jupyter_jcli.parser import Cell, ParsedFile, comment_ipython_magics
 
 
 def emit_py_percent(parsed: ParsedFile) -> str:
@@ -43,8 +43,9 @@ def emit_py_percent(parsed: ParsedFile) -> str:
 
         if cell.cell_type == CellType.CODE:
             parts.append("# %%\n")
-            parts.append(cell.source)
-            if not cell.source.endswith("\n"):
+            source = comment_ipython_magics(cell.source)
+            parts.append(source)
+            if not source.endswith("\n"):
                 parts.append("\n")
             parts.append("\n")
 

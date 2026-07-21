@@ -44,6 +44,90 @@ class TestEmitPyPercent:
         assert parsed2.cells[0].cell_type == "code"
         assert parsed2.cells[0].source == source
 
+    @pytest.mark.parametrize(
+        ("source", "commented"),
+        [
+            ("%load_ext autoreload\n%autoreload 2", "# %load_ext autoreload\n# %autoreload 2"),
+            ("!ls -al", "# !ls -al"),
+            ("object?", "# object?"),
+            ('%%bash\necho "hello"', '# echo "hello"'),
+            ("files = !ls", "# files = !ls"),
+            ("timing = %timeit value + 1", "# timing = %timeit value + 1"),
+            ("%timeit foo( \\\n    1)", "# %timeit foo( \\\n#     1)"),
+        ],
+    )
+    def test_roundtrip_comments_ipython_magics(self, source, commented):
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert commented in text
+        parsed = parse_py_percent_text(text)
+        assert len(parsed.cells) == 1
+        assert parsed.cells[0].source == source
+
+    @pytest.mark.parametrize(
+        "magic",
+        [
+            "%%capture",
+            "%%debug",
+            "%%file output.py",
+            "%%prun",
+            "%%pypy",
+            "%%python",
+            "%%python2",
+            "%%python3",
+            "%%time",
+            "%%timeit",
+            "%%writefile output.py",
+        ],
+    )
+    def test_python_body_cell_magic_keeps_body_parseable(self, magic):
+        source = f"{magic}\nvalue = sum(range(10))"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert f"# {magic}\nvalue = sum(range(10))" in text
+        compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_writefile_with_non_python_body_comments_entire_cell(self):
+        source = "%%writefile notes.txt\nplain text"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert "# %%writefile notes.txt" in text
+        assert "# jupyter-jcli: commented cell magic body" in text
+        assert "# plain text" in text
+        compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_cell_magic_without_body_roundtrips(self):
+        source = "%%bash"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_indented_magic_adds_and_removes_parseable_placeholder(self):
+        source = "if ready:\n    %timeit value + 1"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert "    pass  # jupyter-jcli: IPython magic placeholder" in text
+        assert "    # %timeit value + 1" in text
+        compile(text, "notebook.py", "exec")
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_roundtrip_preserves_commented_magic(self):
+        source = "# %load_ext autoreload"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert "# # %load_ext autoreload" in text
+        assert parse_py_percent_text(text).cells[0].source == source
+
+    def test_does_not_comment_magic_inside_multiline_string(self):
+        source = 'value = """\n%not_a_magic\n"""'
+        text = emit_py_percent(_parsed("python3", ("code", source)))
+
+        assert source in text
+        assert parse_py_percent_text(text).cells[0].source == source
+
     def test_roundtrip_markdown_cell(self):
         source = "## Title\n\nSome text"
         parsed = _parsed("python3", ("markdown", source))
