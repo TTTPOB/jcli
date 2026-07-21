@@ -79,7 +79,7 @@ def _significant_tokens(tokens: list[tokenize.TokenInfo]) -> list[tokenize.Token
 
 def _is_supported_magic(tokens: list[tokenize.TokenInfo], source: str) -> bool:
     # This subset mirrors IPython's token transformers without importing IPython.
-    if tokens[0].string in {"%", "!", "?"}:
+    if tokens[0].string in {"%", "!", "?", ",", ";", "/"}:
         return True
 
     if tokens[-1].string == "?" and _HELP_END_RE.search(source.rstrip()):
