@@ -1,6 +1,6 @@
 ---
 name: j-cli
-description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, write execution outputs back to notebooks, inspect kernel variables, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
+description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, inspect or run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, summarize or show notebook source without execution, write execution outputs back to notebooks, inspect kernel variables, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
 ---
 
 # j-cli — Jupyter CLI for LLM Agents
@@ -28,7 +28,7 @@ The command is idempotent — re-running updates the hook in place without dupli
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`. These tools bypass j-cli and lose kernel state.
 - **`python-run-guard`** (Bash, soft deny) — fires when a command like `python foo.py`, `uv run python foo.py`, `pixi run python foo.py`, or `./foo.py` targets a `.py` file that has a paired `.ipynb` next to it. The guard surfaces a "reconsider" message explaining that running the file as a script discards kernel state and py/ipynb pair sync. The agent is expected to use `j-cli session` + `j-cli exec` instead. Commands on ordinary scripts (no paired `.ipynb`) are never intercepted.
 - **`pair-drift-guard`** **(PreToolUse, Edit/Write)** — detects drift that was already present before your edit (e.g. a human teammate edited the `.ipynb` in JupyterLab). Uses `git merge-file` 3-way merge (handles cell insertions, deletions, and non-overlapping edits); asks you to re-read the target file after auto-merge, or explains the conflict and what to inspect before picking a side. `.ipynb` is by design gitignored; `.py` history is the only merge baseline.
-- **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when `git merge-file` produces no conflicts. With a git baseline, its context includes a cell summary where `~` marks edits, `+` marks inserts, and `- old:N` marks deleted baseline cells.
+- **`pair-drift-guard-post`** **(PostToolUse, Edit/Write)** — after your own Edit/Write, silently syncs your change to the pair's other side when `git merge-file` produces no conflicts. With a git baseline, its context includes a cell summary where `~` marks edits, `+` marks inserts, and `- old:N` marks deleted baseline cells. The summary prioritizes changed cells within 16-cell and 8,000-character limits; when it reports omissions, run the included `j-cli notebook summary` command.
 - **`notebook-edit-guard`** **(PreToolUse, NotebookEdit)** — hard-denies direct `NotebookEdit` calls; always use the py:percent round-trip instead.
 
 ## One-time Codex hook install
@@ -52,7 +52,7 @@ The command is idempotent — re-running updates the hook in place without dupli
 - **`notebook-exec-guard`** (Bash, hard deny) — blocks `jupyter nbconvert --execute`, `papermill`, `runipy`, and `ipython <notebook>.ipynb`.
 - **`python-run-guard`** (Bash, soft deny) — fires when a shell command targets a `.py` file that has a paired `.ipynb`.
 - **`pair-drift-guard-pre`** (PreToolUse, apply_patch) — detects drift before an `apply_patch` edit touches a paired `.py` file.
-- **`pair-drift-guard-post`** (PostToolUse, apply_patch) — after `apply_patch`, syncs the other side of the pair when possible and includes the same baseline-backed cell markers in its context.
+- **`pair-drift-guard-post`** (PostToolUse, apply_patch) — after `apply_patch`, syncs the other side of the pair when possible and includes the same baseline-backed cell markers in its context. Multi-file context is limited to 16,000 characters and reports how many additional file contexts it omitted.
 
 > **Note:** `notebook-edit-guard` is not installed for Codex because Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
@@ -301,19 +301,26 @@ j-cli kernel restart <session_id>
 
 ### `notebook summary` and `notebook show`
 
-Use `summary` to locate cells by index before reading or executing them. Python
-cells report identifiers extracted from the AST plus an original source preview;
-cells containing IPython syntax still report the preview when AST parsing fails.
+For an existing notebook or py:percent file, use `summary -> show -> exec`: locate
+relevant cells, read their complete source, then execute only the cells the task
+requires. `summary` and `show` do not execute code or display stored outputs.
+
+Python summaries report `imports`, `defines`, `writes`, and qualified `calls`
+extracted from the AST, plus an original source preview. Cells containing IPython
+syntax still report the preview when AST parsing fails.
 
 ```bash
 j-cli notebook summary analysis.py
 j-cli notebook show analysis.py --cell 4
 j-cli notebook show analysis.py --cell 3:7
+j-cli exec <session_id> --file analysis.py --cell 4
 j-cli -j notebook summary analysis.ipynb
 ```
 
 `show --cell` accepts the same 0-indexed specs as `exec`: `3`, `3:7`, `3:`, and
-`:5`. It prints code, markdown, and raw cells without executing them.
+`:5`. Ranges are half-open; negative indices, descending ranges, and specs with
+multiple colons are invalid. `show` prints code, markdown, and raw cells without
+executing them.
 
 ### `vars`
 
@@ -505,7 +512,7 @@ The `j-cli convert py-to-ipynb` command detects whether the `.ipynb` already exi
 | Who triggers | Hook | When | Meaning | Next step |
 |---|---|---|---|---|
 | Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write/apply_patch | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
-| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | Read `~` edited, `+` inserted, and `- old:N` deleted markers after an auto-sync with a git baseline. If warned: pick a side with `j-cli convert` |
+| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | Read `~` edited, `+` inserted, and `- old:N` deleted markers after an auto-sync with a git baseline. Follow any omission hint with `j-cli notebook summary`. If warned: pick a side with `j-cli convert` |
 | Agent | `notebook-edit-guard` | Pre NotebookEdit | Hard deny; use py:percent round-trip | Follow the three-step convert workflow above |
 
 ## Error Handling
