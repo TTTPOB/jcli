@@ -869,7 +869,9 @@ def _format_summary_cell_human(cell: dict, heading: str) -> str:
     parts = [f"{heading} [{cell_type.value}] [{cell['line_count']}L]"]
     if cell_type == CellType.CODE:
         for field in ("imports", "defines", "writes", "calls"):
-            values = ", ".join(cell[field]) or "-"
+            if not cell[field]:
+                continue
+            values = ", ".join(cell[field])
             if cell[f"{field}_truncated"]:
                 values += " [truncated]"
             parts.append(f"{field}={values}")

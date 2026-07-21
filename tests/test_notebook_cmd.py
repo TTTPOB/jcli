@@ -179,6 +179,19 @@ def test_summary_human_includes_notebook_metadata_and_cells(tmp_path):
     assert "2 [raw] [1L]" in result.output
 
 
+def test_summary_human_omits_empty_code_categories(tmp_path):
+    path = tmp_path / "summary.py"
+    path.write_text("# %%\nresult = calculate()\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["notebook", "summary", str(path)])
+
+    assert result.exit_code == 0
+    assert "writes=result" in result.output
+    assert "calls=calculate" in result.output
+    assert "imports=" not in result.output
+    assert "defines=" not in result.output
+
+
 def test_show_returns_one_cell_and_full_source_json(tmp_path):
     path = tmp_path / "notebook.ipynb"
     notebook = nbformat.v4.new_notebook()
