@@ -299,6 +299,22 @@ Restart a kernel (clears all state).
 j-cli kernel restart <session_id>
 ```
 
+### `notebook summary` and `notebook show`
+
+Use `summary` to locate cells by index before reading or executing them. Python
+cells report identifiers extracted from the AST plus an original source preview;
+cells containing IPython syntax still report the preview when AST parsing fails.
+
+```bash
+j-cli notebook summary analysis.py
+j-cli notebook show analysis.py --cell 4
+j-cli notebook show analysis.py --cell 3:7
+j-cli -j notebook summary analysis.ipynb
+```
+
+`show --cell` accepts the same 0-indexed specs as `exec`: `3`, `3:7`, `3:`, and
+`:5`. It prints code, markdown, and raw cells without executing them.
+
 ### `vars`
 
 Inspect kernel variables. Use after `exec` to check what's defined and what values variables hold.

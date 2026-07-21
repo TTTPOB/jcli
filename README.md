@@ -136,6 +136,21 @@ j-cli kernel interrupt <session_id>
 j-cli kernel restart <session_id>
 ```
 
+### `notebook summary` and `notebook show`
+
+Inspect notebook cells without executing them. `summary` extracts Python imports,
+definitions, writes, and calls when the cell parses as Python, and always includes
+an original source preview. `show` prints complete source for a cell or range.
+
+```bash
+j-cli notebook summary analysis.py
+j-cli notebook show analysis.py --cell 4
+j-cli notebook show analysis.py --cell 3:7
+j-cli -j notebook summary analysis.ipynb
+```
+
+Cell specs are 0-indexed and use the same half-open range syntax as `exec`.
+
 ### `setup claude`
 
 Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Claude to use j-cli instead.
