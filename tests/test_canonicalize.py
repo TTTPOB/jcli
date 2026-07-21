@@ -8,8 +8,11 @@ from jupyter_jcli.parser import parse_py_percent_text
 
 def _py_text(*cell_sources: str, kernel: str = "python3") -> str:
     lines = [
-        "# ---\n", "# jupyter:\n", "#   kernelspec:\n",
-        f"#     name: {kernel}\n", "# ---\n\n",
+        "# ---\n",
+        "# jupyter:\n",
+        "#   kernelspec:\n",
+        f"#     name: {kernel}\n",
+        "# ---\n\n",
     ]
     for src in cell_sources:
         lines.append(f"# %%\n{src}\n\n")

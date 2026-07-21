@@ -25,7 +25,9 @@ def emit_error(code: str, message: str, use_json: bool = False) -> None:
     """Print error and exit with code 1."""
     if use_json:
         click.echo(
-            json.dumps({"status": ResponseStatus.ERROR, "code": code, "message": message}),
+            json.dumps(
+                {"status": ResponseStatus.ERROR, "code": code, "message": message}
+            ),
             err=True,
         )
     else:

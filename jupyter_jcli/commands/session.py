@@ -21,6 +21,7 @@ class KernelState(str, Enum):
     Jupyter versions.
     Source: https://jupyter-server.readthedocs.io/en/latest/operators/public-api.html
     """
+
     IDLE = "idle"
     BUSY = "busy"
     STARTING = "starting"
@@ -34,6 +35,7 @@ def _coerce_state(raw: str) -> KernelState:
         return KernelState(raw)
     except ValueError:
         return KernelState.UNKNOWN
+
 
 # Max sessions before we skip auto-var-fetch unless --vars is forced
 _AUTO_FETCH_LIMIT = 10
@@ -71,11 +73,17 @@ def create(ctx: Context, kernel: str, name: str | None):
 
 @session.command("list")
 @click.option(
-    "--no-vars", "skip_vars", is_flag=True, default=False,
+    "--no-vars",
+    "skip_vars",
+    is_flag=True,
+    default=False,
     help="Skip variable preview fetch (faster, matches pre-vars behaviour).",
 )
 @click.option(
-    "--vars", "force_vars", is_flag=True, default=False,
+    "--vars",
+    "force_vars",
+    is_flag=True,
+    default=False,
     help="Force variable preview even when there are more than 10 sessions.",
 )
 @pass_ctx
@@ -162,13 +170,13 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
 def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
     """Fan out variable fetches in parallel and attach vars_preview to each session dict."""
     from jupyter_jcli.kernel import kernel_connection
-    from jupyter_jcli.variables import VariablesUnavailable, list_variables
+    from jupyter_jcli.variables import list_variables
 
     eligible = [
-        s for s in sessions
-        if _coerce_state(s.get("kernel_state", "")) not in (
-            KernelState.BUSY, KernelState.DEAD, KernelState.UNKNOWN
-        )
+        s
+        for s in sessions
+        if _coerce_state(s.get("kernel_state", ""))
+        not in (KernelState.BUSY, KernelState.DEAD, KernelState.UNKNOWN)
     ]
 
     def _fetch(s: dict) -> tuple[str, dict]:
@@ -199,7 +207,9 @@ def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
         if sid in previews:
             s["vars_preview"] = previews[sid]
         elif _coerce_state(s.get("kernel_state", "")) in (
-            KernelState.BUSY, KernelState.DEAD, KernelState.UNKNOWN
+            KernelState.BUSY,
+            KernelState.DEAD,
+            KernelState.UNKNOWN,
         ):
             s["vars_preview"] = {"names": [], "total": -1, "unavailable": True}
         else:

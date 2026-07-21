@@ -4,16 +4,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import nbformat
-import pytest
 
-from jupyter_jcli._enums import MergeMode
-from jupyter_jcli.drift import DriftResult, check_drift, three_way_merge
+from jupyter_jcli.drift import check_drift, three_way_merge
 from jupyter_jcli.parser import Cell
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _cells(*sources: str, cell_type: str = "code") -> list[Cell]:
     return [Cell(index=i, cell_type=cell_type, source=s) for i, s in enumerate(sources)]
@@ -37,13 +36,19 @@ def _make_py_text(*sources: str, kernel: str = "python3") -> str:
 
 def _make_ipynb_text(*sources: str, kernel: str = "python3") -> str:
     nb = nbformat.v4.new_notebook()
-    nb.metadata["kernelspec"] = {"name": kernel, "display_name": kernel, "language": "python"}
+    nb.metadata["kernelspec"] = {
+        "name": kernel,
+        "display_name": kernel,
+        "language": "python",
+    }
     for src in sources:
         nb.cells.append(nbformat.v4.new_code_cell(src))
     return nbformat.writes(nb)
 
 
-def _write_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tuple[Path, Path]:
+def _write_pair(
+    tmp_path: Path, py_src: list[str], ipynb_src: list[str]
+) -> tuple[Path, Path]:
     py = tmp_path / "nb.py"
     ipynb = tmp_path / "nb.ipynb"
     py.write_text(_make_py_text(*py_src), encoding="utf-8")
@@ -54,6 +59,7 @@ def _write_pair(tmp_path: Path, py_src: list[str], ipynb_src: list[str]) -> tupl
 # ---------------------------------------------------------------------------
 # three_way_merge — unit tests (no file I/O)
 # ---------------------------------------------------------------------------
+
 
 class TestThreeWayMerge:
     def test_no_changes(self):
@@ -128,6 +134,7 @@ class TestThreeWayMerge:
 # check_drift — with mocked git
 # ---------------------------------------------------------------------------
 
+
 class TestCheckDrift:
     """Tests for check_drift() using mocked _get_git_base_text."""
 
@@ -136,6 +143,7 @@ class TestCheckDrift:
             if path.suffix == ".py":
                 return py_base
             return None
+
         return patch("jupyter_jcli.drift._get_git_base_text", side_effect=_side_effect)
 
     def test_in_sync_no_drift(self, tmp_path):

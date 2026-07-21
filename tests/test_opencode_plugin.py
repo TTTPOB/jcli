@@ -106,7 +106,9 @@ if (scenario === "invalid") {
 """
 
 
-def _run_plugin(tmp_path: Path, scenario: str, mode: str = "") -> tuple[dict, list[dict]]:
+def _run_plugin(
+    tmp_path: Path, scenario: str, mode: str = ""
+) -> tuple[dict, list[dict]]:
     plugin = resources.files("jupyter_jcli").joinpath("opencode_plugin.js")
     fake_jcli = tmp_path / "fake-j-cli"
     fake_jcli.write_text(_FAKE_JCLI, encoding="utf-8")
@@ -134,7 +136,9 @@ def _run_plugin(tmp_path: Path, scenario: str, mode: str = "") -> tuple[dict, li
         env=env,
     )
     output = json.loads(result.stdout)
-    calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+    calls = [
+        json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()
+    ]
     return output, calls
 
 

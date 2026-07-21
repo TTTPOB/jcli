@@ -12,6 +12,7 @@ from jupyter_jcli.cli import main
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _invoke(command: str, cwd: str) -> tuple[int, dict | None]:
     """Invoke python-run-guard with a Bash command payload. Returns (exit_code, json_output)."""
     runner = CliRunner()
@@ -34,26 +35,30 @@ def _is_deny(out: dict | None) -> bool:
 # Paired + intercept (deny) — foo.py + foo.ipynb staged in tmp_path
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", [
-    "python foo.py",
-    "python3 foo.py",
-    "uv run python foo.py",
-    "uv run -p 3.12 python foo.py",
-    "pixi run python foo.py",
-    "pixi run -e dev python foo.py",
-    "./foo.py",
-    "cd /tmp && python foo.py",
-    # Regression: gaps fixed by tree-sitter parser
-    "python -u foo.py",               # P1: -u flag before .py was missed by regex
-    "FOO=bar python foo.py",          # env-var prefix
-    "A=1 B=2 python foo.py",          # multiple env-var prefixes
-    "conda run python foo.py",        # conda runner wrapper
-    "poetry run python foo.py",       # poetry runner wrapper
-    "env python foo.py",              # env wrapper
-    "nohup python foo.py",            # nohup wrapper
-    "env FOO=bar python foo.py",      # env with inline assignment
-    "conda run -n myenv python foo.py",  # conda with -n flag
-])
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python foo.py",
+        "python3 foo.py",
+        "uv run python foo.py",
+        "uv run -p 3.12 python foo.py",
+        "pixi run python foo.py",
+        "pixi run -e dev python foo.py",
+        "./foo.py",
+        "cd /tmp && python foo.py",
+        # Regression: gaps fixed by tree-sitter parser
+        "python -u foo.py",  # P1: -u flag before .py was missed by regex
+        "FOO=bar python foo.py",  # env-var prefix
+        "A=1 B=2 python foo.py",  # multiple env-var prefixes
+        "conda run python foo.py",  # conda runner wrapper
+        "poetry run python foo.py",  # poetry runner wrapper
+        "env python foo.py",  # env wrapper
+        "nohup python foo.py",  # nohup wrapper
+        "env FOO=bar python foo.py",  # env with inline assignment
+        "conda run -n myenv python foo.py",  # conda with -n flag
+    ],
+)
 def test_paired_intercept(command: str, tmp_path):
     (tmp_path / "foo.py").touch()
     (tmp_path / "foo.ipynb").touch()
@@ -77,11 +82,15 @@ def test_dummy_py_paired_intercept(tmp_path):
 # Unpaired + allow silently — tools.py (no tools.ipynb) in tmp_path
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", [
-    "python tools.py",
-    "uv run python tools.py",
-    "./tools.py",
-])
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python tools.py",
+        "uv run python tools.py",
+        "./tools.py",
+    ],
+)
 def test_unpaired_allow(command: str, tmp_path):
     (tmp_path / "tools.py").touch()
     exit_code, out = _invoke(command, str(tmp_path))
@@ -95,56 +104,61 @@ def test_unpaired_allow(command: str, tmp_path):
 # Stage-1 non-match + allow — even when paired files exist
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", [
-    'python -c "print(1)"',
-    "python -m pytest",
-    "pytest foo.py",
-    "uv run pytest",
-    "pixi run test",
-    "./configure",
-    "./build.sh",
-    "echo 'python foo.py'",
-    "ls -la",
-    # Regression: quoted strings must not produce false positives
-    'echo "python foo.py"',           # double-quoted arg is not a command
-    "bash -c 'python foo.py'",        # single-quoted string inside bash -c
-])
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python -c "print(1)"',
+        "python -m pytest",
+        "pytest foo.py",
+        "uv run pytest",
+        "pixi run test",
+        "./configure",
+        "./build.sh",
+        "echo 'python foo.py'",
+        "ls -la",
+        # Regression: quoted strings must not produce false positives
+        'echo "python foo.py"',  # double-quoted arg is not a command
+        "bash -c 'python foo.py'",  # single-quoted string inside bash -c
+    ],
+)
 def test_non_match_allow(command: str, tmp_path):
     # Stage paired files so the guard *would* fire if the regex matched.
     (tmp_path / "foo.py").touch()
     (tmp_path / "foo.ipynb").touch()
     exit_code, out = _invoke(command, str(tmp_path))
     assert exit_code == 0
-    assert out is None, (
-        f"command={command!r}: expected empty stdout but got {out}"
-    )
+    assert out is None, f"command={command!r}: expected empty stdout but got {out}"
 
 
 # ---------------------------------------------------------------------------
 # Fail-open on malformed stdin
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("raw_input", [
-    "not json at all",
-    "",
-    "null",
-    '{"tool_input": null}',
-    '{"tool_input": {"command": null}}',
-])
+
+@pytest.mark.parametrize(
+    "raw_input",
+    [
+        "not json at all",
+        "",
+        "null",
+        '{"tool_input": null}',
+        '{"tool_input": {"command": null}}',
+    ],
+)
 def test_malformed_stdin_allows(raw_input: str):
     runner = CliRunner()
     result = runner.invoke(
         main, ["_hooks", "python-run-guard"], input=raw_input, catch_exceptions=False
     )
     assert result.exit_code == 0
-    assert result.output.strip() == "", (
-        f"Expected empty stdout for input {raw_input!r}"
-    )
+    assert result.output.strip() == "", f"Expected empty stdout for input {raw_input!r}"
 
 
 # ---------------------------------------------------------------------------
 # Decision shape test
 # ---------------------------------------------------------------------------
+
 
 def test_decision_shape(tmp_path):
     """On intercept, verify the full structure and content of the deny decision."""
@@ -173,15 +187,23 @@ def test_decision_shape(tmp_path):
 # --debug smoke test for python-run-guard
 # ---------------------------------------------------------------------------
 
+
 class TestPythonRunGuardDebug:
     def test_debug_creates_log_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
         import json as _json
         from click.testing import CliRunner as _CliRunner
+
         runner = _CliRunner()
-        payload = _json.dumps({"tool_input": {"command": "python foo.py"}, "cwd": "/tmp"})
-        runner.invoke(main, ["_hooks", "python-run-guard", "--debug"],
-                      input=payload, catch_exceptions=False)
+        payload = _json.dumps(
+            {"tool_input": {"command": "python foo.py"}, "cwd": "/tmp"}
+        )
+        runner.invoke(
+            main,
+            ["_hooks", "python-run-guard", "--debug"],
+            input=payload,
+            catch_exceptions=False,
+        )
         logs = sorted(tmp_path.glob("python-run-guard-*.log"))
         assert len(logs) == 1
         data = _json.loads(logs[0].read_text())

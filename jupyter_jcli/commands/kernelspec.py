@@ -26,7 +26,9 @@ def list_specs(ctx: Context):
             # Table format
             lines = [f"{'NAME':<20} {'DISPLAY_NAME':<20} {'LANGUAGE':<10}"]
             for s in specs:
-                lines.append(f"{s['name']:<20} {s['display_name']:<20} {s['language']:<10}")
+                lines.append(
+                    f"{s['name']:<20} {s['display_name']:<20} {s['language']:<10}"
+                )
             emit({"_human": "\n".join(lines)}, use_json=False)
 
     except Exception as e:

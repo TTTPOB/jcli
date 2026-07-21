@@ -18,9 +18,11 @@ from jupyter_jcli.output import emit, emit_error
 
 class Scope(str, Enum):
     """Target scope for settings files written by setup commands."""
+
     USER = "user"
     PROJECT = "project"
     LOCAL = "local"
+
 
 # ---------------------------------------------------------------------------
 # Managed hook blocks
@@ -64,7 +66,7 @@ _MANAGED_BLOCKS: list[dict] = [
     {
         "event": "PreToolUse",
         "matcher": "NotebookEdit",
-        "platforms": ["claude"],           # Codex has no NotebookEdit tool
+        "platforms": ["claude"],  # Codex has no NotebookEdit tool
         "entry": {
             "type": "command",
             "command": "j-cli _hooks notebook-edit-guard{platform_flag}",
@@ -100,10 +102,7 @@ _MANAGED_BLOCKS: list[dict] = [
 _ALL_MANAGED_VALS: frozenset[str] = frozenset(
     val
     for block in _MANAGED_BLOCKS
-    for val in (
-        {block["entry"][_MANAGED_KEY]}
-        | block["legacy"]
-    )
+    for val in ({block["entry"][_MANAGED_KEY]} | block["legacy"])
 )
 
 
@@ -113,12 +112,31 @@ def setup():
 
 
 @setup.command("claude")
-@click.option("--user",    "scope", flag_value=Scope.USER.value,    help="Write to ~/.claude/settings.json")
-@click.option("--project", "scope", flag_value=Scope.PROJECT.value, help="Write to ./.claude/settings.json")
-@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,   default=True,
-              help="Write to ./.claude/settings.local.json (default, gitignored)")
-@click.option("--remove", is_flag=True, default=False,
-              help="Remove all j-cli managed hooks from the target settings file.")
+@click.option(
+    "--user",
+    "scope",
+    flag_value=Scope.USER.value,
+    help="Write to ~/.claude/settings.json",
+)
+@click.option(
+    "--project",
+    "scope",
+    flag_value=Scope.PROJECT.value,
+    help="Write to ./.claude/settings.json",
+)
+@click.option(
+    "--local",
+    "scope",
+    flag_value=Scope.LOCAL.value,
+    default=True,
+    help="Write to ./.claude/settings.local.json (default, gitignored)",
+)
+@click.option(
+    "--remove",
+    is_flag=True,
+    default=False,
+    help="Remove all j-cli managed hooks from the target settings file.",
+)
 @pass_ctx
 def claude(ctx: Context, scope: str, remove: bool):
     """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
@@ -127,13 +145,28 @@ def claude(ctx: Context, scope: str, remove: bool):
 
 
 @setup.command("codex")
-@click.option("--user",    "scope", flag_value=Scope.USER.value,    help="Write to ~/.codex/hooks.json")
-@click.option("--project", "scope", flag_value=Scope.PROJECT.value, default=True,
-              help="Write to ./.codex/hooks.json (default)")
-@click.option("--local",   "scope", flag_value=Scope.LOCAL.value,
-              help="Alias for --project (Codex has no settings.local.json layer)")
-@click.option("--remove", is_flag=True, default=False,
-              help="Remove all j-cli managed hooks from the target hooks file.")
+@click.option(
+    "--user", "scope", flag_value=Scope.USER.value, help="Write to ~/.codex/hooks.json"
+)
+@click.option(
+    "--project",
+    "scope",
+    flag_value=Scope.PROJECT.value,
+    default=True,
+    help="Write to ./.codex/hooks.json (default)",
+)
+@click.option(
+    "--local",
+    "scope",
+    flag_value=Scope.LOCAL.value,
+    help="Alias for --project (Codex has no settings.local.json layer)",
+)
+@click.option(
+    "--remove",
+    is_flag=True,
+    default=False,
+    help="Remove all j-cli managed hooks from the target hooks file.",
+)
 @pass_ctx
 def codex(ctx: Context, scope: str, remove: bool):
     """Install Codex hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, and pair-drift-guard-post.
@@ -154,14 +187,31 @@ def codex(ctx: Context, scope: str, remove: bool):
 
 
 @setup.command("opencode")
-@click.option("--user", "scope", flag_value=Scope.USER.value,
-              help="Write to ~/.config/opencode/plugins/jcli.js")
-@click.option("--project", "scope", flag_value=Scope.PROJECT.value, default=True,
-              help="Write to ./.opencode/plugins/jcli.js (default)")
-@click.option("--local", "scope", flag_value=Scope.LOCAL.value,
-              help="Alias for --project (OpenCode has no local plugin layer)")
-@click.option("--remove", is_flag=True, default=False,
-              help="Remove the j-cli managed OpenCode plugin.")
+@click.option(
+    "--user",
+    "scope",
+    flag_value=Scope.USER.value,
+    help="Write to ~/.config/opencode/plugins/jcli.js",
+)
+@click.option(
+    "--project",
+    "scope",
+    flag_value=Scope.PROJECT.value,
+    default=True,
+    help="Write to ./.opencode/plugins/jcli.js (default)",
+)
+@click.option(
+    "--local",
+    "scope",
+    flag_value=Scope.LOCAL.value,
+    help="Alias for --project (OpenCode has no local plugin layer)",
+)
+@click.option(
+    "--remove",
+    is_flag=True,
+    default=False,
+    help="Remove the j-cli managed OpenCode plugin.",
+)
 @pass_ctx
 def opencode(ctx: Context, scope: str, remove: bool) -> None:
     """Install the OpenCode plugin for notebook guards and pair synchronization."""
@@ -253,6 +303,7 @@ def _install_or_remove(platform: str, path: Path, remove: bool, ctx: Context) ->
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _ensure_codex_feature_flag(path: Path) -> None:
     """Check that codex_hooks feature flag is enabled in a .codex/config.toml.
@@ -493,8 +544,12 @@ def _remove_managed_hooks(settings: dict) -> int:
                 continue
             inner = block.get("hooks", [])
             new_inner = [
-                entry for entry in inner
-                if not (isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS)
+                entry
+                for entry in inner
+                if not (
+                    isinstance(entry, dict)
+                    and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS
+                )
             ]
             removed += len(inner) - len(new_inner)
             if new_inner:
@@ -510,9 +565,7 @@ def _remove_managed_hooks(settings: dict) -> int:
 # ---------------------------------------------------------------------------
 
 _GITIGNORE_BLOCK = (
-    "# >>> jcli managed (git hooks) >>>\n"
-    "*.ipynb\n"
-    "# <<< jcli managed (git hooks) <<<\n"
+    "# >>> jcli managed (git hooks) >>>\n*.ipynb\n# <<< jcli managed (git hooks) <<<\n"
 )
 
 _GITIGNORE_BLOCK_RE = re.compile(
@@ -523,7 +576,9 @@ _GITIGNORE_BLOCK_RE = re.compile(
 
 def _inject_gitignore_block(gitignore_path: Path) -> None:
     """Inject or idempotently replace the jcli managed block in .gitignore."""
-    content = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    content = (
+        gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    )
 
     if _GITIGNORE_BLOCK_RE.search(content):
         new_content = _GITIGNORE_BLOCK_RE.sub(lambda _: _GITIGNORE_BLOCK, content)
@@ -560,25 +615,38 @@ def _clean_gitignore_block(path: Path) -> bool:
 # setup git
 # ---------------------------------------------------------------------------
 
+
 @setup.command("git")
 @click.option(
-    "--local", "scope", flag_value=Scope.LOCAL.value,
+    "--local",
+    "scope",
+    flag_value=Scope.LOCAL.value,
     help="Write to .git/hooks/pre-commit (this clone only).",
 )
 @click.option(
-    "--project", "scope", flag_value=Scope.PROJECT.value, default=True,
+    "--project",
+    "scope",
+    flag_value=Scope.PROJECT.value,
+    default=True,
     help="Write to .githooks/pre-commit and set core.hooksPath (default).",
 )
 @click.option(
-    "--include", "include_globs", multiple=True, metavar="GLOB",
+    "--include",
+    "include_globs",
+    multiple=True,
+    metavar="GLOB",
     help="Only sync .py files matching this glob (repeatable; written into hook shim).",
 )
 @click.option(
-    "--remove", is_flag=True, default=False,
+    "--remove",
+    is_flag=True,
+    default=False,
     help="Remove j-cli managed git hooks and the managed .gitignore block.",
 )
 @pass_ctx
-def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: bool) -> None:
+def git_setup(
+    ctx: Context, scope: str, include_globs: tuple[str, ...], remove: bool
+) -> None:
     """Install the pre-commit pair-sync hook and update .gitignore."""
 
     if os.name == "nt":
@@ -593,7 +661,9 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
     try:
         top = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if top.returncode != 0:
             emit_error(
@@ -633,14 +703,19 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
             try:
                 current = subprocess.run(
                     ["git", "config", "--local", "--get", "core.hooksPath"],
-                    capture_output=True, text=True, check=False,
+                    capture_output=True,
+                    text=True,
+                    check=False,
                     cwd=str(repo_root),
                 )
-                current_val = current.stdout.strip() if current.returncode == 0 else None
+                current_val = (
+                    current.stdout.strip() if current.returncode == 0 else None
+                )
                 if current_val == ".githooks":
                     subprocess.run(
                         ["git", "config", "--local", "--unset", "core.hooksPath"],
-                        check=True, cwd=str(repo_root),
+                        check=True,
+                        cwd=str(repo_root),
                     )
                     hookspath_unset = True
                 elif current_val:
@@ -663,8 +738,8 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
                 "hookspath_unset": hookspath_unset,
                 "_human": (
                     f"Removed git hook installation from {repo_root}."
-                    if not noop else
-                    f"Nothing to remove in {repo_root}."
+                    if not noop
+                    else f"Nothing to remove in {repo_root}."
                 ),
             },
             ctx.use_json,
@@ -700,7 +775,9 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
         try:
             old = subprocess.run(
                 ["git", "config", "--local", "--get", "core.hooksPath"],
-                capture_output=True, text=True, check=False,
+                capture_output=True,
+                text=True,
+                check=False,
                 cwd=str(repo_root),
             )
             old_val = old.stdout.strip() if old.returncode == 0 else ""
@@ -711,7 +788,8 @@ def git_setup(ctx: Context, scope: str, include_globs: tuple[str, ...], remove: 
                 )
             subprocess.run(
                 ["git", "config", "--local", "core.hooksPath", ".githooks"],
-                check=True, cwd=str(repo_root),
+                check=True,
+                cwd=str(repo_root),
             )
         except (OSError, FileNotFoundError):
             emit_error(

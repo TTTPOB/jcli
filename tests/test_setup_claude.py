@@ -14,6 +14,7 @@ from jupyter_jcli.commands.setup_cmd import Scope
 # Scope enum behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestScopeEnum:
     def test_members_exist(self):
         assert Scope.USER == "user"
@@ -31,6 +32,7 @@ class TestScopeEnum:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _invoke(runner: CliRunner, args: list[str]):
     return runner.invoke(main, ["setup", "claude"] + args, catch_exceptions=False)
@@ -52,6 +54,7 @@ def _has_hook(settings: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Scope routing
 # ---------------------------------------------------------------------------
+
 
 class TestScopeRouting:
     def test_local_is_default(self, tmp_path, monkeypatch):
@@ -102,6 +105,7 @@ class TestScopeRouting:
 # ---------------------------------------------------------------------------
 # Merge / de-dupe
 # ---------------------------------------------------------------------------
+
 
 class TestMerge:
     def test_idempotent_no_duplicate(self, tmp_path, monkeypatch):
@@ -163,7 +167,11 @@ class TestMerge:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "old-command", "_jcli_managed": "notebook-exec-guard"},
+                            {
+                                "type": "command",
+                                "command": "old-command",
+                                "_jcli_managed": "notebook-exec-guard",
+                            },
                             {"type": "command", "command": "other-hook"},
                         ],
                     }
@@ -184,7 +192,9 @@ class TestMerge:
             for e in block.get("hooks", [])
         ]
         # notebook-exec-guard updated, not duplicated
-        managed = [e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"]
+        managed = [
+            e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"
+        ]
         assert len(managed) == 1
         assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
         # other-hook preserved
@@ -206,8 +216,11 @@ class TestMerge:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
-                             "_jcli_managed": "nbconvert-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks nbconvert-guard",
+                                "_jcli_managed": "nbconvert-guard",
+                            },
                             {"type": "command", "command": "other-hook"},
                         ],
                     }
@@ -230,7 +243,9 @@ class TestMerge:
         # Legacy entry gone, replaced by current name (exactly once).
         assert not any(e.get("_jcli_managed") == "nbconvert-guard" for e in all_entries)
         assert _has_hook(result)
-        managed = [e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"]
+        managed = [
+            e for e in all_entries if e.get("_jcli_managed") == "notebook-exec-guard"
+        ]
         assert len(managed) == 1
         assert managed[0]["command"] == "j-cli _hooks notebook-exec-guard"
         # Unrelated hook preserved.
@@ -248,13 +263,23 @@ class TestMerge:
                 "PreToolUse": [
                     {
                         "matcher": "Bash",
-                        "hooks": [{"type": "command", "command": "j-cli _hooks nbconvert-guard",
-                                   "_jcli_managed": "nbconvert-guard"}],
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks nbconvert-guard",
+                                "_jcli_managed": "nbconvert-guard",
+                            }
+                        ],
                     },
                     {
                         "matcher": "Bash",
-                        "hooks": [{"type": "command", "command": "j-cli _hooks notebook-exec-guard",
-                                   "_jcli_managed": "notebook-exec-guard"}],
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks notebook-exec-guard",
+                                "_jcli_managed": "notebook-exec-guard",
+                            }
+                        ],
                     },
                 ]
             }
@@ -285,7 +310,9 @@ class TestMerge:
         runner = CliRunner()
         result = runner.invoke(main, ["setup", "claude", "--local"])
         assert result.exit_code == 1
-        assert "SETTINGS_INVALID" in result.output or "SETTINGS_INVALID" in (result.stderr or "")
+        assert "SETTINGS_INVALID" in result.output or "SETTINGS_INVALID" in (
+            result.stderr or ""
+        )
 
     def test_empty_existing_file(self, tmp_path, monkeypatch):
         """An empty file is treated the same as a missing file."""
@@ -305,6 +332,7 @@ class TestMerge:
 # JSON output mode
 # ---------------------------------------------------------------------------
 
+
 class TestJsonMode:
     def test_json_output(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -321,6 +349,7 @@ class TestJsonMode:
 # ---------------------------------------------------------------------------
 # Three-block installation (new blocks for pair-drift-guard-pre)
 # ---------------------------------------------------------------------------
+
 
 def _count_managed(settings: dict, val: str) -> int:
     """Count managed entries across all event types (PreToolUse, PostToolUse, …)."""
@@ -363,9 +392,9 @@ class TestThreeBlocks:
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
 
         # PreToolUse blocks
-        assert _has_hook(settings)                        # notebook-exec-guard on Bash
-        assert _has_matcher_pre(settings, "Edit|Write")   # pair-drift-guard-pre
-        assert _has_matcher_pre(settings, "NotebookEdit") # notebook-edit-guard
+        assert _has_hook(settings)  # notebook-exec-guard on Bash
+        assert _has_matcher_pre(settings, "Edit|Write")  # pair-drift-guard-pre
+        assert _has_matcher_pre(settings, "NotebookEdit")  # notebook-edit-guard
         assert _count_managed(settings, "pair-drift-guard-pre") == 1
         assert _count_managed(settings, "notebook-edit-guard") == 1
         assert _count_managed(settings, "python-run-guard") == 1
@@ -402,8 +431,8 @@ class TestThreeBlocks:
 
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
         expected = {
-            "pair-drift-guard-pre":  "j-cli _hooks pair-drift-guard-pre",
-            "notebook-edit-guard":   "j-cli _hooks notebook-edit-guard",
+            "pair-drift-guard-pre": "j-cli _hooks pair-drift-guard-pre",
+            "notebook-edit-guard": "j-cli _hooks notebook-edit-guard",
             "pair-drift-guard-post": "j-cli _hooks pair-drift-guard-post",
         }
         for event_key in ("PreToolUse", "PostToolUse"):
@@ -426,14 +455,19 @@ class TestThreeBlocks:
                     {
                         "matcher": "NotebookEdit",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks pair-drift-guard",
-                             "_jcli_managed": "pair-drift-guard-notebook"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks pair-drift-guard",
+                                "_jcli_managed": "pair-drift-guard-notebook",
+                            },
                         ],
                     }
                 ]
             }
         }
-        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+        (claude_dir / "settings.local.json").write_text(
+            json.dumps(existing), encoding="utf-8"
+        )
 
         runner = CliRunner()
         _invoke(runner, ["--local"])
@@ -456,14 +490,19 @@ class TestThreeBlocks:
                     {
                         "matcher": "Edit|Write",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks pair-drift-guard",
-                             "_jcli_managed": "pair-drift-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks pair-drift-guard",
+                                "_jcli_managed": "pair-drift-guard",
+                            },
                         ],
                     }
                 ]
             }
         }
-        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+        (claude_dir / "settings.local.json").write_text(
+            json.dumps(existing), encoding="utf-8"
+        )
 
         runner = CliRunner()
         _invoke(runner, ["--local"])
@@ -489,14 +528,19 @@ class TestThreeBlocks:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
-                             "_jcli_managed": "nbconvert-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks nbconvert-guard",
+                                "_jcli_managed": "nbconvert-guard",
+                            },
                         ],
                     }
                 ]
             }
         }
-        (claude_dir / "settings.local.json").write_text(json.dumps(existing), encoding="utf-8")
+        (claude_dir / "settings.local.json").write_text(
+            json.dumps(existing), encoding="utf-8"
+        )
 
         runner = CliRunner()
         _invoke(runner, ["--local"])
@@ -512,6 +556,7 @@ class TestThreeBlocks:
 # ---------------------------------------------------------------------------
 # --remove flag
 # ---------------------------------------------------------------------------
+
 
 class TestRemove:
     def test_remove_after_install_deletes_file(self, tmp_path, monkeypatch):
@@ -534,12 +579,18 @@ class TestRemove:
         existing = {
             "hooks": {
                 "PreToolUse": [
-                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                    {
+                        "matcher": "Read",
+                        "hooks": [{"type": "command", "command": "echo read"}],
+                    },
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
-                             "_jcli_managed": "notebook-exec-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks notebook-exec-guard",
+                                "_jcli_managed": "notebook-exec-guard",
+                            },
                             {"type": "command", "command": "user-hook"},
                         ],
                     },
@@ -558,11 +609,12 @@ class TestRemove:
         pre = settings["hooks"]["PreToolUse"]
         assert any(b.get("matcher") == "Read" for b in pre)
         bash_entries = [
-            e for b in pre if b.get("matcher") == "Bash"
-            for e in b.get("hooks", [])
+            e for b in pre if b.get("matcher") == "Bash" for e in b.get("hooks", [])
         ]
         assert any(e.get("command") == "user-hook" for e in bash_entries)
-        assert not any(e.get("_jcli_managed") == "notebook-exec-guard" for e in bash_entries)
+        assert not any(
+            e.get("_jcli_managed") == "notebook-exec-guard" for e in bash_entries
+        )
 
     def test_remove_preserves_other_top_level_keys(self, tmp_path, monkeypatch):
         """Non-hook top-level keys (permissions, env) survive the remove operation."""
@@ -577,8 +629,11 @@ class TestRemove:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
-                             "_jcli_managed": "notebook-exec-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks notebook-exec-guard",
+                                "_jcli_managed": "notebook-exec-guard",
+                            },
                         ],
                     }
                 ]
@@ -607,8 +662,11 @@ class TestRemove:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks nbconvert-guard",
-                             "_jcli_managed": "nbconvert-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks nbconvert-guard",
+                                "_jcli_managed": "nbconvert-guard",
+                            },
                         ],
                     }
                 ]
@@ -626,7 +684,9 @@ class TestRemove:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "claude", "--local", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -640,7 +700,10 @@ class TestRemove:
         existing = {
             "hooks": {
                 "PreToolUse": [
-                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                    {
+                        "matcher": "Read",
+                        "hooks": [{"type": "command", "command": "echo read"}],
+                    },
                 ]
             }
         }
@@ -649,7 +712,9 @@ class TestRemove:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "claude", "--local", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -689,7 +754,9 @@ class TestRemove:
         runner = CliRunner()
         _invoke(runner, ["--local"])
         result = runner.invoke(
-            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "claude", "--local", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -705,12 +772,18 @@ class TestRemove:
         existing = {
             "hooks": {
                 "PreToolUse": [
-                    {"matcher": "Read", "hooks": [{"type": "command", "command": "echo read"}]},
+                    {
+                        "matcher": "Read",
+                        "hooks": [{"type": "command", "command": "echo read"}],
+                    },
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks notebook-exec-guard",
-                             "_jcli_managed": "notebook-exec-guard"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks notebook-exec-guard",
+                                "_jcli_managed": "notebook-exec-guard",
+                            },
                         ],
                     },
                 ]
@@ -740,8 +813,11 @@ class TestRemove:
                     {
                         "matcher": "Edit|Write",
                         "hooks": [
-                            {"type": "command", "command": "j-cli _hooks pair-drift-guard-post",
-                             "_jcli_managed": "pair-drift-guard-post"},
+                            {
+                                "type": "command",
+                                "command": "j-cli _hooks pair-drift-guard-post",
+                                "_jcli_managed": "pair-drift-guard-post",
+                            },
                         ],
                     },
                 ],
@@ -758,7 +834,9 @@ class TestRemove:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "claude", "--local", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "claude", "--local", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)

@@ -6,13 +6,20 @@ import json
 
 import pytest
 
-from jupyter_jcli._enums import CellType, DriftStatus, MergeMode, OutputType, ResponseStatus
+from jupyter_jcli._enums import (
+    CellType,
+    DriftStatus,
+    MergeMode,
+    OutputType,
+    ResponseStatus,
+)
 from jupyter_jcli.drift import DriftResult
 
 
 # ---------------------------------------------------------------------------
 # DriftStatus
 # ---------------------------------------------------------------------------
+
 
 class TestDriftStatus:
     def test_members_exist(self):
@@ -56,6 +63,7 @@ class TestDriftStatus:
 # CellType
 # ---------------------------------------------------------------------------
 
+
 class TestMergeMode:
     def test_members_exist(self):
         assert MergeMode.THREE_WAY
@@ -76,6 +84,7 @@ class TestMergeMode:
 
     def test_drift_result_defaults_to_three_way(self):
         from jupyter_jcli.drift import DriftResult
+
         r = DriftResult(status="in_sync")
         assert r.merge_mode is MergeMode.THREE_WAY
 
@@ -107,6 +116,7 @@ class TestCellType:
 # OutputType
 # ---------------------------------------------------------------------------
 
+
 class TestOutputType:
     def test_members_exist(self):
         assert OutputType.STREAM
@@ -131,6 +141,7 @@ class TestOutputType:
 # ---------------------------------------------------------------------------
 # ResponseStatus
 # ---------------------------------------------------------------------------
+
 
 class TestResponseStatus:
     def test_members_exist(self):

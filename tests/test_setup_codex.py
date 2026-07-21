@@ -187,9 +187,7 @@ class TestCodexRemove:
                 ]
             }
         }
-        (codex_dir / "hooks.json").write_text(
-            json.dumps(existing), encoding="utf-8"
-        )
+        (codex_dir / "hooks.json").write_text(json.dumps(existing), encoding="utf-8")
         runner = CliRunner()
         _invoke(runner, ["--local", "--remove"])
         settings = _read_json(codex_dir / "hooks.json")
@@ -212,7 +210,8 @@ class TestCodexJsonOutput:
         runner = CliRunner()
         _invoke(runner, ["--local"])
         result = runner.invoke(
-            main, ["--json", "setup", "codex", "--local", "--remove"],
+            main,
+            ["--json", "setup", "codex", "--local", "--remove"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0

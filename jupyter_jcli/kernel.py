@@ -37,6 +37,7 @@ def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
     kernel and exits.  Claude Code sends SIGINT on Esc and waits ~10 s
     before escalating to SIGKILL, so we have a window for cleanup.
     """
+
     def handler(signum: int, _frame) -> None:
         # Second signal → instant death (don't wait for the HTTP round-trip)
         signal.signal(signum, signal.SIG_DFL)
@@ -82,7 +83,9 @@ def _drain_iopub(client) -> None:
             return
 
 
-def _wait_for_kernel_websocket_ready(kernel: KernelClient, timeout: float | None = 30) -> None:
+def _wait_for_kernel_websocket_ready(
+    kernel: KernelClient, timeout: float | None = 30
+) -> None:
     """Wait until this WebSocket can round-trip shell messages.
 
     Jupyter Server finishes a server-side nudge before subscribing ZMQ
@@ -184,7 +187,9 @@ def _start_ready_kernel_connection(
             raise
         return kernel
 
-    raise TimeoutError(f"Kernel didn't respond {_format_timeout(timeout)}") from last_timeout
+    raise TimeoutError(
+        f"Kernel didn't respond {_format_timeout(timeout)}"
+    ) from last_timeout
 
 
 @contextmanager
@@ -207,7 +212,9 @@ def kernel_connection(server_url: str, token: str | None, kernel_id: str):
 
 
 @contextmanager
-def expression_display_mode(kernel: KernelClient, display_mode: str, timeout: float = 10):
+def expression_display_mode(
+    kernel: KernelClient, display_mode: str, timeout: float = 10
+):
     """Temporarily configure how IPython displays top-level expressions."""
     state_attr = f"_jcli_ast_node_interactivity_{uuid4().hex}"
     setup_result = execute_with_timeout(
@@ -220,7 +227,9 @@ def expression_display_mode(kernel: KernelClient, display_mode: str, timeout: fl
         store_history=False,
     )
     if setup_result.get("status") != "ok":
-        raise RuntimeError(f"Kernel failed to enable IPython display mode {display_mode!r}")
+        raise RuntimeError(
+            f"Kernel failed to enable IPython display mode {display_mode!r}"
+        )
 
     active_error: BaseException | None = None
     try:

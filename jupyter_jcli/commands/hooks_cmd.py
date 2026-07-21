@@ -111,13 +111,15 @@ def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
     enforces this guarantee.
     """
     _MARKER = r"\*{3}|\*{2}_"  # both "*** " and "**_ " (legacy prompt)
-    _DIRECTIVE = rf'^(?:{_MARKER}) (?:Update|Add|Delete) File: |^(?:{_MARKER}) Move to: '
+    _DIRECTIVE = (
+        rf"^(?:{_MARKER}) (?:Update|Add|Delete) File: |^(?:{_MARKER}) Move to: "
+    )
     paths: list[str] = []
     for line in patch_text.splitlines():
         m = re.match(_DIRECTIVE, line)
         if not m:
             continue
-        paths.append(line[m.end():].strip())
+        paths.append(line[m.end() :].strip())
     return paths
 
 
@@ -146,9 +148,8 @@ def _check_exec_guard(sc) -> str | None:
         rest = args[1:]
         if rest and rest[0] == "jupyter":
             from jupyter_jcli.hooks_parser import SimpleCommand
-            inner = SimpleCommand(
-                name="jupyter", args=rest[1:], assigns={}, raw=sc.raw
-            )
+
+            inner = SimpleCommand(name="jupyter", args=rest[1:], assigns={}, raw=sc.raw)
             return _check_exec_guard(inner)
         return None
 
@@ -169,10 +170,14 @@ def _check_exec_guard(sc) -> str | None:
 
 
 @hooks.command("notebook-exec-guard")
-@click.option("--platform", default="claude",
-              help="Agent platform: claude or codex")
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.")
+@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.",
+)
 def nbconvert_guard(platform: str, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
     with HookDebugLogger("notebook-exec-guard", enabled=debug) as log:
@@ -202,7 +207,12 @@ def nbconvert_guard(platform: str, debug: bool):
             inner = unwrap_runner(sc)
             label = _check_exec_guard(inner)
             if label is not None:
-                _emit_decision(PreToolUseDecision(PreToolUseOutcome.DENY, _HINT.format(label=label)), logger=log)
+                _emit_decision(
+                    PreToolUseDecision(
+                        PreToolUseOutcome.DENY, _HINT.format(label=label)
+                    ),
+                    logger=log,
+                )
                 sys.exit(0)
 
         sys.exit(0)
@@ -230,10 +240,14 @@ _PYTHON_HINT = (
 
 
 @hooks.command("python-run-guard")
-@click.option("--platform", default="claude",
-              help="Agent platform: claude or codex")
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.")
+@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.",
+)
 def python_run_guard(platform: str, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
     with HookDebugLogger("python-run-guard", enabled=debug) as log:
@@ -255,7 +269,11 @@ def python_run_guard(platform: str, debug: bool):
 
         cwd_path = Path(cwd) if cwd else Path.cwd()
 
-        from jupyter_jcli.hooks_parser import extract_script_target, iter_simple_commands, unwrap_runner
+        from jupyter_jcli.hooks_parser import (
+            extract_script_target,
+            iter_simple_commands,
+            unwrap_runner,
+        )
         from jupyter_jcli.parser import find_paired_ipynb
 
         try:
@@ -298,11 +316,16 @@ def python_run_guard(platform: str, debug: bool):
 # pair-drift-guard-pre  (PreToolUse — detects drift that existed before agent's edit)
 # ---------------------------------------------------------------------------
 
+
 @hooks.command("pair-drift-guard-pre")
-@click.option("--platform", default="claude",
-              help="Agent platform: claude or codex")
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.")
+@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.",
+)
 def pair_drift_guard_pre(platform: str, debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
     if platform == "codex":
@@ -434,9 +457,13 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
 
     try:
         from jupyter_jcli.drift import check_drift
+
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
-        print("pair-drift-guard-pre: non-UTF-8 content, skipping drift check", file=sys.stderr)
+        print(
+            "pair-drift-guard-pre: non-UTF-8 content, skipping drift check",
+            file=sys.stderr,
+        )
         return None
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
@@ -492,7 +519,9 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
     return None
 
 
-def _prepare_merged_py(py_path: Path, merged_cells, logger=None) -> tuple[str | None, str | None]:
+def _prepare_merged_py(
+    py_path: Path, merged_cells, logger=None
+) -> tuple[str | None, str | None]:
     try:
         from jupyter_jcli.canonicalize import canonicalize_py_text
         from jupyter_jcli.pair_io import emit_py_percent
@@ -537,7 +566,9 @@ def _apply_merge_and_decide(
     if result.py_needs_update:
         try:
             if merged_py_text is None:
-                merged_py_text, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+                merged_py_text, canonical_merged_py = _prepare_merged_py(
+                    py_path, result.merged_cells, logger
+                )
             if merged_py_text is None:
                 raise RuntimeError("could not prepare merged py text")
             if py_path.read_bytes() == target_before or py_path != target:
@@ -553,7 +584,10 @@ def _apply_merge_and_decide(
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
-            print(f"pair-drift-guard-pre: could not write {py_path.name}: {exc}", file=sys.stderr)
+            print(
+                f"pair-drift-guard-pre: could not write {py_path.name}: {exc}",
+                file=sys.stderr,
+            )
 
     if result.ipynb_needs_update:
         try:
@@ -570,11 +604,16 @@ def _apply_merge_and_decide(
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
-            print(f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}", file=sys.stderr)
+            print(
+                f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}",
+                file=sys.stderr,
+            )
 
     if synced:
         if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+            _, canonical_merged_py = _prepare_merged_py(
+                py_path, result.merged_cells, logger
+            )
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
 
@@ -623,7 +662,11 @@ def _diff_section(diff_text: str, py_name: str = "") -> str:
     if not diff_text:
         return ""
     if len(diff_text) > _MAX_DIFF_CHARS:
-        hint = f"\n... (truncated; run: git diff -- {py_name})" if py_name else "\n... (truncated)"
+        hint = (
+            f"\n... (truncated; run: git diff -- {py_name})"
+            if py_name
+            else "\n... (truncated)"
+        )
         diff_text = diff_text[:_MAX_DIFF_CHARS] + hint
     return "\n\n" + diff_text
 
@@ -632,11 +675,16 @@ def _diff_section(diff_text: str, py_name: str = "") -> str:
 # notebook-edit-guard  (PreToolUse — hard-deny NotebookEdit)
 # ---------------------------------------------------------------------------
 
+
 @hooks.command("notebook-edit-guard")
-@click.option("--platform", default="claude",
-              help="Agent platform: claude or codex")
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.")
+@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.",
+)
 def notebook_edit_guard(platform: str, debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
     # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
@@ -676,11 +724,16 @@ def notebook_edit_guard(platform: str, debug: bool) -> None:
 # pair-drift-guard-post  (PostToolUse — auto-sync pair after agent's own edit)
 # ---------------------------------------------------------------------------
 
+
 @hooks.command("pair-drift-guard-post")
-@click.option("--platform", default="claude",
-              help="Agent platform: claude or codex")
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.")
+@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.",
+)
 def pair_drift_guard_post(platform: str, debug: bool) -> None:
     """PostToolUse hook: auto-sync py/ipynb pair after agent's own edit."""
     if platform == "codex":
@@ -758,7 +811,9 @@ def _pair_drift_guard_post_codex(debug: bool) -> None:
                     contexts.append(context_str)
             except Exception as exc:  # noqa: BLE001
                 log.record_exception(exc)
-                print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+                print(
+                    f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr
+                )
 
         if contexts:
             merged = _merge_post_contexts(contexts)
@@ -808,6 +863,7 @@ def _run_post_drift_check(path: Path, logger=None) -> str | None:
 
     try:
         from jupyter_jcli.drift import check_drift
+
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
         print("pair-drift-guard-post: non-UTF-8 content, skipping", file=sys.stderr)
@@ -899,7 +955,9 @@ def _sync_pair_after_edit(
     if result.py_needs_update and (py_path != edited or both_sides_need_update):
         try:
             if merged_py_text is None:
-                merged_py_text, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+                merged_py_text, canonical_merged_py = _prepare_merged_py(
+                    py_path, result.merged_cells, logger
+                )
             if merged_py_text is None:
                 raise RuntimeError("could not prepare merged py text")
             py_path.write_text(merged_py_text, encoding="utf-8")
@@ -915,7 +973,9 @@ def _sync_pair_after_edit(
     synced = ipynb_converged and py_converged
     if synced:
         if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py(py_path, result.merged_cells, logger)
+            _, canonical_merged_py = _prepare_merged_py(
+                py_path, result.merged_cells, logger
+            )
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced:
@@ -928,8 +988,12 @@ def _sync_pair_after_edit(
                 )
                 from jupyter_jcli.parser import parse_py_percent_text
 
-                baseline = parse_py_percent_text(old_baseline_text, source_path=str(py_path))
-                current = parse_py_percent_text(canonical_merged_py, source_path=str(py_path))
+                baseline = parse_py_percent_text(
+                    old_baseline_text, source_path=str(py_path)
+                )
+                current = parse_py_percent_text(
+                    canonical_merged_py, source_path=str(py_path)
+                )
                 summary_text = format_summary_human(
                     build_summary_data(current, diff_cells(baseline, current)),
                     max_cells=_HOOK_SUMMARY_MAX_CELLS,
@@ -952,13 +1016,22 @@ def _sync_pair_after_edit(
 # pre-commit-pair-sync
 # ---------------------------------------------------------------------------
 
+
 @hooks.command("pre-commit-pair-sync")
 @click.option(
-    "--include", "include_globs", multiple=True, metavar="GLOB",
+    "--include",
+    "include_globs",
+    multiple=True,
+    metavar="GLOB",
     help="Only process .py files matching this glob (repeatable).",
 )
-@click.option("--debug", "debug", is_flag=True, default=False,
-              help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pre-commit-pair-sync-{ts}.log.")
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    default=False,
+    help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pre-commit-pair-sync-{ts}.log.",
+)
 def pre_commit_pair_sync(include_globs: tuple[str, ...], debug: bool) -> None:
     """Git pre-commit hook: sync py/ipynb pairs before commit."""
     with HookDebugLogger("pre-commit-pair-sync", enabled=debug) as _log:
@@ -972,7 +1045,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
     try:
         top = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if top.returncode != 0:
             print("pre-commit-pair-sync: not in a git repo, skipping", file=sys.stderr)
@@ -988,7 +1063,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
     try:
         diff = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
             cwd=str(repo_root),
         )
         if diff.returncode != 0:
@@ -1023,7 +1100,8 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
     staged_py_rel = [p for p in staged_rel if p.endswith(".py")]
     if include_globs:
         staged_py_rel = [
-            p for p in staged_py_rel
+            p
+            for p in staged_py_rel
             if any(fnmatch.fnmatch(p, g) for g in include_globs)
         ]
 
@@ -1050,13 +1128,15 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             try:
                 from jupyter_jcli.parser import parse_ipynb
                 from jupyter_jcli.pair_io import emit_py_percent
+
                 parsed_nb = parse_ipynb(str(ipynb_path))
                 py_text = emit_py_percent(parsed_nb)
                 py_path.parent.mkdir(parents=True, exist_ok=True)
                 py_path.write_text(py_text, encoding="utf-8")
                 subprocess.run(
                     ["git", "add", str(py_path)],
-                    check=False, cwd=str(repo_root),
+                    check=False,
+                    cwd=str(repo_root),
                 )
                 updated_py.append(rel_path)
                 print(
@@ -1084,6 +1164,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         # Drift check (fail-closed for decode/format errors)
         try:
             from jupyter_jcli.drift import check_drift
+
             result = check_drift(py_path, ipynb_path)
         except UnicodeDecodeError:
             print(
@@ -1107,6 +1188,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                 try:
                     from jupyter_jcli.parser import parse_py_percent, ParsedFile
                     from jupyter_jcli.pair_io import emit_py_percent
+
                     py_parsed = parse_py_percent(str(py_path))
                     merged_parsed = ParsedFile(
                         kernel_name=py_parsed.kernel_name,
@@ -1117,7 +1199,8 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                     py_path.write_text(emit_py_percent(merged_parsed), encoding="utf-8")
                     subprocess.run(
                         ["git", "add", str(py_path)],
-                        check=False, cwd=str(repo_root),
+                        check=False,
+                        cwd=str(repo_root),
                     )
                     updated_py.append(rel_path)
                 except Exception as exc:  # noqa: BLE001
@@ -1129,6 +1212,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             if result.ipynb_needs_update:
                 try:
                     from jupyter_jcli.pair_io import update_ipynb_sources
+
                     update_ipynb_sources(ipynb_path, result.merged_cells)
                     try:
                         ipynb_rel = str(ipynb_path.relative_to(repo_root))
@@ -1148,7 +1232,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
                 ipynb_rel = str(ipynb_path)
-            conflicts.append((rel_path, ipynb_rel, result.conflict_indices, result.diff_text))
+            conflicts.append(
+                (rel_path, ipynb_rel, result.conflict_indices, result.diff_text)
+            )
             continue
 
         if result.status == DriftStatus.DRIFT_ONLY:
@@ -1213,7 +1299,12 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
 
 
 @hooks.command("gc-pair-sync-refs")
-@click.option("--dry-run", is_flag=True, default=False, help="Report stale refs without deleting them.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Report stale refs without deleting them.",
+)
 def gc_pair_sync_refs(dry_run: bool) -> None:
     """Delete stale sticky pair-sync refs under refs/jcli/pair-sync."""
     from jupyter_jcli import pair_baseline

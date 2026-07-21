@@ -11,7 +11,9 @@ from jupyter_jcli.cli import main
 def test_version_uses_installed_distribution_metadata():
     expected = version("jupyter-jcli")
     runner = CliRunner()
-    result = runner.invoke(main, ["--version"], prog_name="j-cli", catch_exceptions=False)
+    result = runner.invoke(
+        main, ["--version"], prog_name="j-cli", catch_exceptions=False
+    )
 
     assert result.exit_code == 0
     assert "j-cli" in result.output

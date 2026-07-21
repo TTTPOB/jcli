@@ -7,8 +7,11 @@ from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_d
 
 def _py_text(*sources: str, kernel: str = "python3") -> str:
     lines = [
-        "# ---\n", "# jupyter:\n", "#   kernelspec:\n",
-        f"#     name: {kernel}\n", "# ---\n\n",
+        "# ---\n",
+        "# jupyter:\n",
+        "#   kernelspec:\n",
+        f"#     name: {kernel}\n",
+        "# ---\n\n",
     ]
     for src in sources:
         lines.append(f"# %%\n{src}\n\n")
@@ -26,7 +29,9 @@ class TestRenderNoBaselineDiff:
     def test_includes_labels(self):
         ours = _py_text("x = 1")
         theirs = _py_text("x = 2")
-        diff = render_no_baseline_diff(ours, theirs, ours_label="py", theirs_label="ipynb")
+        diff = render_no_baseline_diff(
+            ours, theirs, ours_label="py", theirs_label="ipynb"
+        )
         assert "py" in diff
         assert "ipynb" in diff
 

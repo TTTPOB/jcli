@@ -20,12 +20,14 @@ from typing import Protocol
 class HookEvent(str, Enum):
     """Hook event names (used by Claude Code and Codex) — single source of truth
     for the wire strings that appear in payload's hookEventName field."""
+
     PRE_TOOL_USE = "PreToolUse"
     POST_TOOL_USE = "PostToolUse"
 
 
 class PreToolUseOutcome(str, Enum):
     """Valid values for PreToolUse permissionDecision."""
+
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
@@ -33,6 +35,7 @@ class PreToolUseOutcome(str, Enum):
 
 class HookDecision(Protocol):
     """Anything that serializes to an agent hook JSON payload."""
+
     def to_payload(self) -> dict: ...
 
 
@@ -43,6 +46,7 @@ class PreToolUseDecision:
     - ALLOW/ASK: reason shown to the user
     - DENY:      reason shown to the agent (fed into its context)
     """
+
     outcome: PreToolUseOutcome
     reason: str
 
@@ -64,6 +68,7 @@ class PostToolUseContext:
     Used for both "paired file auto-synced" and "paired file drifted,
     someone else may have edited it" notifications.
     """
+
     context: str
 
     def to_payload(self) -> dict:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -17,17 +16,22 @@ from jupyter_jcli.cli import main
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def git_repo(tmp_path):
     """Minimal git repo in tmp_path."""
     subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test User"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     return tmp_path
 
@@ -39,7 +43,10 @@ def _invoke(runner: CliRunner, args: list[str]):
 def _hooks_path_config(repo: Path) -> str | None:
     r = subprocess.run(
         ["git", "config", "--local", "--get", "core.hooksPath"],
-        cwd=str(repo), capture_output=True, text=True, check=False,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return r.stdout.strip() if r.returncode == 0 else None
 
@@ -51,6 +58,7 @@ def _is_executable(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 # --local scope
 # ---------------------------------------------------------------------------
+
 
 class TestLocalScope:
     def test_local_creates_hook_in_git_hooks(self, git_repo, monkeypatch):
@@ -92,6 +100,7 @@ class TestLocalScope:
 # --project scope (default)
 # ---------------------------------------------------------------------------
 
+
 class TestProjectScope:
     def test_project_creates_hook_in_scripts(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -121,11 +130,14 @@ class TestProjectScope:
         assert hook.exists()
         assert _hooks_path_config(git_repo) == ".githooks"
 
-    def test_project_overrides_existing_hookspath_with_notice(self, git_repo, monkeypatch):
+    def test_project_overrides_existing_hookspath_with_notice(
+        self, git_repo, monkeypatch
+    ):
         monkeypatch.chdir(git_repo)
         subprocess.run(
             ["git", "config", "--local", "core.hooksPath", "old-hooks"],
-            cwd=str(git_repo), check=True,
+            cwd=str(git_repo),
+            check=True,
         )
 
         runner = CliRunner()
@@ -141,6 +153,7 @@ class TestProjectScope:
 # Not a git repo -> exit 1
 # ---------------------------------------------------------------------------
 
+
 class TestNotGitRepo:
     def test_not_git_repo_exits_1(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -153,6 +166,7 @@ class TestNotGitRepo:
 # ---------------------------------------------------------------------------
 # .gitignore managed block
 # ---------------------------------------------------------------------------
+
 
 class TestGitignoreBlock:
     def test_creates_gitignore_with_block(self, git_repo, monkeypatch):
@@ -212,6 +226,7 @@ class TestGitignoreBlock:
 # Idempotency
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotency:
     def test_local_idempotent(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -240,6 +255,7 @@ class TestIdempotency:
 # ---------------------------------------------------------------------------
 # --include globs written into shim
 # ---------------------------------------------------------------------------
+
 
 class TestIncludeGlobs:
     def test_single_include_in_shim(self, git_repo, monkeypatch):
@@ -289,12 +305,15 @@ class TestIncludeGlobs:
 # --json output
 # ---------------------------------------------------------------------------
 
+
 class TestJsonOutput:
     def test_json_ok_structure(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "git", "--local"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "git", "--local"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -308,7 +327,9 @@ class TestJsonOutput:
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "git", "--project"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "git", "--project"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -330,6 +351,7 @@ class TestJsonOutput:
 # ---------------------------------------------------------------------------
 # --remove flag
 # ---------------------------------------------------------------------------
+
 
 class TestGitRemove:
     def test_remove_project_unsets_hookspath(self, git_repo, monkeypatch):
@@ -379,7 +401,8 @@ class TestGitRemove:
         monkeypatch.chdir(git_repo)
         subprocess.run(
             ["git", "config", "--local", "core.hooksPath", "custom-hooks"],
-            cwd=str(git_repo), check=True,
+            cwd=str(git_repo),
+            check=True,
         )
 
         runner = CliRunner()
@@ -434,7 +457,9 @@ class TestGitRemove:
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "setup", "git", "--local", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "git", "--local", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -452,7 +477,9 @@ class TestGitRemove:
         runner = CliRunner()
         _invoke(runner, ["--project"])
         result = runner.invoke(
-            main, ["--json", "setup", "git", "--project", "--remove"], catch_exceptions=False,
+            main,
+            ["--json", "setup", "git", "--project", "--remove"],
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)

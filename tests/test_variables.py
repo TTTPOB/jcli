@@ -42,7 +42,6 @@ class TestFallbackListVariablesNormalisation:
 
 
 class TestListVariables:
-
     def test_returns_dict_shape(self, live_kernel):
         live_kernel.execute("_tv_x = 42; _tv_s = 'hi'; _tv_lst = [1, 2, 3]", timeout=30)
         result = list_variables(live_kernel, timeout=15.0)
@@ -77,7 +76,6 @@ class TestListVariables:
 
 
 class TestInspectVariable:
-
     def test_inspect_known_variable(self, live_kernel):
         live_kernel.execute("_ti_x = 42; _ti_s = 'hi'", timeout=30)
         result = inspect_variable(live_kernel, "_ti_x", timeout=15.0)

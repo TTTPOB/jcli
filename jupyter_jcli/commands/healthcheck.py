@@ -25,4 +25,8 @@ def healthcheck(ctx: Context):
             use_json=ctx.use_json,
         )
     except Exception as e:
-        emit_error("CONNECTION_FAILED", f"Cannot reach Jupyter server at {ctx.server_url}: {e}", ctx.use_json)
+        emit_error(
+            "CONNECTION_FAILED",
+            f"Cannot reach Jupyter server at {ctx.server_url}: {e}",
+            ctx.use_json,
+        )

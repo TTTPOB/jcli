@@ -9,8 +9,11 @@ from jupyter_jcli.text_merge import MergeResult, merge_three_way
 
 def _simple_py(*cell_sources: str, kernel: str = "python3") -> str:
     lines = [
-        "# ---\n", "# jupyter:\n", "#   kernelspec:\n",
-        f"#     name: {kernel}\n", "# ---\n\n",
+        "# ---\n",
+        "# jupyter:\n",
+        "#   kernelspec:\n",
+        f"#     name: {kernel}\n",
+        "# ---\n\n",
     ]
     for src in cell_sources:
         lines.append(f"# %%\n{src}\n\n")
@@ -62,7 +65,14 @@ class TestMergeThreeWay:
         base = "x = 1\n"
         ours = "x = 10\n"
         theirs = "x = 99\n"
-        result = merge_three_way(base, ours, theirs, ours_label="mine", base_label="orig", theirs_label="yours")
+        result = merge_three_way(
+            base,
+            ours,
+            theirs,
+            ours_label="mine",
+            base_label="orig",
+            theirs_label="yours",
+        )
         assert result.has_conflict
         assert "<<<<<<< mine" in result.text
         assert "||||||| orig" in result.text

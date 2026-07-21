@@ -20,22 +20,30 @@ _MTIME_NOTE = (
 @click.command("vars")
 @click.argument("session_id")
 @click.option(
-    "--name", "-n", default=None,
+    "--name",
+    "-n",
+    default=None,
     help="Inspect a single named variable instead of listing all.",
 )
 @click.option(
-    "--rich", is_flag=True, default=False,
+    "--rich",
+    is_flag=True,
+    default=False,
     help=(
         "Use richInspectVariables (DAP) to get MIME-typed data for a single variable. "
         "Requires --name. Falls back silently if the kernel does not support it."
     ),
 )
 @click.option(
-    "--timeout", default=10, type=float,
+    "--timeout",
+    default=10,
+    type=float,
     help="Per-request timeout in seconds (default: 10).",
 )
 @pass_ctx
-def vars_cmd(ctx: Context, session_id: str, name: str | None, rich: bool, timeout: float):
+def vars_cmd(
+    ctx: Context, session_id: str, name: str | None, rich: bool, timeout: float
+):
     """Inspect variables in a kernel session.
 
     Lists all global variables in the kernel namespace as a NAME / TYPE / VALUE

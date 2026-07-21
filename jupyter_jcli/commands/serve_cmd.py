@@ -14,9 +14,11 @@ from jupyter_jcli.output import emit, emit_error
 
 class ServeBackend(str, Enum):
     """Supported Jupyter backend subcommands."""
+
     LAB = "lab"
     SERVER = "server"
     NOTEBOOK = "notebook"
+
 
 # Hostname may only contain alphanumerics, dots, hyphens, and brackets (IPv6).
 _SAFE_HOST_RE = re.compile(r"^[a-zA-Z0-9._\-\[\]]+$")
@@ -26,15 +28,29 @@ _SCHEME_PORTS = {"http": 80, "https": 443}
 
 @click.command("serve-cmd")
 @click.option(
-    "--serve-backend", required=True,
+    "--serve-backend",
+    required=True,
     type=click.Choice([e.value for e in ServeBackend], case_sensitive=True),
     help="Jupyter backend to launch.",
 )
-@click.option("--ip", default=None, help="Override ServerApp.ip (default: from JCLI_JUPYTER_SERVER_URL).")
-@click.option("--port", default=None, type=int, help="Override ServerApp.port (default: from JCLI_JUPYTER_SERVER_URL).")
-@click.option("--root-dir", default=None, help="Set ServerApp.root_dir (shell-quoted in output).")
 @click.option(
-    "--no-browser/--browser", "no_browser", default=True,
+    "--ip",
+    default=None,
+    help="Override ServerApp.ip (default: from JCLI_JUPYTER_SERVER_URL).",
+)
+@click.option(
+    "--port",
+    default=None,
+    type=int,
+    help="Override ServerApp.port (default: from JCLI_JUPYTER_SERVER_URL).",
+)
+@click.option(
+    "--root-dir", default=None, help="Set ServerApp.root_dir (shell-quoted in output)."
+)
+@click.option(
+    "--no-browser/--browser",
+    "no_browser",
+    default=True,
     help="Pass --no-browser to Jupyter (default: on).",
 )
 @pass_ctx
@@ -63,8 +79,7 @@ def serve_cmd(
     if ctx.token is None:
         emit_error(
             "SERVE_CMD_NO_TOKEN",
-            "JCLI_JUPYTER_SERVER_TOKEN is not set. "
-            "Export it before using serve-cmd.",
+            "JCLI_JUPYTER_SERVER_TOKEN is not set. Export it before using serve-cmd.",
             ctx.use_json,
         )
         return
@@ -92,8 +107,10 @@ def serve_cmd(
         resolved_host = ip
 
     # Resolve port
-    resolved_port: int = port if port is not None else (
-        parsed.port or _SCHEME_PORTS.get(parsed.scheme, 80)
+    resolved_port: int = (
+        port
+        if port is not None
+        else (parsed.port or _SCHEME_PORTS.get(parsed.scheme, 80))
     )
 
     # Build the shell command string.  Token reference uses double quotes so

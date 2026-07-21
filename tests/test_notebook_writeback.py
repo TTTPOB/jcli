@@ -17,10 +17,13 @@ def _jsonl_events(output: str) -> list[dict]:
 class TestPyPercentWriteback:
     """Test that exec --file on .py writes outputs to paired .ipynb."""
 
-    def test_writeback_creates_output_in_ipynb(self, live_session, mock_kernel_connection, tmp_path):
+    def test_writeback_creates_output_in_ipynb(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         runner = CliRunner()
         py_file = tmp_path / "analysis.py"
-        py_file.write_text(textwrap.dedent("""\
+        py_file.write_text(
+            textwrap.dedent("""\
             # ---
             # jupyter:
             #   kernelspec:
@@ -32,7 +35,8 @@ class TestPyPercentWriteback:
 
             # %%
             40 + 2
-        """))
+        """)
+        )
 
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
@@ -43,10 +47,21 @@ class TestPyPercentWriteback:
         nb_path = tmp_path / "analysis.ipynb"
         nbformat.write(nb, nb_path)
 
-        result = runner.invoke(main, [
-            "-s", live_session["url"], "-t", live_session["token"],
-            "exec", live_session["session_id"], "--file", str(py_file), "--cell", "0",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(py_file),
+                "--cell",
+                "0",
+            ],
+        )
         assert result.exit_code == 0
         assert "hello writeback" in result.output
         assert "Notebook updated" in result.output
@@ -56,10 +71,13 @@ class TestPyPercentWriteback:
         assert len(cell0.outputs) > 0
         assert any("hello writeback" in str(o) for o in cell0.outputs)
 
-    def test_writeback_multiple_cells(self, live_session, mock_kernel_connection, tmp_path):
+    def test_writeback_multiple_cells(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         runner = CliRunner()
         py_file = tmp_path / "multi.py"
-        py_file.write_text(textwrap.dedent("""\
+        py_file.write_text(
+            textwrap.dedent("""\
             # ---
             # jupyter:
             #   kernelspec:
@@ -74,7 +92,8 @@ class TestPyPercentWriteback:
 
             # %%
             print(_wb_x * 3)
-        """))
+        """)
+        )
 
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
@@ -86,11 +105,22 @@ class TestPyPercentWriteback:
         nb_path = tmp_path / "multi.ipynb"
         nbformat.write(nb, nb_path)
 
-        result = runner.invoke(main, [
-            "-s", live_session["url"], "-t", live_session["token"],
-            "--json", "exec", live_session["session_id"],
-            "--file", str(py_file), "--cell", "0:3",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "--json",
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(py_file),
+                "--cell",
+                "0:3",
+            ],
+        )
         assert result.exit_code == 0
         events = _jsonl_events(result.output)
         cell_events = [event for event in events if "cell" in event]
@@ -103,16 +133,20 @@ class TestPyPercentWriteback:
         assert any("20" in str(o) for o in updated_nb.cells[1].outputs)
         assert any("30" in str(o) for o in updated_nb.cells[2].outputs)
 
-    def test_writeback_happens_after_each_completed_cell(self, live_session, mock_kernel_connection, tmp_path):
+    def test_writeback_happens_after_each_completed_cell(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         runner = CliRunner()
         py_file = tmp_path / "streaming.py"
-        py_file.write_text(textwrap.dedent("""\
+        py_file.write_text(
+            textwrap.dedent("""\
             # %%
             print("first")
 
             # %%
             print("second")
-        """))
+        """)
+        )
 
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
@@ -125,17 +159,33 @@ class TestPyPercentWriteback:
 
         writeback_sizes = []
 
-        from jupyter_jcli.notebook_writer import write_outputs_to_notebook as real_writeback
+        from jupyter_jcli.notebook_writer import (
+            write_outputs_to_notebook as real_writeback,
+        )
 
         def _recording_writeback(path, cell_results):
             writeback_sizes.append(len(cell_results))
             return real_writeback(path, cell_results)
 
-        with patch("jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook", side_effect=_recording_writeback):
-            result = runner.invoke(main, [
-                "-s", live_session["url"], "-t", live_session["token"],
-                "exec", live_session["session_id"], "--file", str(py_file), "--cell", "0:2",
-            ])
+        with patch(
+            "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook",
+            side_effect=_recording_writeback,
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                    "--cell",
+                    "0:2",
+                ],
+            )
 
         assert result.exit_code == 0
         assert writeback_sizes == [1, 1]
@@ -149,13 +199,15 @@ class TestPyPercentWriteback:
     ):
         runner = CliRunner()
         py_file = tmp_path / "partial.py"
-        py_file.write_text(textwrap.dedent("""\
+        py_file.write_text(
+            textwrap.dedent("""\
             # %%
             print("before failure")
 
             # %%
             raise RuntimeError("client failure")
-        """))
+        """)
+        )
 
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
@@ -176,11 +228,24 @@ class TestPyPercentWriteback:
                 raise RuntimeError("simulated kernel transport failure")
             return original_execute(source, timeout=timeout, **kwargs)
 
-        with patch.object(mock_kernel_connection, "execute", side_effect=_execute_then_raise):
-            result = runner.invoke(main, [
-                "-s", live_session["url"], "-t", live_session["token"],
-                "exec", live_session["session_id"], "--file", str(py_file), "--cell", "0:2",
-            ])
+        with patch.object(
+            mock_kernel_connection, "execute", side_effect=_execute_then_raise
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                    "--cell",
+                    "0:2",
+                ],
+            )
 
         assert result.exit_code == 1
         assert "simulated kernel transport failure" in result.output
@@ -189,13 +254,17 @@ class TestPyPercentWriteback:
         assert any("before failure" in str(o) for o in updated_nb.cells[0].outputs)
         assert updated_nb.cells[1].outputs == []
 
-    def test_missing_notebook_during_writeback_is_error(self, live_session, mock_kernel_connection, tmp_path):
+    def test_missing_notebook_during_writeback_is_error(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         runner = CliRunner()
         py_file = tmp_path / "missing_target.py"
-        py_file.write_text(textwrap.dedent("""\
+        py_file.write_text(
+            textwrap.dedent("""\
             # %%
             print("cannot persist")
-        """))
+        """)
+        )
 
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
@@ -205,29 +274,56 @@ class TestPyPercentWriteback:
 
         def _delete_then_write(path, cell_results):
             nb_path.unlink()
-            from jupyter_jcli.notebook_writer import write_outputs_to_notebook as real_writeback
+            from jupyter_jcli.notebook_writer import (
+                write_outputs_to_notebook as real_writeback,
+            )
 
             return real_writeback(path, cell_results)
 
-        with patch("jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook", side_effect=_delete_then_write):
-            result = runner.invoke(main, [
-                "-s", live_session["url"], "-t", live_session["token"],
-                "exec", live_session["session_id"], "--file", str(py_file), "--cell", "0",
-            ])
+        with patch(
+            "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook",
+            side_effect=_delete_then_write,
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                    "--cell",
+                    "0",
+                ],
+            )
 
         assert result.exit_code == 1
         assert "Notebook writeback failed" in result.output
 
-    def test_no_writeback_for_plain_script(self, live_session, mock_kernel_connection, tmp_path):
+    def test_no_writeback_for_plain_script(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         """Plain Python scripts (no # %% markers, no front matter) never create a notebook."""
         runner = CliRunner()
         py_file = tmp_path / "standalone.py"
         py_file.write_text('print("no paired notebook")\n')
 
-        result = runner.invoke(main, [
-            "-s", live_session["url"], "-t", live_session["token"],
-            "exec", live_session["session_id"], "--file", str(py_file),
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(py_file),
+            ],
+        )
         assert result.exit_code == 0
         assert "no paired notebook" in result.output
         assert "Notebook updated" not in result.output
@@ -248,10 +344,21 @@ class TestIpynbWriteback:
         nb_path = tmp_path / "direct.ipynb"
         nbformat.write(nb, nb_path)
 
-        result = runner.invoke(main, [
-            "-s", live_session["url"], "-t", live_session["token"],
-            "exec", live_session["session_id"], "--file", str(nb_path), "--cell", "0",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(nb_path),
+                "--cell",
+                "0",
+            ],
+        )
         assert result.exit_code == 0
         assert "Notebook updated" in result.output
 
@@ -259,26 +366,41 @@ class TestIpynbWriteback:
         assert len(updated_nb.cells[0].outputs) > 0
         assert any("ipynb writeback" in str(o) for o in updated_nb.cells[0].outputs)
 
-    def test_ipynb_image_writeback(self, live_session, mock_kernel_connection, tmp_path):
+    def test_ipynb_image_writeback(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
         runner = CliRunner()
         nb = nbformat.v4.new_notebook()
         nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
         nb.cells = [
-            nbformat.v4.new_code_cell(textwrap.dedent("""\
+            nbformat.v4.new_code_cell(
+                textwrap.dedent("""\
                 %matplotlib inline
                 import matplotlib.pyplot as plt
                 plt.plot([1,2,3])
                 plt.show()
-            """)),
+            """)
+            ),
         ]
         nb_path = tmp_path / "plot.ipynb"
         nbformat.write(nb, nb_path)
 
-        result = runner.invoke(main, [
-            "-s", live_session["url"], "-t", live_session["token"],
-            "--json", "exec", live_session["session_id"],
-            "--file", str(nb_path), "--cell", "0",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "--json",
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(nb_path),
+                "--cell",
+                "0",
+            ],
+        )
         assert result.exit_code == 0
         events = _jsonl_events(result.output)
         cell_event = next(event for event in events if "cell" in event)

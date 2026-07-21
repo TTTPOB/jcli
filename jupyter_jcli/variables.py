@@ -113,19 +113,23 @@ def _fallback_list_variables(kernel) -> list[dict]:
     for v in raw:
         # VariableDescription is a TypedDict-like object; access via dict or attr
         if isinstance(v, dict):
-            result.append({
-                "name": str(v.get("name", "")),
-                "type": str(v.get("type", "")),
-                "value": str(v.get("value", "")),
-                "variables_reference": 0,
-            })
+            result.append(
+                {
+                    "name": str(v.get("name", "")),
+                    "type": str(v.get("type", "")),
+                    "value": str(v.get("value", "")),
+                    "variables_reference": 0,
+                }
+            )
         else:
-            result.append({
-                "name": str(getattr(v, "name", "")),
-                "type": str(getattr(v, "type", "")),
-                "value": str(getattr(v, "value", "")),
-                "variables_reference": 0,
-            })
+            result.append(
+                {
+                    "name": str(getattr(v, "name", "")),
+                    "type": str(getattr(v, "type", "")),
+                    "value": str(getattr(v, "value", "")),
+                    "variables_reference": 0,
+                }
+            )
     return result
 
 
@@ -209,21 +213,24 @@ def inspect_variable(
                 body = _dap_rich_inspect_variable(wsc, name, timeout=timeout)
                 # Also fetch plain variable list to get type/value
                 raw_all = _dap_inspect_variables(wsc, timeout=timeout)
-                match = next(
-                    (v for v in raw_all if v.get("name") == name), {}
+                match = next((v for v in raw_all if v.get("name") == name), {})
+                result = (
+                    _normalise_dap_variable(match)
+                    if match
+                    else {
+                        "name": name,
+                        "type": "",
+                        "value": "",
+                        "variables_reference": 0,
+                    }
                 )
-                result = _normalise_dap_variable(match) if match else {
-                    "name": name, "type": "", "value": "", "variables_reference": 0,
-                }
                 result["data"] = body.get("data", {})
                 result["metadata"] = body.get("metadata", {})
                 result["source"] = VariableSource.DAP
                 return result
             else:
                 raw_all = _dap_inspect_variables(wsc, timeout=timeout)
-                match = next(
-                    (v for v in raw_all if v.get("name") == name), None
-                )
+                match = next((v for v in raw_all if v.get("name") == name), None)
                 if match is None:
                     raise VariablesUnavailable(
                         f"Variable '{name}' not found in kernel namespace"

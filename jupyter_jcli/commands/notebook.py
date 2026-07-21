@@ -50,7 +50,9 @@ def notebook():
 
 
 @notebook.command("summary")
-@click.argument("file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False)
+)
 @click.pass_obj
 def summary(ctx: Context, file_path: str) -> None:
     """Print a deterministic structural summary for each cell in FILE."""
@@ -63,8 +65,12 @@ def summary(ctx: Context, file_path: str) -> None:
 
 
 @notebook.command("show")
-@click.argument("file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False))
-@click.option("--cell", "cell_spec", required=True, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)")
+@click.argument(
+    "file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--cell", "cell_spec", required=True, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)"
+)
 @click.pass_obj
 def show(ctx: Context, file_path: str, cell_spec: str) -> None:
     """Print complete source for selected cells in FILE."""
@@ -99,7 +105,9 @@ def _parse_or_error(ctx: Context, file_path: str) -> ParsedFile:
         raise AssertionError("emit_error should exit")
 
 
-def _notebook_data(parsed: ParsedFile, cells: list[dict], changes: list[dict] | None = None) -> dict:
+def _notebook_data(
+    parsed: ParsedFile, cells: list[dict], changes: list[dict] | None = None
+) -> dict:
     data = {
         "status": ResponseStatus.OK,
         "path": parsed.source_path,
@@ -161,34 +169,40 @@ def diff_cells(
             continue
         if tag == "insert":
             for cell in current_cells[new_start:new_end]:
-                changes.append(CellChange(
-                    kind="inserted",
-                    old_index=None,
-                    new_index=cell.index,
-                    old_cell=None,
-                    new_cell=cell,
-                    current_insertion_index=cell.index,
-                ))
+                changes.append(
+                    CellChange(
+                        kind="inserted",
+                        old_index=None,
+                        new_index=cell.index,
+                        old_cell=None,
+                        new_cell=cell,
+                        current_insertion_index=cell.index,
+                    )
+                )
             continue
         if tag == "delete":
             insertion_index = _current_insertion_index(current_cells, new_start)
             for cell in old_cells[old_start:old_end]:
-                changes.append(CellChange(
-                    kind="deleted",
-                    old_index=cell.index,
-                    new_index=None,
-                    old_cell=cell,
-                    new_cell=None,
-                    current_insertion_index=insertion_index,
-                ))
+                changes.append(
+                    CellChange(
+                        kind="deleted",
+                        old_index=cell.index,
+                        new_index=None,
+                        old_cell=cell,
+                        new_cell=None,
+                        current_insertion_index=insertion_index,
+                    )
+                )
             continue
 
-        changes.extend(_diff_replaced_cells(
-            old_cells[old_start:old_end],
-            current_cells[new_start:new_end],
-            current_cells,
-            new_start,
-        ))
+        changes.extend(
+            _diff_replaced_cells(
+                old_cells[old_start:old_end],
+                current_cells[new_start:new_end],
+                current_cells,
+                new_start,
+            )
+        )
     return changes
 
 
@@ -250,38 +264,46 @@ def _diff_replaced_cells(
         if step == "edited":
             old_cell = old_cells[old_pos - 1]
             new_cell = new_cells[new_pos - 1]
-            aligned.append(CellChange(
-                kind="edited",
-                old_index=old_cell.index,
-                new_index=new_cell.index,
-                old_cell=old_cell,
-                new_cell=new_cell,
-                current_insertion_index=new_cell.index,
-            ))
+            aligned.append(
+                CellChange(
+                    kind="edited",
+                    old_index=old_cell.index,
+                    new_index=new_cell.index,
+                    old_cell=old_cell,
+                    new_cell=new_cell,
+                    current_insertion_index=new_cell.index,
+                )
+            )
             old_pos -= 1
             new_pos -= 1
         elif step == "deleted":
             old_cell = old_cells[old_pos - 1]
-            insertion_index = _current_insertion_index(all_current_cells, new_start + new_pos)
-            aligned.append(CellChange(
-                kind="deleted",
-                old_index=old_cell.index,
-                new_index=None,
-                old_cell=old_cell,
-                new_cell=None,
-                current_insertion_index=insertion_index,
-            ))
+            insertion_index = _current_insertion_index(
+                all_current_cells, new_start + new_pos
+            )
+            aligned.append(
+                CellChange(
+                    kind="deleted",
+                    old_index=old_cell.index,
+                    new_index=None,
+                    old_cell=old_cell,
+                    new_cell=None,
+                    current_insertion_index=insertion_index,
+                )
+            )
             old_pos -= 1
         else:
             new_cell = new_cells[new_pos - 1]
-            aligned.append(CellChange(
-                kind="inserted",
-                old_index=None,
-                new_index=new_cell.index,
-                old_cell=None,
-                new_cell=new_cell,
-                current_insertion_index=new_cell.index,
-            ))
+            aligned.append(
+                CellChange(
+                    kind="inserted",
+                    old_index=None,
+                    new_index=new_cell.index,
+                    old_cell=None,
+                    new_cell=new_cell,
+                    current_insertion_index=new_cell.index,
+                )
+            )
             new_pos -= 1
 
     aligned.reverse()
@@ -318,14 +340,16 @@ def _diff_replaced_cells_by_position(
             and insertion_similarity >= deletion_similarity
             and insertion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
         ):
-            changes.append(CellChange(
-                kind="inserted",
-                old_index=None,
-                new_index=new_cell.index,
-                old_cell=None,
-                new_cell=new_cell,
-                current_insertion_index=new_cell.index,
-            ))
+            changes.append(
+                CellChange(
+                    kind="inserted",
+                    old_index=None,
+                    new_index=new_cell.index,
+                    old_cell=None,
+                    new_cell=new_cell,
+                    current_insertion_index=new_cell.index,
+                )
+            )
             new_pos += 1
             continue
         if (
@@ -333,47 +357,55 @@ def _diff_replaced_cells_by_position(
             and deletion_similarity > insertion_similarity
             and deletion_similarity >= direct_similarity + _FALLBACK_SHIFT_ADVANTAGE
         ):
-            changes.append(CellChange(
-                kind="deleted",
-                old_index=old_cell.index,
-                new_index=None,
-                old_cell=old_cell,
-                new_cell=None,
-                current_insertion_index=new_cell.index,
-            ))
+            changes.append(
+                CellChange(
+                    kind="deleted",
+                    old_index=old_cell.index,
+                    new_index=None,
+                    old_cell=old_cell,
+                    new_cell=None,
+                    current_insertion_index=new_cell.index,
+                )
+            )
             old_pos += 1
             continue
 
-        changes.append(CellChange(
-            kind="edited",
-            old_index=old_cell.index,
-            new_index=new_cell.index,
-            old_cell=old_cell,
-            new_cell=new_cell,
-            current_insertion_index=new_cell.index,
-        ))
+        changes.append(
+            CellChange(
+                kind="edited",
+                old_index=old_cell.index,
+                new_index=new_cell.index,
+                old_cell=old_cell,
+                new_cell=new_cell,
+                current_insertion_index=new_cell.index,
+            )
+        )
         old_pos += 1
         new_pos += 1
 
     insertion_index = _current_insertion_index(all_current_cells, new_start + new_pos)
     for old_cell in old_cells[old_pos:]:
-        changes.append(CellChange(
-            kind="deleted",
-            old_index=old_cell.index,
-            new_index=None,
-            old_cell=old_cell,
-            new_cell=None,
-            current_insertion_index=insertion_index,
-        ))
+        changes.append(
+            CellChange(
+                kind="deleted",
+                old_index=old_cell.index,
+                new_index=None,
+                old_cell=old_cell,
+                new_cell=None,
+                current_insertion_index=insertion_index,
+            )
+        )
     for new_cell in new_cells[new_pos:]:
-        changes.append(CellChange(
-            kind="inserted",
-            old_index=None,
-            new_index=new_cell.index,
-            old_cell=None,
-            new_cell=new_cell,
-            current_insertion_index=new_cell.index,
-        ))
+        changes.append(
+            CellChange(
+                kind="inserted",
+                old_index=None,
+                new_index=new_cell.index,
+                old_cell=None,
+                new_cell=new_cell,
+                current_insertion_index=new_cell.index,
+            )
+        )
     return changes
 
 
@@ -399,13 +431,13 @@ def _cell_edit_cost(old_cell: Cell, new_cell: Cell) -> float:
     return 1.0 - similarity + type_penalty
 
 
-def build_summary_data(parsed: ParsedFile, changes: list[CellChange] | None = None) -> dict:
+def build_summary_data(
+    parsed: ParsedFile, changes: list[CellChange] | None = None
+) -> dict:
     """Build structured cell summaries, optionally annotated with cell changes."""
     changes = changes or []
     changed_current = {
-        change.new_index: change
-        for change in changes
-        if change.new_index is not None
+        change.new_index: change for change in changes if change.new_index is not None
     }
     cells = []
     for cell in parsed.cells:
@@ -645,13 +677,21 @@ def format_summary_human(
     lines = [f"path={data['path']} cells={data['cell_count']} kernel={kernel}"]
     changes = data.get("changes", [])
     if changes:
-        kinds = [kind for kind in _CHANGE_MARKERS if any(change["kind"] == kind for change in changes)]
+        kinds = [
+            kind
+            for kind in _CHANGE_MARKERS
+            if any(change["kind"] == kind for change in changes)
+        ]
         lines.append("changes: " + _format_change_overview(changes, kinds))
-        lines.append("legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds))
+        lines.append(
+            "legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds)
+        )
     deleted_by_position: dict[int, list[dict]] = {}
     for change in changes:
         if change["kind"] == "deleted":
-            deleted_by_position.setdefault(change["current_insertion_index"], []).append(change)
+            deleted_by_position.setdefault(
+                change["current_insertion_index"], []
+            ).append(change)
     for cell in data["cells"]:
         for change in deleted_by_position.pop(cell["index"], []):
             heading = f"- old:{change['old_index']} at current:{change['current_insertion_index']}"
@@ -718,21 +758,29 @@ def _format_summary_human_bounded(
         for index in changed_indices:
             add_current(index)
         candidates.extend(("deleted", change) for change in deleted)
-        anchors = changed_indices + [change["current_insertion_index"] for change in deleted]
+        anchors = changed_indices + [
+            change["current_insertion_index"] for change in deleted
+        ]
         for distance in range(1, max(0, neighbor_cells) + 1):
             for anchor in anchors:
                 add_current(anchor - distance)
                 add_current(anchor + distance)
 
     selected = candidates[:limit]
-    kinds = [kind for kind in _CHANGE_MARKERS if any(change["kind"] == kind for change in changes)]
+    kinds = [
+        kind
+        for kind in _CHANGE_MARKERS
+        if any(change["kind"] == kind for change in changes)
+    ]
     kernel = data["kernel"] if data["kernel"] is not None else "None"
     path = _truncate_bounded_field(str(data["path"]))
     kernel = _truncate_bounded_field(str(kernel))
     lines = [f"path={path} cells={data['cell_count']} kernel={kernel}"]
     if changes:
         lines.append("changes: " + _format_change_overview(changes, kinds))
-        lines.append("legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds))
+        lines.append(
+            "legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds)
+        )
 
     shown_current = 0
     shown_deleted = 0

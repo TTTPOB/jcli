@@ -9,12 +9,13 @@ import nbformat
 
 from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli import pair_baseline
-from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
+from jupyter_jcli.parser import Cell, parse_py_percent_text
 
 
 # ---------------------------------------------------------------------------
 # Three-way merge (kept for backward compatibility)
 # ---------------------------------------------------------------------------
+
 
 def three_way_merge(
     base: list[Cell],
@@ -57,6 +58,7 @@ def three_way_merge(
 # Git base helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_git_base_text(path: Path) -> str | None:
     """Return the freshest available git-backed baseline for *path*."""
     return pair_baseline.read_baseline(path)
@@ -80,6 +82,7 @@ def _cells_from_py_text(text: str) -> list[Cell]:
 # ---------------------------------------------------------------------------
 # DriftResult
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class DriftResult:
@@ -119,6 +122,7 @@ class DriftResult:
 # ---------------------------------------------------------------------------
 # check_drift
 # ---------------------------------------------------------------------------
+
 
 def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     """Check whether a py/ipynb pair has drifted and attempt auto-merge.

@@ -34,12 +34,13 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------
 # Public data types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SimpleCommand:
@@ -58,15 +59,25 @@ class SimpleCommand:
     """Raw source text of this command node (for diagnostic messages)."""
 
 
-WRAPPER_NAMES: frozenset[str] = frozenset({
-    "uv", "pixi", "poetry", "conda",
-    "env", "nohup", "exec", "time", "nice",
-})
+WRAPPER_NAMES: frozenset[str] = frozenset(
+    {
+        "uv",
+        "pixi",
+        "poetry",
+        "conda",
+        "env",
+        "nohup",
+        "exec",
+        "time",
+        "nice",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Internal: lazy tree-sitter initialisation
 # ---------------------------------------------------------------------------
+
 
 @functools.lru_cache(maxsize=1)
 def _get_parser():
@@ -83,37 +94,41 @@ def _get_parser():
 # ---------------------------------------------------------------------------
 
 # Node types where descent stops — commands inside these contexts are ignored.
-_SKIP_DESCENT: frozenset[str] = frozenset({
-    "string",
-    "raw_string",
-    "ansi_c_string",
-    "heredoc_body",
-    "comment",
-    "command_substitution",
-    "process_substitution",
-})
+_SKIP_DESCENT: frozenset[str] = frozenset(
+    {
+        "string",
+        "raw_string",
+        "ansi_c_string",
+        "heredoc_body",
+        "comment",
+        "command_substitution",
+        "process_substitution",
+    }
+)
 
 # Argument child types that represent I/O redirects, not actual arguments.
-_REDIRECT_TYPES: frozenset[str] = frozenset({
-    "file_redirect",
-    "heredoc_redirect",
-    "herestring_redirect",
-    "stderr_redirect",
-    "stdin_redirect",
-    "stdout_redirect",
-    "append_redirect",
-})
+_REDIRECT_TYPES: frozenset[str] = frozenset(
+    {
+        "file_redirect",
+        "heredoc_redirect",
+        "herestring_redirect",
+        "stderr_redirect",
+        "stdin_redirect",
+        "stdout_redirect",
+        "append_redirect",
+    }
+)
 
 
 def _extract_text(node, source: bytes) -> str:
     """Return the plain-text content of *node*, stripping one layer of outer quotes."""
-    raw = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    raw = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
     t = node.type
-    if t == "string":        # "..."
+    if t == "string":  # "..."
         return raw[1:-1] if len(raw) >= 2 else raw
-    if t == "raw_string":    # '...'
+    if t == "raw_string":  # '...'
         return raw[1:-1] if len(raw) >= 2 else raw
-    if t == "ansi_c_string": # $'...'
+    if t == "ansi_c_string":  # $'...'
         return raw[2:-1] if len(raw) >= 3 else raw
     return raw
 
@@ -124,12 +139,12 @@ def _command_name_text(node, source: bytes) -> str:
     nc = node.named_children
     if nc:
         return _extract_text(nc[0], source)
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
 def _build_simple_command(node, source: bytes) -> SimpleCommand | None:
     """Build a :class:`SimpleCommand` from a ``command`` AST node."""
-    raw = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    raw = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
     name_node = node.child_by_field_name("name")
     if name_node is None:
@@ -147,7 +162,7 @@ def _build_simple_command(node, source: bytes) -> SimpleCommand | None:
             name_c = child.child_by_field_name("name")
             val_c = child.child_by_field_name("value")
             if name_c is not None:
-                k = source[name_c.start_byte:name_c.end_byte].decode(
+                k = source[name_c.start_byte : name_c.end_byte].decode(
                     "utf-8", errors="replace"
                 )
                 v = _extract_text(val_c, source) if val_c is not None else ""
@@ -178,6 +193,7 @@ def _collect(node, source: bytes, results: list[SimpleCommand]) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def iter_simple_commands(command_line: str) -> list[SimpleCommand]:
     """Parse *command_line* and return every simple command in execution order.
 
@@ -200,12 +216,21 @@ def iter_simple_commands(command_line: str) -> list[SimpleCommand]:
 
 # Flags that consume the *next* token as their value, per wrapper.
 _VALUE_FLAGS: dict[str, frozenset[str]] = {
-    "uv":    frozenset({"-p", "--python", "--with", "--with-editable",
-                        "--from", "--index", "--extra-index-url"}),
-    "pixi":  frozenset({"-e", "--environment", "--manifest-path"}),
+    "uv": frozenset(
+        {
+            "-p",
+            "--python",
+            "--with",
+            "--with-editable",
+            "--from",
+            "--index",
+            "--extra-index-url",
+        }
+    ),
+    "pixi": frozenset({"-e", "--environment", "--manifest-path"}),
     "conda": frozenset({"-n", "--name", "-p", "--prefix"}),
-    "nice":  frozenset({"-n", "--adjustment"}),
-    "env":   frozenset({"-u", "--unset", "-C", "--chdir"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
 }
 
 # Wrappers that require a "run" subcommand verb before the payload.
@@ -259,7 +284,7 @@ def unwrap_runner(sc: SimpleCommand) -> SimpleCommand:
 
     inner = SimpleCommand(
         name=args[i],
-        args=tuple(args[i + 1:]),
+        args=tuple(args[i + 1 :]),
         assigns=inherited_assigns,
         raw=sc.raw,
     )
@@ -270,6 +295,7 @@ def unwrap_runner(sc: SimpleCommand) -> SimpleCommand:
 # ---------------------------------------------------------------------------
 # Guard helpers shared by multiple hook commands
 # ---------------------------------------------------------------------------
+
 
 def extract_script_target(sc: SimpleCommand) -> str | None:
     """Return the ``.py`` script path from *sc*, or ``None`` if not applicable.

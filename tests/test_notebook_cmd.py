@@ -58,7 +58,10 @@ def _write_percent_notebook(path):
 def _parsed(*sources: str) -> ParsedFile:
     return ParsedFile(
         kernel_name="python3",
-        cells=[Cell(index=index, cell_type=CellType.CODE, source=source) for index, source in enumerate(sources)],
+        cells=[
+            Cell(index=index, cell_type=CellType.CODE, source=source)
+            for index, source in enumerate(sources)
+        ],
     )
 
 
@@ -84,7 +87,10 @@ def test_summary_extracts_python_ast_fields_and_non_code_previews(tmp_path):
     assert code["writes"] == ["data", "row", "total"]
     assert code["calls"] == ["load", "service.fetch", "helper"]
     assert code["ast_parsed"] is True
-    assert all(not code[f"{field}_truncated"] for field in ("imports", "defines", "writes", "calls"))
+    assert all(
+        not code[f"{field}_truncated"]
+        for field in ("imports", "defines", "writes", "calls")
+    )
 
     markdown = data["cells"][1]
     assert markdown["type"] == "markdown"
@@ -111,7 +117,9 @@ def test_summary_falls_back_to_preview_when_python_ast_cannot_parse(tmp_path):
 
 def test_summary_marks_truncated_ast_fields(tmp_path):
     path = tmp_path / "many_imports.py"
-    path.write_text("\n".join(f"import package_{index}" for index in range(9)), encoding="utf-8")
+    path.write_text(
+        "\n".join(f"import package_{index}" for index in range(9)), encoding="utf-8"
+    )
 
     result = CliRunner().invoke(main, ["--json", "notebook", "summary", str(path)])
 
@@ -182,7 +190,9 @@ def test_show_returns_one_cell_and_full_source_json(tmp_path):
     ]
     nbformat.write(notebook, path)
 
-    result = CliRunner().invoke(main, ["--json", "notebook", "show", str(path), "--cell", "1"])
+    result = CliRunner().invoke(
+        main, ["--json", "notebook", "show", str(path), "--cell", "1"]
+    )
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -210,7 +220,9 @@ def test_show_no_matching_cell_uses_structured_error(tmp_path):
     path = tmp_path / "empty.py"
     path.write_text("print('one cell')\n", encoding="utf-8")
 
-    result = CliRunner().invoke(main, ["--json", "notebook", "show", str(path), "--cell", "3"])
+    result = CliRunner().invoke(
+        main, ["--json", "notebook", "show", str(path), "--cell", "3"]
+    )
 
     assert result.exit_code == 1
     assert json.loads(result.output) == {
@@ -271,10 +283,18 @@ def test_cell_diff_classifies_edited_inserted_deleted_and_unequal_replace():
     deleted = diff_cells(_parsed("keep", "gone"), _parsed("keep"))
     unequal_replace = diff_cells(_parsed("old one", "old two"), _parsed("new one"))
 
-    assert [(change.kind, change.old_index, change.new_index) for change in edited] == [("edited", 0, 0)]
-    assert [(change.kind, change.old_index, change.new_index) for change in inserted] == [("inserted", None, 0)]
-    assert [(change.kind, change.old_index, change.new_index) for change in deleted] == [("deleted", 1, None)]
-    assert [(change.kind, change.old_index, change.new_index) for change in unequal_replace] == [
+    assert [(change.kind, change.old_index, change.new_index) for change in edited] == [
+        ("edited", 0, 0)
+    ]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in inserted
+    ] == [("inserted", None, 0)]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in deleted
+    ] == [("deleted", 1, None)]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in unequal_replace
+    ] == [
         ("edited", 0, 0),
         ("deleted", 1, None),
     ]
@@ -294,9 +314,13 @@ def test_cell_diff_keeps_unchanged_cells_aligned_after_leading_insert():
 
 
 def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor():
-    changes = diff_cells(_parsed("x = 1", "y = 2"), _parsed("new = 0", "x = 10", "y = 2"))
+    changes = diff_cells(
+        _parsed("x = 1", "y = 2"), _parsed("new = 0", "x = 10", "y = 2")
+    )
 
-    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes
+    ] == [
         ("inserted", None, 0),
         ("edited", 0, 1),
     ]
@@ -343,7 +367,9 @@ def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
     ):
         changes = diff_cells(old, current)
 
-    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes
+    ] == [
         ("edited", 100, 100),
         ("edited", 3_900, 3_900),
     ]
@@ -358,7 +384,9 @@ def test_large_unique_sequence_preserves_nearby_insert_and_delete_alignment():
 
     changes = diff_cells(old, current)
 
-    assert [(change.kind, change.old_index, change.new_index) for change in changes] == [
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes
+    ] == [
         ("inserted", None, 50),
         ("deleted", 55, None),
     ]
@@ -380,7 +408,9 @@ def test_large_replace_fallback_detects_leading_insertion_before_edits():
         autojunk_values.append(kwargs.get("autojunk"))
         return RealSequenceMatcher(*args, **kwargs)
 
-    with patch("jupyter_jcli.commands.notebook.SequenceMatcher", side_effect=recording_matcher):
+    with patch(
+        "jupyter_jcli.commands.notebook.SequenceMatcher", side_effect=recording_matcher
+    ):
         changes = diff_cells(old, current)
 
     assert autojunk_values[0] is True
@@ -389,9 +419,9 @@ def test_large_replace_fallback_detects_leading_insertion_before_edits():
         None,
         0,
     )
-    assert [(change.kind, change.old_index, change.new_index) for change in changes[1:]] == [
-        ("edited", index, index + 1) for index in range(101)
-    ]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes[1:]
+    ] == [("edited", index, index + 1) for index in range(101)]
 
 
 def test_large_replace_fallback_detects_leading_deletion_before_edits():
@@ -408,9 +438,9 @@ def test_large_replace_fallback_detects_leading_deletion_before_edits():
         0,
         None,
     )
-    assert [(change.kind, change.old_index, change.new_index) for change in changes[1:]] == [
-        ("edited", index + 1, index) for index in range(101)
-    ]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes[1:]
+    ] == [("edited", index + 1, index) for index in range(101)]
 
 
 def test_large_replace_fallback_detects_trailing_insert_and_delete():
@@ -460,7 +490,10 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
     assert data["changes"][2]["old_index"] == 0
     assert data["changes"][2]["current_insertion_index"] == 0
     assert data["changes"][2]["old_cell"]["writes"] == ["gone"]
-    assert "changes: edited current[0]; inserted current[1]; deleted [old:0 at current:0]" in human
+    assert (
+        "changes: edited current[0]; inserted current[1]; deleted [old:0 at current:0]"
+        in human
+    )
     assert "legend: ~ edited | + inserted | - deleted" in human
     assert "~ 0 [code]" in human
     assert "+ 1 [code]" in human
@@ -512,9 +545,10 @@ def test_bounded_summary_preserves_change_marker_with_long_kernel():
 def test_bounded_summary_counts_only_rendered_long_changed_cells():
     old = _parsed(*(f"value_{index} = 0" for index in range(30)))
     long_identifier = "identifier" * 400
-    current = _parsed(*(f"{long_identifier}_{index} = 1" for index in range(16)), *(
-        cell.source for cell in old.cells[16:]
-    ))
+    current = _parsed(
+        *(f"{long_identifier}_{index} = 1" for index in range(16)),
+        *(cell.source for cell in old.cells[16:]),
+    )
 
     human = format_summary_human(
         build_summary_data(current, diff_cells(old, current)),
@@ -524,6 +558,8 @@ def test_bounded_summary_counts_only_rendered_long_changed_cells():
     rendered_markers = sum(f"~ {index} [code]" in human for index in range(16))
 
     assert rendered_markers >= 1
-    assert f"omitted: {30 - rendered_markers} current cells, 0 deleted tombstones" in human
+    assert (
+        f"omitted: {30 - rendered_markers} current cells, 0 deleted tombstones" in human
+    )
     assert human.endswith("j-cli notebook summary ")
     assert len(human) <= 8_000

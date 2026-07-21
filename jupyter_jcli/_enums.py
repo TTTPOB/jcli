@@ -19,6 +19,7 @@ class DriftStatus(str, Enum):
 
     Produced by ``check_drift()`` and consumed by hook handlers.
     """
+
     IN_SYNC = "in_sync"
     MERGED = "merged"
     CONFLICT = "conflict"
@@ -27,6 +28,7 @@ class DriftStatus(str, Enum):
 
 class CellType(str, Enum):
     """Cell type as stored in .ipynb / py:percent files."""
+
     CODE = "code"
     MARKDOWN = "markdown"
     RAW = "raw"
@@ -38,6 +40,7 @@ class OutputType(str, Enum):
     Values must match nbformat cell output types exactly.
     Source: https://nbformat.readthedocs.io/en/latest/format_description.html
     """
+
     STREAM = "stream"
     EXECUTE_RESULT = "execute_result"
     DISPLAY_DATA = "display_data"
@@ -49,11 +52,13 @@ class OutputType(str, Enum):
 
 class MergeMode(str, Enum):
     """How a DriftResult with status=MERGED was produced."""
+
     THREE_WAY = "three_way"
 
 
 class ResponseStatus(str, Enum):
     """Status field emitted in JSON responses by all j-cli commands."""
+
     OK = "ok"
     NOOP = "noop"
     ERROR = "error"

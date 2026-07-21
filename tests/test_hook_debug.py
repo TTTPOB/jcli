@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +16,7 @@ from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _log_files(log_dir: Path) -> list[Path]:
     return sorted(log_dir.glob("*.log"))
 
@@ -24,6 +24,7 @@ def _log_files(log_dir: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 # Basic log creation
 # ---------------------------------------------------------------------------
+
 
 class TestHookDebugLoggerBasic:
     def test_creates_log_file_on_exit(self, tmp_path, monkeypatch):
@@ -63,6 +64,7 @@ class TestHookDebugLoggerBasic:
 # exit_code capture
 # ---------------------------------------------------------------------------
 
+
 class TestExitCodeCapture:
     def test_exit_code_zero_on_sys_exit_0(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
@@ -92,6 +94,7 @@ class TestExitCodeCapture:
 # Exception recording
 # ---------------------------------------------------------------------------
 
+
 class TestExceptionRecording:
     def test_record_exception_populates_field(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
@@ -120,6 +123,7 @@ class TestExceptionRecording:
 # Silent exit (stdout_raw == "")
 # ---------------------------------------------------------------------------
 
+
 class TestSilentExit:
     def test_silent_return_stdout_empty(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
@@ -135,6 +139,7 @@ class TestSilentExit:
 # ---------------------------------------------------------------------------
 # JSONDecodeError: stdin_raw preserved, stdin_parsed is null
 # ---------------------------------------------------------------------------
+
 
 class TestJsonDecodeError:
     def test_bad_stdin_raw_preserved(self, tmp_path, monkeypatch):
@@ -152,10 +157,12 @@ class TestJsonDecodeError:
 # stderr capture
 # ---------------------------------------------------------------------------
 
+
 class TestStderrCapture:
     def test_stderr_captured_in_log(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
         import sys as _sys
+
         with HookDebugLogger("hook", enabled=True):
             print("some warning", file=_sys.stderr)
         data = json.loads(_log_files(tmp_path)[0].read_text())
@@ -166,12 +173,14 @@ class TestStderrCapture:
 # read_hook_stdin helper
 # ---------------------------------------------------------------------------
 
+
 class TestReadHookStdin:
     def test_sets_raw_and_parsed(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
         payload = {"tool_name": "Edit", "tool_input": {"file_path": "x.py"}}
         raw = json.dumps(payload)
         import io
+
         with patch("sys.stdin", io.StringIO(raw)):
             with HookDebugLogger("hook", enabled=True) as log:
                 result = read_hook_stdin(log)
@@ -183,6 +192,7 @@ class TestReadHookStdin:
     def test_raises_on_bad_json(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
         import io
+
         with patch("sys.stdin", io.StringIO("bad json")):
             with HookDebugLogger("hook", enabled=True) as log:
                 with pytest.raises(json.JSONDecodeError):

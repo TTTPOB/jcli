@@ -15,7 +15,9 @@ from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 @click.command("exec")
 @click.argument("session_id")
 @click.option("--code", "-c", default=None, help="Code to execute directly")
-@click.option("--file", "-f", "file_path", default=None, help="Path to .py or .ipynb file")
+@click.option(
+    "--file", "-f", "file_path", default=None, help="Path to .py or .ipynb file"
+)
 @click.option("--cell", default=None, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)")
 @click.option(
     "--display-mode",
@@ -50,7 +52,9 @@ def exec_cmd(
     When using --file, outputs are automatically written back to the paired .ipynb.
     """
     if not code and not file_path:
-        emit_error("PARSE_ERROR", "Either --code or --file must be provided", ctx.use_json)
+        emit_error(
+            "PARSE_ERROR", "Either --code or --file must be provided", ctx.use_json
+        )
 
     try:
         from jupyter_jcli.server import get_kernel_id_for_session
@@ -69,7 +73,9 @@ def exec_cmd(
     _exec_file(ctx, kernel_id, file_path, cell, display_mode, timeout)
 
 
-def _exec_code(ctx: Context, kernel_id: str, code: str, display_mode: str, timeout: int | None):
+def _exec_code(
+    ctx: Context, kernel_id: str, code: str, display_mode: str, timeout: int | None
+):
     """Execute inline code."""
     try:
         from jupyter_jcli.kernel import execute_code
@@ -128,7 +134,11 @@ def _exec_file(
         code_cells = [c for c in parsed.cells if c.cell_type == CellType.CODE]
         if cell_spec:
             indices = parse_cell_spec(cell_spec, len(parsed.cells))
-            selected = [c for c in parsed.cells if c.index in indices and c.cell_type == CellType.CODE]
+            selected = [
+                c
+                for c in parsed.cells
+                if c.index in indices and c.cell_type == CellType.CODE
+            ]
         else:
             selected = code_cells
 
@@ -159,12 +169,18 @@ def _exec_file(
                     if deadline is not None:
                         remaining = deadline - _time.monotonic()
                         if remaining <= 0:
-                            emit_error("TIMEOUT", f"Total timeout {timeout}s exceeded at cell {cell.index}", ctx.use_json)
+                            emit_error(
+                                "TIMEOUT",
+                                f"Total timeout {timeout}s exceeded at cell {cell.index}",
+                                ctx.use_json,
+                            )
                             break
                     else:
                         remaining = 10
 
-                    result = execute_with_timeout(kernel, cell.source, timeout=remaining)
+                    result = execute_with_timeout(
+                        kernel, cell.source, timeout=remaining
+                    )
                     raw_outputs = result.get("outputs", [])
                     outputs = process_outputs(raw_outputs)
 
@@ -178,13 +194,19 @@ def _exec_file(
 
                     notebook_updated = None
                     if ipynb_path:
-                        notebook_updated = write_outputs_to_notebook(ipynb_path, [cell_result])
+                        notebook_updated = write_outputs_to_notebook(
+                            ipynb_path, [cell_result]
+                        )
                         if notebook_updated is None:
-                            raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
+                            raise RuntimeError(
+                                f"Notebook writeback failed: {ipynb_path}"
+                            )
                         last_notebook_updated = notebook_updated
 
                     cells_executed += 1
-                    _emit_file_cell_result(ctx, cell_result, notebook_created, notebook_updated)
+                    _emit_file_cell_result(
+                        ctx, cell_result, notebook_created, notebook_updated
+                    )
                     notebook_created = None
 
         if ctx.use_json:
@@ -216,7 +238,9 @@ def _emit_file_cell_result(
     notebook_updated: str | None,
 ) -> None:
     if ctx.use_json:
-        cell_payload = {key: value for key, value in cell_result.items() if key != "raw_outputs"}
+        cell_payload = {
+            key: value for key, value in cell_result.items() if key != "raw_outputs"
+        }
         data = {"status": ResponseStatus.OK, "cell": cell_payload}
         if notebook_created:
             data["notebook_created"] = notebook_created

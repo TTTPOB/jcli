@@ -2,7 +2,6 @@
 
 import json
 from importlib import resources
-from pathlib import Path
 
 from click.testing import CliRunner
 

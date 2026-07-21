@@ -67,7 +67,9 @@ def _wait_for_server(url: str, token: str, timeout: float = 30) -> None:
     while time.time() < deadline:
         try:
             conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=2)
-            conn.request("GET", "/api/status", headers={"Authorization": f"token {token}"})
+            conn.request(
+                "GET", "/api/status", headers={"Authorization": f"token {token}"}
+            )
             resp = conn.getresponse()
             if resp.status == 200:
                 conn.close()
@@ -109,7 +111,9 @@ def jupyter_server():
 
     proc = subprocess.Popen(
         [
-            sys.executable, "-m", "jupyter_server",
+            sys.executable,
+            "-m",
+            "jupyter_server",
             f"--port={port}",
             f"--IdentityProvider.token={token}",
             f"--ServerApp.root_dir={base}/root",
@@ -128,10 +132,10 @@ def jupyter_server():
     finally:
         proc.send_signal(signal.SIGTERM)
         try:
-            proc.wait(timeout=10)
+            proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
+            proc.communicate()
 
 
 @pytest.fixture(scope="module")
@@ -153,17 +157,35 @@ def live_session(jupyter_server):
     from jupyter_jcli.cli import main
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-        "--json", "session", "create", "--kernel", "python3",
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "-s",
+            jupyter_server["url"],
+            "-t",
+            jupyter_server["token"],
+            "--json",
+            "session",
+            "create",
+            "--kernel",
+            "python3",
+        ],
+    )
     data = json.loads(result.output)
     sid = data["session_id"]
     yield {**jupyter_server, "session_id": sid}
-    runner.invoke(main, [
-        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-        "session", "kill", sid,
-    ])
+    runner.invoke(
+        main,
+        [
+            "-s",
+            jupyter_server["url"],
+            "-t",
+            jupyter_server["token"],
+            "session",
+            "kill",
+            sid,
+        ],
+    )
 
 
 @pytest.fixture(scope="module")
@@ -181,7 +203,9 @@ def live_kernel(live_session):
     kernel_id = get_kernel_id_for_session(
         live_session["url"], live_session["session_id"], live_session["token"]
     )
-    with kernel_connection(live_session["url"], live_session["token"], kernel_id) as kernel:
+    with kernel_connection(
+        live_session["url"], live_session["token"], kernel_id
+    ) as kernel:
         yield kernel
 
 

@@ -13,6 +13,7 @@ from jupyter_jcli.commands.serve_cmd import ServeBackend
 # ServeBackend enum behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestServeBackendEnum:
     def test_members_exist(self):
         assert ServeBackend.LAB == "lab"
@@ -24,6 +25,7 @@ class TestServeBackendEnum:
 
     def test_invalid_raises(self):
         import pytest
+
         with pytest.raises(ValueError):
             ServeBackend("bogus")
 
@@ -36,7 +38,10 @@ _DEFAULT_ENV = {
 
 def _invoke(runner: CliRunner, args: list[str], env: dict | None = None):
     return runner.invoke(
-        main, ["serve-cmd"] + args, catch_exceptions=False, env=env or _DEFAULT_ENV,
+        main,
+        ["serve-cmd"] + args,
+        catch_exceptions=False,
+        env=env or _DEFAULT_ENV,
     )
 
 
@@ -51,6 +56,7 @@ def _cmd_line(result) -> str:
 # ---------------------------------------------------------------------------
 # Argument validation
 # ---------------------------------------------------------------------------
+
 
 class TestArgs:
     def test_missing_backend_errors(self):
@@ -88,11 +94,13 @@ class TestArgs:
 # Environment variable handling
 # ---------------------------------------------------------------------------
 
+
 class TestEnv:
     def test_missing_token_errors(self):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["serve-cmd", "--serve-backend", "lab"],
+            main,
+            ["serve-cmd", "--serve-backend", "lab"],
             env={"JCLI_JUPYTER_SERVER_URL": "http://localhost:8888"},
             catch_exceptions=False,
         )
@@ -103,7 +111,8 @@ class TestEnv:
     def test_url_parsed_into_ip_port(self):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["serve-cmd", "--serve-backend", "lab"],
+            main,
+            ["serve-cmd", "--serve-backend", "lab"],
             env={
                 "JCLI_JUPYTER_SERVER_URL": "http://1.2.3.4:9999",
                 "JCLI_JUPYTER_SERVER_TOKEN": "test-token",
@@ -118,7 +127,8 @@ class TestEnv:
         """When URL env is unset, falls back to default http://localhost:8888."""
         runner = CliRunner()
         result = runner.invoke(
-            main, ["serve-cmd", "--serve-backend", "lab"],
+            main,
+            ["serve-cmd", "--serve-backend", "lab"],
             env={"JCLI_JUPYTER_SERVER_TOKEN": "test-token"},
             catch_exceptions=False,
         )
@@ -130,6 +140,7 @@ class TestEnv:
 # ---------------------------------------------------------------------------
 # CLI flag overrides
 # ---------------------------------------------------------------------------
+
 
 class TestOverrides:
     def test_ip_flag_overrides_env(self):
@@ -147,7 +158,9 @@ class TestOverrides:
     def test_root_dir_is_quoted(self):
         """Paths with spaces are wrapped in single quotes by shlex.quote."""
         runner = CliRunner()
-        result = _invoke(runner, ["--serve-backend", "lab", "--root-dir", "/tmp/my data"])
+        result = _invoke(
+            runner, ["--serve-backend", "lab", "--root-dir", "/tmp/my data"]
+        )
         assert result.exit_code == 0
         assert "'/tmp/my data'" in result.output
 
@@ -156,11 +169,13 @@ class TestOverrides:
 # Security: token is never inlined; hosts with metacharacters are rejected
 # ---------------------------------------------------------------------------
 
+
 class TestSecurity:
     def test_token_never_inlined(self):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["serve-cmd", "--serve-backend", "lab"],
+            main,
+            ["serve-cmd", "--serve-backend", "lab"],
             env={
                 "JCLI_JUPYTER_SERVER_URL": "http://localhost:8888",
                 "JCLI_JUPYTER_SERVER_TOKEN": "SUPERSECRET",
@@ -174,11 +189,14 @@ class TestSecurity:
         cmd = _cmd_line(result)
         assert cmd.count('"$JCLI_JUPYTER_SERVER_TOKEN"') == 1
 
-    @pytest.mark.parametrize("bad_host", [
-        "host;rm",
-        "host`cmd`",
-        "host$(evil)",
-    ])
+    @pytest.mark.parametrize(
+        "bad_host",
+        [
+            "host;rm",
+            "host`cmd`",
+            "host$(evil)",
+        ],
+    )
     def test_host_injection_rejected(self, bad_host: str):
         """Hosts containing shell metacharacters via --ip are rejected."""
         runner = CliRunner()
@@ -191,7 +209,8 @@ class TestSecurity:
         """A URL that yields no parseable hostname is rejected."""
         runner = CliRunner()
         result = runner.invoke(
-            main, ["serve-cmd", "--serve-backend", "lab"],
+            main,
+            ["serve-cmd", "--serve-backend", "lab"],
             env={
                 "JCLI_JUPYTER_SERVER_URL": "http:",
                 "JCLI_JUPYTER_SERVER_TOKEN": "test-token",
@@ -206,6 +225,7 @@ class TestSecurity:
 # ---------------------------------------------------------------------------
 # Output format
 # ---------------------------------------------------------------------------
+
 
 class TestOutput:
     def test_no_browser_default_on(self):
@@ -231,11 +251,15 @@ class TestOutput:
 
         # JSON mode: hint must NOT appear (stdout is pure JSON)
         result_json = runner.invoke(
-            main, ["--json", "serve-cmd", "--serve-backend", "lab"],
-            env=_DEFAULT_ENV, catch_exceptions=False,
+            main,
+            ["--json", "serve-cmd", "--serve-backend", "lab"],
+            env=_DEFAULT_ENV,
+            catch_exceptions=False,
         )
         assert result_json.exit_code == 0
-        assert "#" not in result_json.output or result_json.output.strip().startswith("{")
+        assert "#" not in result_json.output or result_json.output.strip().startswith(
+            "{"
+        )
         # Must be valid JSON (no hint contamination)
         json.loads(result_json.output)
 
@@ -244,12 +268,15 @@ class TestOutput:
 # JSON mode
 # ---------------------------------------------------------------------------
 
+
 class TestJson:
     def test_json_shape(self):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "serve-cmd", "--serve-backend", "lab"],
-            env=_DEFAULT_ENV, catch_exceptions=False,
+            main,
+            ["--json", "serve-cmd", "--serve-backend", "lab"],
+            env=_DEFAULT_ENV,
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -261,8 +288,10 @@ class TestJson:
     def test_argv_template_is_list(self):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--json", "serve-cmd", "--serve-backend", "server"],
-            env=_DEFAULT_ENV, catch_exceptions=False,
+            main,
+            ["--json", "serve-cmd", "--serve-backend", "server"],
+            env=_DEFAULT_ENV,
+            catch_exceptions=False,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)

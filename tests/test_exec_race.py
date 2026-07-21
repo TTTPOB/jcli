@@ -30,6 +30,7 @@ import pytest
 # Unit tests — verify the fix is in place
 # ---------------------------------------------------------------------------
 
+
 class _FakeChannel:
     def __init__(self, messages=None):
         self.messages = queue.Queue()
@@ -89,7 +90,9 @@ class TestKernelWebsocketReadyProbe:
             mock_instance = MockClient.return_value
             mock_stop = mock_instance.stop
 
-            with pytest.raises(TimeoutError, match="Kernel didn't respond in 30 seconds"):
+            with pytest.raises(
+                TimeoutError, match="Kernel didn't respond in 30 seconds"
+            ):
                 with kernel_connection("http://x", "tok", "kid"):
                     pass
 
@@ -161,6 +164,7 @@ class TestKernelWebsocketReadyProbe:
 # Execution deadline tests
 # ---------------------------------------------------------------------------
 
+
 class _BlockingKernel:
     def __init__(self, interrupt_error=None):
         self.interrupt_error = interrupt_error
@@ -186,7 +190,9 @@ class TestExecutionTimeoutUnit:
 
         kernel = MagicMock()
         kernel.execute.return_value = {
-            "status": "ok", "outputs": [], "execution_count": 1,
+            "status": "ok",
+            "outputs": [],
+            "execution_count": 1,
         }
 
         result = execute_with_timeout(kernel, "pass", timeout=1)
@@ -220,6 +226,7 @@ class TestExecutionTimeoutUnit:
 # Integration tests - real Jupyter server
 # ---------------------------------------------------------------------------
 
+
 class TestFreshConnectionExec:
     """Fresh kernel_connection + immediate execute — must succeed reliably.
 
@@ -237,10 +244,20 @@ class TestFreshConnectionExec:
         runner = CliRunner()
 
         # Create a session
-        result = runner.invoke(main, [
-            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-            "--json", "session", "create", "--kernel", "python3",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
         assert result.exit_code == 0, f"session create failed: {result.output}"
         data = json.loads(result.output)
         sid = data["session_id"]
@@ -248,17 +265,36 @@ class TestFreshConnectionExec:
         try:
             # Execute code immediately - this exercises the race window.
             # With the ready probe fix, this must complete quickly.
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "exec", sid, "--code", "print('fresh-ok')", "--timeout", "30",
-            ])
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--code",
+                    "print('fresh-ok')",
+                    "--timeout",
+                    "30",
+                ],
+            )
             assert result.exit_code == 0, f"exec failed: {result.output}"
             assert "fresh-ok" in result.output
         finally:
-            runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "session", "kill", sid,
-            ])
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )
 
     def test_exec_file_fresh_connection(self, jupyter_server, tmp_path):
         """Fresh connection + file-based exec must also succeed."""
@@ -269,33 +305,64 @@ class TestFreshConnectionExec:
 
         runner = CliRunner()
 
-        result = runner.invoke(main, [
-            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-            "--json", "session", "create", "--kernel", "python3",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
         assert result.exit_code == 0, f"session create failed: {result.output}"
         data = json.loads(result.output)
         sid = data["session_id"]
 
         try:
             script = tmp_path / "race_test.py"
-            script.write_text(textwrap.dedent("""\
+            script.write_text(
+                textwrap.dedent("""\
                 # %%
                 x = 1
                 print(f"x={x}")
-            """))
+            """)
+            )
 
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "exec", sid, "--file", str(script), "--timeout", "30",
-            ])
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--file",
+                    str(script),
+                    "--timeout",
+                    "30",
+                ],
+            )
             assert result.exit_code == 0, f"exec failed: {result.output}"
             assert "x=1" in result.output
         finally:
-            runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "session", "kill", sid,
-            ])
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )
 
     def test_multi_exec_fresh_connections(self, jupyter_server):
         """Multiple fresh connections in a row — stress the race window.
@@ -311,27 +378,57 @@ class TestFreshConnectionExec:
         runner = CliRunner()
 
         for iteration in range(5):
-            result = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "session", "create", "--kernel", "python3",
-            ])
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "--json",
+                    "session",
+                    "create",
+                    "--kernel",
+                    "python3",
+                ],
+            )
             assert result.exit_code == 0, f"session create failed at iter {iteration}"
             data = json.loads(result.output)
             sid = data["session_id"]
 
             try:
-                result = runner.invoke(main, [
-                    "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                    "exec", sid, "--code", f"print('iter-{iteration}')",
-                    "--timeout", "30",
-                ])
-                assert result.exit_code == 0, f"exec failed at iter {iteration}: {result.output}"
+                result = runner.invoke(
+                    main,
+                    [
+                        "-s",
+                        jupyter_server["url"],
+                        "-t",
+                        jupyter_server["token"],
+                        "exec",
+                        sid,
+                        "--code",
+                        f"print('iter-{iteration}')",
+                        "--timeout",
+                        "30",
+                    ],
+                )
+                assert result.exit_code == 0, (
+                    f"exec failed at iter {iteration}: {result.output}"
+                )
                 assert f"iter-{iteration}" in result.output
             finally:
-                runner.invoke(main, [
-                    "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                    "session", "kill", sid,
-                ])
+                runner.invoke(
+                    main,
+                    [
+                        "-s",
+                        jupyter_server["url"],
+                        "-t",
+                        jupyter_server["token"],
+                        "session",
+                        "kill",
+                        sid,
+                    ],
+                )
 
 
 class TestExecutionTimeoutIntegration:
@@ -341,21 +438,41 @@ class TestExecutionTimeoutIntegration:
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
-        created = runner.invoke(main, [
-            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-            "--json", "session", "create", "--kernel", "python3",
-        ])
+        created = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
         assert created.exit_code == 0, created.output
         sid = json.loads(created.output)["session_id"]
 
         try:
             started = time.monotonic()
-            timed_out = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "exec", sid, "--code",
-                "import time; time.sleep(30); timeout_sentinel = True",
-                "--timeout", "1",
-            ])
+            timed_out = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "--json",
+                    "exec",
+                    sid,
+                    "--code",
+                    "import time; time.sleep(30); timeout_sentinel = True",
+                    "--timeout",
+                    "1",
+                ],
+            )
             elapsed = time.monotonic() - started
 
             assert timed_out.exit_code == 1, timed_out.output
@@ -364,19 +481,36 @@ class TestExecutionTimeoutIntegration:
             assert "returned to idle" in error["message"]
             assert elapsed < 10
 
-            recovered = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "exec", sid, "--code",
-                "print('recovered', 'timeout_sentinel' in globals())",
-                "--timeout", "10",
-            ])
+            recovered = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--code",
+                    "print('recovered', 'timeout_sentinel' in globals())",
+                    "--timeout",
+                    "10",
+                ],
+            )
             assert recovered.exit_code == 0, recovered.output
             assert "recovered False" in recovered.output
         finally:
-            runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "session", "kill", sid,
-            ])
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )
 
     def test_file_cell_timeout_interrupts_kernel(self, jupyter_server, tmp_path):
         import json
@@ -385,47 +519,85 @@ class TestExecutionTimeoutIntegration:
 
         script = tmp_path / "timeout_cell.py"
         script.write_text(
-            "# %%\n"
-            "import time\n"
-            "time.sleep(30)\n"
-            "file_timeout_sentinel = True\n"
+            "# %%\nimport time\ntime.sleep(30)\nfile_timeout_sentinel = True\n"
         )
         runner = CliRunner()
-        created = runner.invoke(main, [
-            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-            "--json", "session", "create", "--kernel", "python3",
-        ])
+        created = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
         assert created.exit_code == 0, created.output
         sid = json.loads(created.output)["session_id"]
 
         try:
-            timed_out = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "--json", "exec", sid, "--file", str(script), "--cell", "0",
-                "--timeout", "1",
-            ])
+            timed_out = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "--json",
+                    "exec",
+                    sid,
+                    "--file",
+                    str(script),
+                    "--cell",
+                    "0",
+                    "--timeout",
+                    "1",
+                ],
+            )
 
             assert timed_out.exit_code == 1, timed_out.output
             assert json.loads(timed_out.output)["code"] == "TIMEOUT"
 
-            recovered = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "exec", sid, "--code",
-                "print('file-recovered', 'file_timeout_sentinel' in globals())",
-                "--timeout", "10",
-            ])
+            recovered = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--code",
+                    "print('file-recovered', 'file_timeout_sentinel' in globals())",
+                    "--timeout",
+                    "10",
+                ],
+            )
             assert recovered.exit_code == 0, recovered.output
             assert "file-recovered False" in recovered.output
         finally:
-            runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "session", "kill", sid,
-            ])
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )
 
 
 # ---------------------------------------------------------------------------
 # Signal handler tests - SIGINT -> kernel interrupt
 # ---------------------------------------------------------------------------
+
 
 class TestSigintHandlerUnit:
     """Unit tests for the SIGINT handler created by _make_interrupt_handler."""
@@ -485,8 +657,10 @@ class TestSigintHandlerUnit:
         from jupyter_jcli.kernel import _make_interrupt_handler
 
         with (
-            patch("jupyter_jcli.kernel.urllib.request.urlopen",
-                  side_effect=OSError("connection refused")),
+            patch(
+                "jupyter_jcli.kernel.urllib.request.urlopen",
+                side_effect=OSError("connection refused"),
+            ),
             patch("jupyter_jcli.kernel.sys.exit") as mock_exit,
         ):
             handler = _make_interrupt_handler("http://srv:8888", "tok", "kid-1")
@@ -511,12 +685,19 @@ class TestSigintHandlerUnit:
             # Should have been called twice for setup (SIGINT, SIGTERM)
             # and twice for teardown
             setup_calls = [
-                c for c in mock_signal_fn.call_args_list
-                if c[0][0] == signal.SIGINT
+                c for c in mock_signal_fn.call_args_list if c[0][0] == signal.SIGINT
             ]
             assert len(setup_calls) == 2  # one set, one restore
-            assert len([c for c in mock_signal_fn.call_args_list
-                        if c[0][0] == signal.SIGTERM]) == 2
+            assert (
+                len(
+                    [
+                        c
+                        for c in mock_signal_fn.call_args_list
+                        if c[0][0] == signal.SIGTERM
+                    ]
+                )
+                == 2
+            )
 
 
 class TestSigintHandlerIntegration:
@@ -531,24 +712,41 @@ class TestSigintHandlerIntegration:
         runner = CliRunner()
 
         # Create a session
-        result = runner.invoke(main, [
-            "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-            "--json", "session", "create", "--kernel", "python3",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         sid = data["session_id"]
 
         try:
             # Run a long execution as a subprocess
-            jcli_bin = str(
-                __import__("pathlib").Path(sys.executable).parent / "j-cli"
-            )
+            jcli_bin = str(__import__("pathlib").Path(sys.executable).parent / "j-cli")
             proc = subprocess.Popen(
-                [jcli_bin,
-                 "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                 "exec", sid, "--code", "import time; time.sleep(30)"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                [
+                    jcli_bin,
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--code",
+                    "import time; time.sleep(30)",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
 
             # Give the kernel time to enter the busy state
@@ -570,26 +768,49 @@ class TestSigintHandlerIntegration:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 stdout, stderr = proc.communicate()
-                pytest.fail(f"Process did not exit after SIGINT. stderr: {stderr.decode()}")
+                pytest.fail(
+                    f"Process did not exit after SIGINT. stderr: {stderr.decode()}"
+                )
 
             # Should exit with 128 + SIGINT(2) = 130
             # (may also be -2 on some platforms for signal-terminated processes)
-            assert proc.returncode in (130, -2), \
+            assert proc.returncode in (130, -2), (
                 f"expected exit code 130 or -2, got {proc.returncode}. stderr: {stderr.decode() if stderr else 'none'}"
+            )
 
             # Kernel should recover (not stuck in "busy" forever)
             # Give it a moment to process the interrupt and for buffers to flush
             time.sleep(2)
-            result2 = runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "exec", sid, "--code", "print('recovered')", "--timeout", "15",
-            ])
-            assert result2.exit_code == 0, \
+            result2 = runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "exec",
+                    sid,
+                    "--code",
+                    "print('recovered')",
+                    "--timeout",
+                    "15",
+                ],
+            )
+            assert result2.exit_code == 0, (
                 f"kernel did not recover after interrupt: exit_code={result2.exit_code} output={result2.output}"
+            )
             assert "recovered" in result2.output
 
         finally:
-            runner.invoke(main, [
-                "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-                "session", "kill", sid,
-            ])
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )

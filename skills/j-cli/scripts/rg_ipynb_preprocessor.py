@@ -91,7 +91,10 @@ def render_output(cell_index: int, output_index: int, output: dict) -> None:
             continue
 
         if isinstance(value, (dict, list)):
-            emit_block(f"[{mime_type}]", json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2))
+            emit_block(
+                f"[{mime_type}]",
+                json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2),
+            )
             continue
 
         emit_block(f"[{mime_type}]", as_text(value))

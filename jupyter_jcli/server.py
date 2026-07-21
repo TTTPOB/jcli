@@ -28,11 +28,13 @@ def list_kernelspecs(server_url: str, token: str | None = None) -> list[dict]:
     specs = client.kernelspecs.list_kernelspecs()
     result = []
     for name, ks in specs.kernelspecs.items():
-        result.append({
-            "name": name,
-            "display_name": ks.spec.display_name,
-            "language": ks.spec.language,
-        })
+        result.append(
+            {
+                "name": name,
+                "display_name": ks.spec.display_name,
+                "language": ks.spec.language,
+            }
+        )
     return result
 
 
@@ -62,13 +64,15 @@ def list_sessions(server_url: str, token: str | None = None) -> list[dict]:
     sessions = client.sessions.list_sessions()
     result = []
     for s in sessions:
-        result.append({
-            "session_id": s.id,
-            "name": s.name or "",
-            "kernel_id": s.kernel.id,
-            "kernel_name": s.kernel.name,
-            "kernel_state": getattr(s.kernel, "execution_state", "unknown"),
-        })
+        result.append(
+            {
+                "session_id": s.id,
+                "name": s.name or "",
+                "kernel_id": s.kernel.id,
+                "kernel_name": s.kernel.name,
+                "kernel_state": getattr(s.kernel, "execution_state", "unknown"),
+            }
+        )
     return result
 
 
@@ -79,7 +83,9 @@ def delete_session(server_url: str, session_id: str, token: str | None = None) -
 
 
 def get_kernel_id_for_session(
-    server_url: str, session_id: str, token: str | None = None,
+    server_url: str,
+    session_id: str,
+    token: str | None = None,
 ) -> str:
     """Get kernel_id from a session_id."""
     client = get_client(server_url, token)

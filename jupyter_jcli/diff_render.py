@@ -17,10 +17,14 @@ def render_no_baseline_diff(
     """Unified diff between ours and theirs for no-baseline DRIFT_ONLY cases."""
     lines_ours = ours_text.splitlines(keepends=True)
     lines_theirs = theirs_text.splitlines(keepends=True)
-    diff = "".join(difflib.unified_diff(
-        lines_ours, lines_theirs,
-        fromfile=ours_label, tofile=theirs_label,
-    ))
+    diff = "".join(
+        difflib.unified_diff(
+            lines_ours,
+            lines_theirs,
+            fromfile=ours_label,
+            tofile=theirs_label,
+        )
+    )
     if len(diff) > max_chars:
         diff = diff[:max_chars] + "\n... (truncated)\n"
     return diff

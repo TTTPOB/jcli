@@ -37,47 +37,59 @@ def process_outputs(raw_outputs: list[dict]) -> list[dict]:
             text = output.get("text", "")
             if isinstance(text, list):
                 text = "".join(text)
-            results.append({
-                "type": OutputType.STREAM,
-                "name": output.get("name", "stdout"),
-                "text": strip_ansi(str(text)),
-            })
+            results.append(
+                {
+                    "type": OutputType.STREAM,
+                    "name": output.get("name", "stdout"),
+                    "text": strip_ansi(str(text)),
+                }
+            )
 
         elif output_type in (OutputType.DISPLAY_DATA, OutputType.EXECUTE_RESULT):
             data = output.get("data", {})
             # Check image types first
             if "image/png" in data:
                 path = save_base64_image(data["image/png"], suffix=".png")
-                results.append({"type": OutputType.IMAGE, "path": path, "mime": "image/png"})
+                results.append(
+                    {"type": OutputType.IMAGE, "path": path, "mime": "image/png"}
+                )
             elif "image/jpeg" in data:
                 path = save_base64_image(data["image/jpeg"], suffix=".jpg")
-                results.append({"type": OutputType.IMAGE, "path": path, "mime": "image/jpeg"})
+                results.append(
+                    {"type": OutputType.IMAGE, "path": path, "mime": "image/jpeg"}
+                )
             elif "text/html" in data:
                 results.append({"type": OutputType.HTML, "html": data["text/html"]})
             elif "text/plain" in data:
                 plain = data["text/plain"]
                 if isinstance(plain, list):
                     plain = "".join(plain)
-                results.append({
-                    "type": OutputType.EXECUTE_RESULT,
-                    "text": strip_ansi(str(plain)),
-                })
+                results.append(
+                    {
+                        "type": OutputType.EXECUTE_RESULT,
+                        "text": strip_ansi(str(plain)),
+                    }
+                )
             else:
-                results.append({
-                    "type": output_type,
-                    "keys": list(data.keys()),
-                })
+                results.append(
+                    {
+                        "type": output_type,
+                        "keys": list(data.keys()),
+                    }
+                )
 
         elif output_type == OutputType.ERROR:
             traceback = output.get("traceback", [])
             if isinstance(traceback, list):
                 traceback = [strip_ansi(str(line)) for line in traceback]
-            results.append({
-                "type": OutputType.ERROR,
-                "ename": output.get("ename", ""),
-                "evalue": output.get("evalue", ""),
-                "traceback": traceback,
-            })
+            results.append(
+                {
+                    "type": OutputType.ERROR,
+                    "ename": output.get("ename", ""),
+                    "evalue": output.get("evalue", ""),
+                    "traceback": traceback,
+                }
+            )
 
     return results
 

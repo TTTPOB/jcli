@@ -33,15 +33,23 @@ pass_ctx = click.make_pass_decorator(Context)
 
 @click.group()
 @click.option(
-    "--server-url", "-s", default=None,
+    "--server-url",
+    "-s",
+    default=None,
     help="Jupyter server URL (env: JCLI_JUPYTER_SERVER_URL, default: http://localhost:8888)",
 )
 @click.option(
-    "--token", "-t", default=None,
+    "--token",
+    "-t",
+    default=None,
     help="Jupyter server token (env: JCLI_JUPYTER_SERVER_TOKEN)",
 )
 @click.option(
-    "--json", "-j", "use_json", is_flag=True, default=False,
+    "--json",
+    "-j",
+    "use_json",
+    is_flag=True,
+    default=False,
     help="Output as JSON for commands; exec --file streams JSON Lines for scripts",
 )
 @click.version_option(package_name="jupyter-jcli")

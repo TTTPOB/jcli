@@ -23,34 +23,42 @@ def convert_to_nbformat_outputs(raw_outputs: list[dict]) -> list:
             text = output.get("text", "")
             if isinstance(text, list):
                 text = "".join(text)
-            nb_outputs.append(nbformat.v4.new_output(
-                output_type=OutputType.STREAM.value,
-                name=output.get("name", "stdout"),
-                text=str(text),
-            ))
+            nb_outputs.append(
+                nbformat.v4.new_output(
+                    output_type=OutputType.STREAM.value,
+                    name=output.get("name", "stdout"),
+                    text=str(text),
+                )
+            )
 
         elif output_type == OutputType.EXECUTE_RESULT:
-            nb_outputs.append(nbformat.v4.new_output(
-                output_type=OutputType.EXECUTE_RESULT.value,
-                data=output.get("data", {}),
-                metadata=output.get("metadata", {}),
-                execution_count=output.get("execution_count"),
-            ))
+            nb_outputs.append(
+                nbformat.v4.new_output(
+                    output_type=OutputType.EXECUTE_RESULT.value,
+                    data=output.get("data", {}),
+                    metadata=output.get("metadata", {}),
+                    execution_count=output.get("execution_count"),
+                )
+            )
 
         elif output_type == OutputType.DISPLAY_DATA:
-            nb_outputs.append(nbformat.v4.new_output(
-                output_type=OutputType.DISPLAY_DATA.value,
-                data=output.get("data", {}),
-                metadata=output.get("metadata", {}),
-            ))
+            nb_outputs.append(
+                nbformat.v4.new_output(
+                    output_type=OutputType.DISPLAY_DATA.value,
+                    data=output.get("data", {}),
+                    metadata=output.get("metadata", {}),
+                )
+            )
 
         elif output_type == OutputType.ERROR:
-            nb_outputs.append(nbformat.v4.new_output(
-                output_type=OutputType.ERROR.value,
-                ename=output.get("ename", ""),
-                evalue=output.get("evalue", ""),
-                traceback=output.get("traceback", []),
-            ))
+            nb_outputs.append(
+                nbformat.v4.new_output(
+                    output_type=OutputType.ERROR.value,
+                    ename=output.get("ename", ""),
+                    evalue=output.get("evalue", ""),
+                    traceback=output.get("traceback", []),
+                )
+            )
 
     return nb_outputs
 

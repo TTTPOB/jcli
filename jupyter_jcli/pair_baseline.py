@@ -277,7 +277,7 @@ def list_all_refs(repo_root: Path) -> list[RefInfo]:
         refname, _, subject = line.partition("\t")
         rel_posix_path = None
         if subject.startswith(_SUBJECT_PREFIX):
-            rel_posix_path = subject[len(_SUBJECT_PREFIX):]
+            rel_posix_path = subject[len(_SUBJECT_PREFIX) :]
         refs.append(
             RefInfo(
                 refname=refname,

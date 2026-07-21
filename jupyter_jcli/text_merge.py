@@ -10,8 +10,8 @@ from pathlib import Path
 
 @dataclass
 class MergeResult:
-    text: str            # merged content (with conflict markers if any)
-    has_conflict: bool   # True iff exit_code > 0
+    text: str  # merged content (with conflict markers if any)
+    has_conflict: bool  # True iff exit_code > 0
     conflict_count: int  # exit_code value (number of conflict hunks)
 
 
@@ -45,11 +45,19 @@ def merge_three_way(
 
             proc = subprocess.run(
                 [
-                    "git", "merge-file", "--stdout", "--diff3",
-                    "-L", ours_label,
-                    "-L", base_label,
-                    "-L", theirs_label,
-                    str(ours_file), str(base_file), str(theirs_file),
+                    "git",
+                    "merge-file",
+                    "--stdout",
+                    "--diff3",
+                    "-L",
+                    ours_label,
+                    "-L",
+                    base_label,
+                    "-L",
+                    theirs_label,
+                    str(ours_file),
+                    str(base_file),
+                    str(theirs_file),
                 ],
                 capture_output=True,
                 check=False,
@@ -57,7 +65,9 @@ def merge_three_way(
             exit_code = proc.returncode
 
             if exit_code < 0:
-                return _fallback_merge(base, ours, theirs, ours_label, base_label, theirs_label)
+                return _fallback_merge(
+                    base, ours, theirs, ours_label, base_label, theirs_label
+                )
 
             return MergeResult(
                 text=proc.stdout.decode("utf-8"),
@@ -77,6 +87,7 @@ def _fallback_merge(
     theirs_label: str,
 ) -> MergeResult:
     """Synthetic conflict block when git binary is unavailable."""
+
     def _ensure_newline(s: str) -> str:
         return s if s.endswith("\n") else s + "\n"
 

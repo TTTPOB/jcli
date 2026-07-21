@@ -30,7 +30,9 @@ def git_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _git(repo: Path, *args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    repo: Path, *args: str, env: dict[str, str] | None = None, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
@@ -53,7 +55,9 @@ def _git_env(ts: int) -> dict[str, str]:
     return env
 
 
-def _write_and_commit(repo: Path, rel_path: str, text: str, ts: int, *, add: bool = True) -> Path:
+def _write_and_commit(
+    repo: Path, rel_path: str, text: str, ts: int, *, add: bool = True
+) -> Path:
     path = repo / rel_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -76,7 +80,9 @@ class TestReadWriteBaseline:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 1")
 
-    def test_ref_without_head_file_returns_ref_text(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ref_without_head_file_returns_ref_text(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _git(git_repo, "commit", "--allow-empty", "-m", "init", env=_git_env(100))
         py_path = git_repo / "ghost.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
@@ -84,7 +90,9 @@ class TestReadWriteBaseline:
         assert pair_baseline.write_baseline(py_path, _make_py_text("x = 2")) is True
         assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 2")
 
-    def test_newer_ref_wins_and_subject_is_recorded(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_newer_ref_wins_and_subject_is_recorded(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
@@ -97,7 +105,9 @@ class TestReadWriteBaseline:
         assert show.stdout == _make_py_text("x = 10")
         assert subject.stdout.strip() == "jcli pair-sync baseline: nb.py"
 
-    def test_paths_with_spaces_and_unicode_round_trip(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_paths_with_spaces_and_unicode_round_trip(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         rel_path = "子 目录/测试 notebook.py"
         py_path = _write_and_commit(git_repo, rel_path, _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
@@ -105,8 +115,12 @@ class TestReadWriteBaseline:
         assert pair_baseline.write_baseline(py_path, _make_py_text("x = 3")) is True
         assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 3")
 
-    def test_write_baseline_works_without_git_identity(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+    def test_write_baseline_works_without_git_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        subprocess.run(
+            ["git", "init"], cwd=str(tmp_path), check=True, capture_output=True
+        )
         _git(tmp_path, "commit", "--allow-empty", "-m", "init", env=_git_env(100))
         py_path = tmp_path / "nb.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
@@ -121,7 +135,9 @@ class TestReadWriteBaseline:
 
 
 class TestLazyEviction:
-    def test_newer_head_evicts_ref_and_returns_head(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_newer_head_evicts_ref_and_returns_head(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
@@ -130,10 +146,14 @@ class TestLazyEviction:
         _write_and_commit(git_repo, "nb.py", _make_py_text("x = 20"), 200)
 
         assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 20")
-        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        refs = _git(
+            git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
+        )
         assert refs.stdout.strip() == ""
 
-    def test_delete_failure_does_not_block_head_fallback(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_failure_does_not_block_head_fallback(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
@@ -149,7 +169,9 @@ class TestLazyEviction:
 
 
 class TestGc:
-    def test_gc_dry_run_reports_without_deleting(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_gc_dry_run_reports_without_deleting(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
@@ -157,12 +179,16 @@ class TestGc:
         _write_and_commit(git_repo, "nb.py", _make_py_text("x = 20"), 200)
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=True)
-        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        refs = _git(
+            git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
+        )
         assert removed == 1
         assert kept == 0
         assert refs.stdout.strip() != ""
 
-    def test_gc_removes_orphan_ref_for_deleted_path(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_gc_removes_orphan_ref_for_deleted_path(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _git(git_repo, "commit", "--allow-empty", "-m", "init", env=_git_env(100))
         ghost_path = git_repo / "ghost.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
@@ -170,32 +196,42 @@ class TestGc:
         assert pair_baseline.write_baseline(ghost_path, _make_py_text("x = 3")) is True
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=False)
-        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        refs = _git(
+            git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
+        )
         assert removed == 1
         assert kept == 0
         assert refs.stdout.strip() == ""
 
-    def test_gc_keeps_ref_newer_than_head(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_gc_keeps_ref_newer_than_head(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
         assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=False)
-        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        refs = _git(
+            git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
+        )
         assert removed == 0
         assert kept == 1
         assert refs.stdout.strip() != ""
 
     def test_gc_removes_invalid_subject_refs(self, git_repo: Path) -> None:
         _git(git_repo, "commit", "--allow-empty", "-m", "init", env=_git_env(100))
-        blob_sha = subprocess.run(
-            ["git", "hash-object", "-w", "--stdin"],
-            cwd=str(git_repo),
-            input=b"plain\n",
-            check=True,
-            capture_output=True,
-        ).stdout.decode("utf-8").strip()
+        blob_sha = (
+            subprocess.run(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=str(git_repo),
+                input=b"plain\n",
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode("utf-8")
+            .strip()
+        )
         invalid_tree = subprocess.run(
             ["git", "mktree"],
             cwd=str(git_repo),
@@ -216,7 +252,9 @@ class TestGc:
         _git(git_repo, "update-ref", "refs/jcli/pair-sync/badsubject", commit_sha)
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=False)
-        refs = _git(git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)")
+        refs = _git(
+            git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
+        )
         assert removed == 1
         assert kept == 0
         assert refs.stdout.strip() == ""

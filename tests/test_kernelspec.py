@@ -10,10 +10,17 @@ from jupyter_jcli.cli import main
 
 def test_kernelspec_list_human(jupyter_server):
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-        "kernelspec", "list",
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "-s",
+            jupyter_server["url"],
+            "-t",
+            jupyter_server["token"],
+            "kernelspec",
+            "list",
+        ],
+    )
     assert result.exit_code == 0
     assert "NAME" in result.output
     assert "python3" in result.output
@@ -21,10 +28,18 @@ def test_kernelspec_list_human(jupyter_server):
 
 def test_kernelspec_list_json(jupyter_server):
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "-s", jupyter_server["url"], "-t", jupyter_server["token"],
-        "--json", "kernelspec", "list",
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "-s",
+            jupyter_server["url"],
+            "-t",
+            jupyter_server["token"],
+            "--json",
+            "kernelspec",
+            "list",
+        ],
+    )
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert "kernelspecs" in data
@@ -49,9 +64,15 @@ def test_kernelspec_inspect_file_py_percent_json(tmp_path):
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "--json", "kernelspec", "inspect-file", str(py_file),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "--json",
+            "kernelspec",
+            "inspect-file",
+            str(py_file),
+        ],
+    )
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -75,9 +96,15 @@ def test_kernelspec_inspect_file_ipynb_json(tmp_path):
     nbformat.write(nb, str(ipynb))
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "--json", "kernelspec", "inspect-file", str(ipynb),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "--json",
+            "kernelspec",
+            "inspect-file",
+            str(ipynb),
+        ],
+    )
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -104,9 +131,14 @@ def test_kernelspec_inspect_file_human_outputs_kernel_name(tmp_path):
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "kernelspec", "inspect-file", str(py_file),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "kernelspec",
+            "inspect-file",
+            str(py_file),
+        ],
+    )
 
     assert result.exit_code == 0
     assert result.output == "python3\n"
@@ -117,9 +149,15 @@ def test_kernelspec_inspect_file_no_kernel_json(tmp_path):
     py_file.write_text("print(1)\n", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "--json", "kernelspec", "inspect-file", str(py_file),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "--json",
+            "kernelspec",
+            "inspect-file",
+            str(py_file),
+        ],
+    )
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -132,9 +170,14 @@ def test_kernelspec_inspect_file_missing_path_exits_nonzero(tmp_path):
     missing = tmp_path / "missing.py"
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "kernelspec", "inspect-file", str(missing),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "kernelspec",
+            "inspect-file",
+            str(missing),
+        ],
+    )
 
     assert result.exit_code != 0
     assert "does not exist" in result.output

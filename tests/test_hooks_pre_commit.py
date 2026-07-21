@@ -17,17 +17,22 @@ from jupyter_jcli.cli import main
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def git_repo(tmp_path):
     """Minimal git repo in tmp_path."""
     subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test User"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     return tmp_path
 
@@ -51,8 +56,11 @@ def _combined(result) -> str:
 
 def _make_py(path: Path, *sources: str) -> None:
     lines = [
-        "# ---\n", "# jupyter:\n", "#   kernelspec:\n",
-        "#     name: python3\n", "# ---\n\n",
+        "# ---\n",
+        "# jupyter:\n",
+        "#   kernelspec:\n",
+        "#     name: python3\n",
+        "# ---\n\n",
     ]
     for src in sources:
         lines.append(f"# %%\n{src}\n\n")
@@ -62,7 +70,9 @@ def _make_py(path: Path, *sources: str) -> None:
 def _make_ipynb(path: Path, *sources: str) -> None:
     nb = nbformat.v4.new_notebook()
     nb.metadata["kernelspec"] = {
-        "name": "python3", "display_name": "Python 3", "language": "python",
+        "name": "python3",
+        "display_name": "Python 3",
+        "language": "python",
     }
     for src in sources:
         nb.cells.append(nbformat.v4.new_code_cell(src))
@@ -72,7 +82,10 @@ def _make_ipynb(path: Path, *sources: str) -> None:
 def _staged_files(repo: Path) -> list[str]:
     r = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
-        cwd=str(repo), capture_output=True, text=True, check=False,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return [p for p in r.stdout.splitlines() if p.strip()]
 
@@ -80,6 +93,7 @@ def _staged_files(repo: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Staged .ipynb -> blocked
 # ---------------------------------------------------------------------------
+
 
 class TestStagedIpynbBlocked:
     def test_staged_ipynb_exits_1(self, git_repo, monkeypatch):
@@ -112,6 +126,7 @@ class TestStagedIpynbBlocked:
 # Staged .py with no paired .ipynb -> no-op, exit 0
 # ---------------------------------------------------------------------------
 
+
 class TestNoPair:
     def test_py_without_ipynb_skipped(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -127,6 +142,7 @@ class TestNoPair:
 # ---------------------------------------------------------------------------
 # in_sync -> exit 0, silent
 # ---------------------------------------------------------------------------
+
 
 class TestInSync:
     def test_in_sync_pair_silent(self, git_repo, monkeypatch):
@@ -146,6 +162,7 @@ class TestInSync:
 # ---------------------------------------------------------------------------
 # Initial sync: .py missing on disk, .ipynb exists -> create .py + git add
 # ---------------------------------------------------------------------------
+
 
 class TestInitialSync:
     def test_initial_sync_creates_py(self, git_repo, monkeypatch):
@@ -173,6 +190,7 @@ class TestInitialSync:
 # merged: py_needs_update -> write .py + git add, exit 0
 # ---------------------------------------------------------------------------
 
+
 class TestMergedPyNeedsUpdate:
     def test_py_updated_and_staged(self, git_repo, monkeypatch):
         """Two cells: py changes cell1, ipynb changes cell0 (non-conflicting).
@@ -195,6 +213,7 @@ class TestMergedPyNeedsUpdate:
         assert result.exit_code == 0
         # py must have x=10 (from ipynb) AND y=20 (own change)
         from jupyter_jcli.parser import parse_py_percent
+
         cells = parse_py_percent(str(git_repo / "nb.py")).cells
         assert cells[0].source == "x = 10"
         assert cells[1].source == "y = 20"
@@ -206,6 +225,7 @@ class TestMergedPyNeedsUpdate:
 # ---------------------------------------------------------------------------
 # merged: ipynb_needs_update -> write .ipynb (not staged), exit 0
 # ---------------------------------------------------------------------------
+
 
 class TestMergedIpynbNeedsUpdate:
     def test_ipynb_updated_not_staged(self, git_repo, monkeypatch):
@@ -236,6 +256,7 @@ class TestMergedIpynbNeedsUpdate:
 # conflict (both sides changed same cell) -> exit 1
 # ---------------------------------------------------------------------------
 
+
 class TestConflict:
     def test_conflict_exits_1_with_cell_index(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -254,7 +275,9 @@ class TestConflict:
 
         assert result.exit_code == 1
         stderr = result.stderr or ""
-        assert "conflict" in stderr.lower() or "conflict" in (result.output or "").lower()
+        assert (
+            "conflict" in stderr.lower() or "conflict" in (result.output or "").lower()
+        )
         # Mention j-cli convert
         combined = _combined(result)
         assert "j-cli convert" in combined
@@ -263,6 +286,7 @@ class TestConflict:
 # ---------------------------------------------------------------------------
 # drift_only (no git base) -> exit 1
 # ---------------------------------------------------------------------------
+
 
 class TestDriftOnly:
     def test_drift_only_exits_1(self, git_repo, monkeypatch):
@@ -299,6 +323,7 @@ class TestDriftOnly:
 # Two sides change different cells -> merged, both written, exit 0
 # ---------------------------------------------------------------------------
 
+
 class TestMergeDifferentCells:
     def test_different_cells_merged(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -318,6 +343,7 @@ class TestMergeDifferentCells:
         assert result.exit_code == 0
 
         from jupyter_jcli.parser import parse_py_percent
+
         py_cells = parse_py_percent(str(git_repo / "nb.py")).cells
         assert py_cells[0].source == "x = 10"
         assert py_cells[1].source == "y = 20"
@@ -332,13 +358,16 @@ class TestMergeDifferentCells:
 # --include filter
 # ---------------------------------------------------------------------------
 
+
 class TestIncludeFilter:
     def test_include_matching_processes_file(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
         sub = git_repo / "nb"
         sub.mkdir()
         _make_py(sub / "script.py", "x = 1", "y = 2")
-        _make_ipynb(sub / "script.ipynb", "x = 99")  # count mismatch → drift_only → exit 1
+        _make_ipynb(
+            sub / "script.ipynb", "x = 99"
+        )  # count mismatch → drift_only → exit 1
         _git(git_repo, "git", "add", "nb/script.py")
 
         runner = CliRunner()
@@ -367,6 +396,7 @@ class TestIncludeFilter:
 # Fail-open: non-git dir / git not in PATH
 # ---------------------------------------------------------------------------
 
+
 class TestFailOpen:
     def test_non_git_dir_exits_0(self, tmp_path, monkeypatch):
         """Directory without git init → fail-open."""
@@ -391,6 +421,7 @@ class TestFailOpen:
 # Fail-closed: non-UTF-8 .ipynb -> exit 1
 # ---------------------------------------------------------------------------
 
+
 class TestFailClosed:
     def test_non_utf8_ipynb_exits_1(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
@@ -409,6 +440,7 @@ class TestFailClosed:
 # --debug smoke test for pre-commit-pair-sync
 # ---------------------------------------------------------------------------
 
+
 class TestPreCommitPairSyncDebug:
     def test_debug_creates_log_file(self, tmp_path, monkeypatch):
         """--debug creates a log file; pre-commit-pair-sync reads no stdin."""
@@ -418,9 +450,14 @@ class TestPreCommitPairSyncDebug:
         from click.testing import CliRunner
         from jupyter_jcli.cli import main
         import json as _json
+
         runner = CliRunner()
-        runner.invoke(main, ["_hooks", "pre-commit-pair-sync", "--debug"],
-                      input="", catch_exceptions=False)
+        runner.invoke(
+            main,
+            ["_hooks", "pre-commit-pair-sync", "--debug"],
+            input="",
+            catch_exceptions=False,
+        )
         logs = sorted(log_dir.glob("pre-commit-pair-sync-*.log"))
         assert len(logs) == 1
         data = _json.loads(logs[0].read_text())

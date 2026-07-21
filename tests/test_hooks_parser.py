@@ -1,7 +1,5 @@
 """Tests for jupyter_jcli.hooks_parser — AST-based shell command parser."""
 
-import pytest
-
 from jupyter_jcli.hooks_parser import (
     SimpleCommand,
     extract_script_target,
@@ -13,6 +11,7 @@ from jupyter_jcli.hooks_parser import (
 # ---------------------------------------------------------------------------
 # iter_simple_commands — basic parsing
 # ---------------------------------------------------------------------------
+
 
 class TestIterSimpleCommands:
     def test_single_command(self):
@@ -110,6 +109,7 @@ class TestIterSimpleCommands:
 # ---------------------------------------------------------------------------
 # unwrap_runner
 # ---------------------------------------------------------------------------
+
 
 class TestUnwrapRunner:
     def _sc(self, name: str, *args: str, assigns=None) -> SimpleCommand:
@@ -211,6 +211,7 @@ class TestUnwrapRunner:
 # extract_script_target
 # ---------------------------------------------------------------------------
 
+
 class TestExtractScriptTarget:
     def _sc(self, name: str, *args: str) -> SimpleCommand:
         return SimpleCommand(name=name, args=tuple(args), assigns={}, raw="")
@@ -229,7 +230,9 @@ class TestExtractScriptTarget:
         assert extract_script_target(self._sc("python", "-u", "foo.py")) == "foo.py"
 
     def test_python_with_multiple_flags(self):
-        assert extract_script_target(self._sc("python", "-W", "ignore", "foo.py")) is None
+        assert (
+            extract_script_target(self._sc("python", "-W", "ignore", "foo.py")) is None
+        )
         # -W takes a value; next arg is "ignore" (not .py), so stops
 
     def test_python_minus_c_not_script(self):

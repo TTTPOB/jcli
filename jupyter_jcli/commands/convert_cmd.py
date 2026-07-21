@@ -7,7 +7,11 @@ import nbformat
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli.canonicalize import canonicalize_py_text
-from jupyter_jcli.pair_io import create_ipynb_from_parsed, emit_py_percent, update_ipynb_sources
+from jupyter_jcli.pair_io import (
+    create_ipynb_from_parsed,
+    emit_py_percent,
+    update_ipynb_sources,
+)
 from jupyter_jcli.parser import ipynb_path_for_py, parse_ipynb, parse_py_percent
 
 
@@ -18,7 +22,9 @@ def convert():
 
 def _is_canonical_pair(py_path: Path, ipynb_path: Path) -> bool:
     """Return True when *py_path* and *ipynb_path* are the managed pair."""
-    return ipynb_path_for_py(py_path).resolve(strict=False) == ipynb_path.resolve(strict=False)
+    return ipynb_path_for_py(py_path).resolve(strict=False) == ipynb_path.resolve(
+        strict=False
+    )
 
 
 def _refresh_pair_baseline(py_path: Path) -> None:
@@ -31,7 +37,9 @@ def _refresh_pair_baseline(py_path: Path) -> None:
 
 
 @convert.command("ipynb-to-py")
-@click.argument("in_ipynb", metavar="<in.ipynb>", type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "in_ipynb", metavar="<in.ipynb>", type=click.Path(exists=True, dir_okay=False)
+)
 @click.argument("out_py", metavar="<out.py>", type=click.Path(dir_okay=False))
 def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     """Convert a .ipynb file to py:percent format."""
@@ -46,9 +54,16 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
 
 
 @convert.command("py-to-ipynb")
-@click.argument("in_py", metavar="<in.py>", type=click.Path(exists=True, dir_okay=False))
-@click.argument("out_ipynb", metavar="[out.ipynb]", required=False, default=None,
-                type=click.Path(dir_okay=False))
+@click.argument(
+    "in_py", metavar="<in.py>", type=click.Path(exists=True, dir_okay=False)
+)
+@click.argument(
+    "out_ipynb",
+    metavar="[out.ipynb]",
+    required=False,
+    default=None,
+    type=click.Path(dir_okay=False),
+)
 def py_to_ipynb(in_py: str, out_ipynb: str | None) -> None:
     """Convert a py:percent file to .ipynb format.
 

@@ -1,6 +1,5 @@
 """Tests for jupyter_jcli.pair_io."""
 
-from pathlib import Path
 import ast
 
 from IPython.core.inputtransformer2 import TransformerManager
@@ -19,12 +18,15 @@ from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _cells(*pairs: tuple[str, str]) -> list[Cell]:
     """Build a Cell list from (cell_type, source) pairs."""
     return [Cell(index=i, cell_type=t, source=s) for i, (t, s) in enumerate(pairs)]
 
 
-def _parsed(kernel: str | None, *pairs: tuple[str, str], fmr: str | None = None) -> ParsedFile:
+def _parsed(
+    kernel: str | None, *pairs: tuple[str, str], fmr: str | None = None
+) -> ParsedFile:
     return ParsedFile(
         kernel_name=kernel,
         cells=_cells(*pairs),
@@ -35,6 +37,7 @@ def _parsed(kernel: str | None, *pairs: tuple[str, str], fmr: str | None = None)
 # ---------------------------------------------------------------------------
 # emit_py_percent — round-trip stability
 # ---------------------------------------------------------------------------
+
 
 class TestEmitPyPercent:
     def test_roundtrip_code_cell(self):
@@ -49,7 +52,10 @@ class TestEmitPyPercent:
     @pytest.mark.parametrize(
         ("source", "commented"),
         [
-            ("%load_ext autoreload\n%autoreload 2", "# %load_ext autoreload\n# %autoreload 2"),
+            (
+                "%load_ext autoreload\n%autoreload 2",
+                "# %load_ext autoreload\n# %autoreload 2",
+            ),
             ("!ls -al", "# !ls -al"),
             ("object?", "# object?"),
             ('%%bash\necho "hello"', '# echo "hello"'),
@@ -229,9 +235,9 @@ class TestEmitPyPercent:
         source = "## Title\nSome text"
         parsed = _parsed(None, ("markdown", source))
         text = emit_py_percent(parsed)
-        lines = [l for l in text.splitlines() if l.startswith("#")]
+        lines = [line for line in text.splitlines() if line.startswith("#")]
         # All markdown body lines should be prefixed with "# "
-        body_lines = [l for l in lines if not l.startswith("# %%")]
+        body_lines = [line for line in lines if not line.startswith("# %%")]
         for line in body_lines:
             assert line.startswith("# ") or line == "#"
 
@@ -265,6 +271,7 @@ class TestEmitPyPercent:
         """When ParsedFile carries display_name and language, they appear in the
         synthesized header in alphabetical order (display_name, language, name)."""
         from jupyter_jcli.parser import ParsedFile
+
         parsed = ParsedFile(
             kernel_name="ir",
             kernel_display_name="R 4.2",
@@ -276,7 +283,9 @@ class TestEmitPyPercent:
         assert "language: R" in text
         assert "name: ir" in text
         # alphabetical order: display_name before language before name
-        assert text.index("display_name") < text.index("language") < text.index("name: ir")
+        assert (
+            text.index("display_name") < text.index("language") < text.index("name: ir")
+        )
         # round-trip
         parsed2 = parse_py_percent_text(text)
         assert parsed2.kernel_name == "ir"
@@ -311,6 +320,7 @@ class TestEmitPyPercent:
 # update_ipynb_sources — source-only update, outputs/metadata preserved
 # ---------------------------------------------------------------------------
 
+
 def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
     """Create a notebook from (cell_type, source, outputs) triples."""
     nb = nbformat.v4.new_notebook()
@@ -331,10 +341,12 @@ def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
 class TestUpdateIpynbSources:
     def test_updates_source_preserves_outputs_on_unchanged_cell(self, tmp_path):
         """Cells whose source is unchanged keep their outputs (hash match)."""
-        nb = _make_ipynb([
-            ("code", "x = 1", ["1\n"]),
-            ("code", "y = 2", ["2\n"]),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "x = 1", ["1\n"]),
+                ("code", "y = 2", ["2\n"]),
+            ]
+        )
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
 
@@ -355,16 +367,18 @@ class TestUpdateIpynbSources:
 
     def test_changed_cell_loses_outputs(self, tmp_path):
         """Cells with changed source lose their outputs (no hash match)."""
-        nb = _make_ipynb([
-            ("code", "x = 1", ["1\n"]),
-            ("code", "y = 2", ["2\n"]),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "x = 1", ["1\n"]),
+                ("code", "y = 2", ["2\n"]),
+            ]
+        )
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
 
         new_cells = [
             Cell(0, "code", "x = 10"),  # changed
-            Cell(1, "code", "y = 2"),   # unchanged
+            Cell(1, "code", "y = 2"),  # unchanged
         ]
         update_ipynb_sources(p, new_cells)
 
@@ -381,8 +395,8 @@ class TestUpdateIpynbSources:
         nbformat.write(nb, str(p))
 
         new_cells = [
-            Cell(0, "code", "x = 1"),   # same -> outputs preserved
-            Cell(1, "code", "y = 2"),   # new cell
+            Cell(0, "code", "x = 1"),  # same -> outputs preserved
+            Cell(1, "code", "y = 2"),  # new cell
         ]
         update_ipynb_sources(p, new_cells)
 
@@ -395,10 +409,12 @@ class TestUpdateIpynbSources:
 
     def test_supports_count_change_delete(self, tmp_path):
         """Deleting a cell (count shrinks) works without error."""
-        nb = _make_ipynb([
-            ("code", "x = 1", ["1\n"]),
-            ("code", "y = 2", ["2\n"]),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "x = 1", ["1\n"]),
+                ("code", "y = 2", ["2\n"]),
+            ]
+        )
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
 
@@ -414,6 +430,7 @@ class TestUpdateIpynbSources:
 # ---------------------------------------------------------------------------
 # create_ipynb_from_parsed
 # ---------------------------------------------------------------------------
+
 
 class TestCreateIpynbFromParsed:
     def test_creates_notebook_with_cells(self, tmp_path):

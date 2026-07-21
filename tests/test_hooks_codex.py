@@ -40,11 +40,7 @@ class TestExtractBashCommandCodex:
 
     def test_dash_c_not_at_index_1(self):
         """-c flag with --norc before it."""
-        payload = {
-            "tool_input": {
-                "command": ["bash", "--norc", "-c", "echo hello"]
-            }
-        }
+        payload = {"tool_input": {"command": ["bash", "--norc", "-c", "echo hello"]}}
         result = _extract_bash_command_codex(payload)
         assert result == "echo hello"
 
@@ -137,7 +133,7 @@ class TestExtractFilePathsCodex:
                     "apply_patch",
                     "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n",
                 ]
-            }
+            },
         }
         result = _extract_file_paths_codex(payload)
         assert result == ["foo.py"]
@@ -147,7 +143,7 @@ class TestExtractFilePathsCodex:
             "tool_name": "apply_patch",
             "tool_input": {
                 "command": "*** Update File: bar.py\n@@ -1 +1 @@\n- old\n+ new\n"
-            }
+            },
         }
         result = _extract_file_paths_codex(payload)
         assert result == ["bar.py"]
@@ -159,20 +155,22 @@ class TestExtractFilePathsCodex:
 class TestCodexNotebookExecGuard:
     def test_denies_nbconvert_with_codex_bash_array(self):
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": ["bash", "-c", "jupyter nbconvert --execute foo.ipynb"]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": "/tmp",
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": ["bash", "-c", "jupyter nbconvert --execute foo.ipynb"]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": "/tmp",
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "notebook-exec-guard", "--platform", "codex"],
@@ -191,20 +189,20 @@ class TestCodexPythonRunGuard:
         (tmp_path / "test.py").write_text("# %%\nprint('hello')\n", encoding="utf-8")
         (tmp_path / "test.ipynb").write_text("{}", encoding="utf-8")
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": ["bash", "-c", "python test.py"]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": ["bash", "-c", "python test.py"]},
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "python-run-guard", "--platform", "codex"],
@@ -222,23 +220,25 @@ class TestCodexPairDriftGuardPre:
         # Create a .py file so path.exists() passes
         (tmp_path / "foo.py").write_text("# %%\nprint('hello')\n", encoding="utf-8")
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n",
-                ]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n",
+                    ]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
@@ -255,7 +255,7 @@ class TestCodexExtractFilePaths:
             "tool_name": "Bash",
             "tool_input": {
                 "command": "*** Update File: fake.py\n@@ -1 +1 @@\n- old\n+ new\n"
-            }
+            },
         }
         result = _extract_file_paths_codex(payload)
         assert result == []
@@ -263,7 +263,10 @@ class TestCodexExtractFilePaths:
     def test_handles_missing_tool_name(self):
         payload = {
             "tool_input": {
-                "command": ["apply_patch", "*** Update File: foo.py\n@@ ... @@\n- old\n+ new\n"]
+                "command": [
+                    "apply_patch",
+                    "*** Update File: foo.py\n@@ ... @@\n- old\n+ new\n",
+                ]
             }
         }
         result = _extract_file_paths_codex(payload)
@@ -282,28 +285,30 @@ class TestCodexMultiFilePreMerge:
         """Multiple .ipynb files in one patch → single merged DENY."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    (
-                        "*** Begin Patch\n"
-                        "*** Update File: a.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** Update File: b.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** End Patch"
-                    ),
-                ]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        (
+                            "*** Begin Patch\n"
+                            "*** Update File: a.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** Update File: b.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** End Patch"
+                        ),
+                    ]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
@@ -335,28 +340,30 @@ class TestCodexMultiFilePreMerge:
         )
 
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    (
-                        "*** Begin Patch\n"
-                        "*** Update File: bar.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** End Patch"
-                    ),
-                ]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        (
+                            "*** Begin Patch\n"
+                            "*** Update File: bar.ipynb\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** End Patch"
+                        ),
+                    ]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
@@ -376,23 +383,25 @@ class TestCodexMultiFilePreMerge:
         """Single .ipynb file still produces a DENY (no regression)."""
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    "*** Update File: single.ipynb\n@@ -1 +1 @@\n- old\n+ new\n",
-                ]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        "*** Update File: single.ipynb\n@@ -1 +1 @@\n- old\n+ new\n",
+                    ]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
@@ -427,28 +436,30 @@ class TestCodexMultiFilePreMerge:
         )
 
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    (
-                        "*** Begin Patch\n"
-                        "*** Update File: bad.py\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** Update File: good.py\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** End Patch"
-                    ),
-                ]
-            },
-            "hook_event_name": "PreToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        (
+                            "*** Begin Patch\n"
+                            "*** Update File: bad.py\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** Update File: good.py\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** End Patch"
+                        ),
+                    ]
+                },
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
@@ -481,9 +492,13 @@ class TestCodexMultiFilePostMerge:
             call_count[0] += 1
             # Return different messages per file
             if "a" in str(path):
-                return "Auto-synced your edit in `a.py` to `a.ipynb`. Pair is now in sync."
+                return (
+                    "Auto-synced your edit in `a.py` to `a.ipynb`. Pair is now in sync."
+                )
             if "b" in str(path):
-                return "Auto-synced your edit in `b.py` to `b.ipynb`. Pair is now in sync."
+                return (
+                    "Auto-synced your edit in `b.py` to `b.ipynb`. Pair is now in sync."
+                )
             return None
 
         monkeypatch.setattr(
@@ -492,28 +507,30 @@ class TestCodexMultiFilePostMerge:
         )
 
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    (
-                        "*** Begin Patch\n"
-                        "*** Update File: a.py\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** Update File: b.py\n@@ -1 +1 @@\n- old\n+ new\n"
-                        "*** End Patch"
-                    ),
-                ]
-            },
-            "hook_event_name": "PostToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        (
+                            "*** Begin Patch\n"
+                            "*** Update File: a.py\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** Update File: b.py\n@@ -1 +1 @@\n- old\n+ new\n"
+                            "*** End Patch"
+                        ),
+                    ]
+                },
+                "hook_event_name": "PostToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-post", "--platform", "codex"],
@@ -529,7 +546,9 @@ class TestCodexMultiFilePostMerge:
         assert "---" in context
         assert call_count[0] == 2
 
-    def test_multiple_contexts_have_a_total_character_limit(self, tmp_path, monkeypatch):
+    def test_multiple_contexts_have_a_total_character_limit(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
         (tmp_path / "b.py").write_text("b = 1\n", encoding="utf-8")
@@ -537,16 +556,20 @@ class TestCodexMultiFilePostMerge:
             "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
             lambda path, logger=None: f"{path.name}:" + "x" * 80,
         )
-        monkeypatch.setattr("jupyter_jcli.commands.hooks_cmd._HOOK_CONTEXT_MAX_CHARS", 120)
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    "*** Update File: a.py\n@@\n*** Update File: b.py\n@@\n",
-                ]
-            },
-        })
+        monkeypatch.setattr(
+            "jupyter_jcli.commands.hooks_cmd._HOOK_CONTEXT_MAX_CHARS", 120
+        )
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        "*** Update File: a.py\n@@\n*** Update File: b.py\n@@\n",
+                    ]
+                },
+            }
+        )
 
         result = CliRunner().invoke(
             main,
@@ -576,23 +599,25 @@ class TestCodexMultiFilePostMerge:
         )
 
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    "*** Update File: only.py\n@@ -1 +1 @@\n- old\n+ new\n",
-                ]
-            },
-            "hook_event_name": "PostToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        "*** Update File: only.py\n@@ -1 +1 @@\n- old\n+ new\n",
+                    ]
+                },
+                "hook_event_name": "PostToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-post", "--platform", "codex"],
@@ -621,23 +646,25 @@ class TestCodexMultiFilePostMerge:
         )
 
         runner = CliRunner()
-        payload = json.dumps({
-            "tool_name": "apply_patch",
-            "tool_input": {
-                "command": [
-                    "apply_patch",
-                    "*** Update File: noop.py\n@@ -1 +1 @@\n- old\n+ new\n",
-                ]
-            },
-            "hook_event_name": "PostToolUse",
-            "model": "gpt-5",
-            "permission_mode": "default",
-            "session_id": "test",
-            "tool_use_id": "t1",
-            "transcript_path": None,
-            "cwd": str(tmp_path),
-            "turn_id": "t1",
-        })
+        payload = json.dumps(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": [
+                        "apply_patch",
+                        "*** Update File: noop.py\n@@ -1 +1 @@\n- old\n+ new\n",
+                    ]
+                },
+                "hook_event_name": "PostToolUse",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "session_id": "test",
+                "tool_use_id": "t1",
+                "transcript_path": None,
+                "cwd": str(tmp_path),
+                "turn_id": "t1",
+            }
+        )
         result = runner.invoke(
             main,
             ["_hooks", "pair-drift-guard-post", "--platform", "codex"],
@@ -646,4 +673,3 @@ class TestCodexMultiFilePostMerge:
         )
         assert result.exit_code == 0
         assert result.stdout.strip() == ""
-

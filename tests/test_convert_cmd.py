@@ -10,12 +10,13 @@ from click.testing import CliRunner
 from jupyter_jcli import pair_baseline
 from jupyter_jcli.canonicalize import canonicalize_py_text
 from jupyter_jcli.cli import main
-from jupyter_jcli.parser import parse_py_percent, parse_py_percent_text
+from jupyter_jcli.parser import parse_py_percent
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _invoke(*args: str):
     runner = CliRunner()
@@ -62,9 +63,15 @@ def _has_ref(repo: Path, rel_py_path: str) -> bool:
     return result.stdout.strip() == ref_name
 
 
-def _make_ipynb(cells: list[tuple[str, str, list]], kernel: str = "python3") -> nbformat.NotebookNode:
+def _make_ipynb(
+    cells: list[tuple[str, str, list]], kernel: str = "python3"
+) -> nbformat.NotebookNode:
     nb = nbformat.v4.new_notebook()
-    nb.metadata["kernelspec"] = {"name": kernel, "display_name": kernel, "language": "python"}
+    nb.metadata["kernelspec"] = {
+        "name": kernel,
+        "display_name": kernel,
+        "language": "python",
+    }
     for cell_type, source, outputs in cells:
         if cell_type == "code":
             cell = nbformat.v4.new_code_cell(source)
@@ -83,13 +90,16 @@ def _make_ipynb(cells: list[tuple[str, str, list]], kernel: str = "python3") -> 
 # ipynb-to-py
 # ---------------------------------------------------------------------------
 
+
 class TestIpynbToPy:
     def test_produces_parseable_py(self, tmp_path):
-        nb = _make_ipynb([
-            ("code", "import numpy as np", []),
-            ("markdown", "## Analysis", []),
-            ("code", "x = np.array([1,2,3])", []),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "import numpy as np", []),
+                ("markdown", "## Analysis", []),
+                ("code", "x = np.array([1,2,3])", []),
+            ]
+        )
         ipynb = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(ipynb))
         py = tmp_path / "nb.py"
@@ -117,10 +127,12 @@ class TestIpynbToPy:
 
     def test_roundtrip_content(self, tmp_path):
         """ipynb -> py -> parse should give same sources."""
-        nb = _make_ipynb([
-            ("code", "a = 1", []),
-            ("code", "b = 2", []),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "a = 1", []),
+                ("code", "b = 2", []),
+            ]
+        )
         ipynb = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(ipynb))
         py = tmp_path / "nb.py"
@@ -165,7 +177,9 @@ class TestIpynbToPy:
 
         assert result.exit_code == 0
         assert _has_ref(git_repo, "nb.py")
-        assert pair_baseline.read_baseline(py) == canonicalize_py_text(py.read_text(encoding="utf-8"))
+        assert pair_baseline.read_baseline(py) == canonicalize_py_text(
+            py.read_text(encoding="utf-8")
+        )
 
     def test_dummy_ipynb_to_py_refreshes_baseline(self, git_repo):
         nb = _make_ipynb([("code", "x = 1", [])])
@@ -204,6 +218,7 @@ class TestIpynbToPy:
 # ---------------------------------------------------------------------------
 # py-to-ipynb — new file creation
 # ---------------------------------------------------------------------------
+
 
 class TestPyToIpynbCreate:
     def test_creates_new_ipynb(self, tmp_path):
@@ -251,7 +266,9 @@ class TestPyToIpynbCreate:
         assert result.exit_code == 0
         assert (git_repo / "script.ipynb").exists()
         assert _has_ref(git_repo, "script.py")
-        assert pair_baseline.read_baseline(py) == canonicalize_py_text(py.read_text(encoding="utf-8"))
+        assert pair_baseline.read_baseline(py) == canonicalize_py_text(
+            py.read_text(encoding="utf-8")
+        )
 
     def test_noncanonical_py_to_ipynb_does_not_refresh_baseline(self, git_repo):
         py = git_repo / "script.py"
@@ -278,13 +295,16 @@ class TestPyToIpynbCreate:
 # py-to-ipynb — in-place update (preserve outputs)
 # ---------------------------------------------------------------------------
 
+
 class TestPyToIpynbUpdate:
     def test_update_preserves_outputs_for_unchanged_cells(self, tmp_path):
         """Cells whose source is unchanged keep outputs; changed cells lose them."""
-        nb = _make_ipynb([
-            ("code", "x = 1", ["1\n"]),
-            ("code", "y = 2", ["2\n"]),
-        ])
+        nb = _make_ipynb(
+            [
+                ("code", "x = 1", ["1\n"]),
+                ("code", "y = 2", ["2\n"]),
+            ]
+        )
         ipynb = tmp_path / "script.ipynb"
         nbformat.write(nb, str(ipynb))
 
