@@ -249,7 +249,7 @@ j-cli -j kernelspec list
 
 ### `session create`
 
-Create a new session. Returns the session_id needed for all subsequent commands.
+Create a new session. Returns the full session_id for machine-readable output. Human commands also accept a selector: full ID, displayed short ID, or exact unique session name.
 
 ```bash
 j-cli session create --kernel python3
@@ -273,14 +273,14 @@ j-cli -j session list
 #   "vars_preview": {"names": ["x", "df"], "total": 2}}]}
 ```
 
-A hint line in human output points at `j-cli vars <SESSION_ID>` for the full variable list.
+Human output shows the shortest unique session ID prefix, with at least three characters. Commands accept a full ID, the displayed short ID, or an exact unique session name. A selector matching multiple sessions exits without choosing one. A hint line points at `j-cli vars <SESSION_SELECTOR>` for the full variable list.
 
 ### `session kill`
 
 Delete a session and shut down its kernel.
 
 ```bash
-j-cli session kill <session_id>
+j-cli session kill <session_selector>
 ```
 
 ### `kernel interrupt`
@@ -288,7 +288,7 @@ j-cli session kill <session_id>
 Interrupt a running kernel (e.g., stuck execution).
 
 ```bash
-j-cli kernel interrupt <session_id>
+j-cli kernel interrupt <session_selector>
 ```
 
 ### `kernel restart`
@@ -296,7 +296,7 @@ j-cli kernel interrupt <session_id>
 Restart a kernel (clears all state).
 
 ```bash
-j-cli kernel restart <session_id>
+j-cli kernel restart <session_selector>
 ```
 
 ### `notebook summary` and `notebook show`
@@ -314,7 +314,7 @@ preview when AST parsing fails.
 j-cli notebook summary analysis.py
 j-cli notebook show analysis.py --cell 4
 j-cli notebook show analysis.py --cell 3:7
-j-cli exec <session_id> --file analysis.py --cell 4
+j-cli exec <session_selector> --file analysis.py --cell 4
 j-cli -j notebook summary analysis.ipynb
 ```
 
@@ -329,19 +329,19 @@ Inspect kernel variables. Use after `exec` to check what's defined and what valu
 
 ```bash
 # List all global variables (NAME / TYPE / VALUE table)
-j-cli vars <session_id>
-j-cli -j vars <session_id>
+j-cli vars <session_selector>
+j-cli -j vars <session_selector>
 # JSON: {"session_id": "...", "source": "dap", "variables": [{"name": "x", "type": "int", "value": "42", "variables_reference": 0}]}
 
 # Inspect a single variable
-j-cli vars <session_id> --name x
-j-cli -j vars <session_id> --name x
+j-cli vars <session_selector> --name x
+j-cli -j vars <session_selector> --name x
 
 # Rich inspection (MIME-typed data; DAP kernels only, e.g. ipykernel)
-j-cli vars <session_id> --name df --rich
+j-cli vars <session_selector> --name df --rich
 
 # Longer timeout (default 10s)
-j-cli vars <session_id> --timeout 20
+j-cli vars <session_selector> --timeout 20
 ```
 
 **Source**: `"dap"` when the kernel supports the Jupyter debug protocol (e.g. ipykernel); `"fallback"` when a shell-channel snippet is used instead.
@@ -356,29 +356,29 @@ Execute code in a kernel session. This is the most important command.
 
 **Inline code:**
 ```bash
-j-cli exec <session_id> --code "print('hello')"
-j-cli exec <session_id> -c "import pandas as pd; df = pd.read_csv('data.csv'); df.describe()"
-j-cli exec <session_id> --code $'df.head()\ndf.describe()' --display-mode all
+j-cli exec <session_selector> --code "print('hello')"
+j-cli exec <session_selector> -c "import pandas as pd; df = pd.read_csv('data.csv'); df.describe()"
+j-cli exec <session_selector> --code $'df.head()\ndf.describe()' --display-mode all
 ```
 
 **From a file:**
 ```bash
 # All code cells from a notebook (omit --cell to run everything)
-j-cli exec <session_id> --file notebook.ipynb
+j-cli exec <session_selector> --file notebook.ipynb
 
 # Single cell (0-indexed)
-j-cli exec <session_id> --file notebook.ipynb --cell 3
+j-cli exec <session_selector> --file notebook.ipynb --cell 3
 
 # Multiple consecutive cells via range
-j-cli exec <session_id> --file notebook.ipynb --cell 0:5    # cells 0,1,2,3,4
-j-cli exec <session_id> --file notebook.ipynb --cell 3:     # cell 3 to end
-j-cli exec <session_id> --file notebook.ipynb --cell :3      # cells 0,1,2
+j-cli exec <session_selector> --file notebook.ipynb --cell 0:5    # cells 0,1,2,3,4
+j-cli exec <session_selector> --file notebook.ipynb --cell 3:     # cell 3 to end
+j-cli exec <session_selector> --file notebook.ipynb --cell :3      # cells 0,1,2
 
 # From py:percent file
-j-cli exec <session_id> --file script.py --cell 0
+j-cli exec <session_selector> --file script.py --cell 0
 
 # Display every top-level expression in each selected cell
-j-cli exec <session_id> --file script.py --display-mode all
+j-cli exec <session_selector> --file script.py --display-mode all
 ```
 
 Each cell in the range is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies. If a cell fails, j-cli writes back its error output, exits with code 1, and does not execute later cells. Human output uses `--- cell N ---` separators.
@@ -391,7 +391,7 @@ assignment should also produce output. The accepted modes are `last_expr`, `all`
 
 **Timeout** (default: 10s per cell; when set, it is one total budget shared across selected cells):
 ```bash
-j-cli exec <session_id> --code "long_computation()" --timeout 600
+j-cli exec <session_selector> --code "long_computation()" --timeout 600
 ```
 
 When the deadline expires during a cell, j-cli sends an interrupt to the remote kernel and
@@ -403,14 +403,14 @@ continues. j-cli still waits for the execution to report `idle` in that case.
 
 If the interrupt request fails, j-cli reports `INTERRUPT_FAILED` instead of claiming that the
 kernel returned to idle. Check `j-cli session list --no-vars`, then use
-`j-cli kernel interrupt <session_id>` or `j-cli kernel restart <session_id>` as needed.
+`j-cli kernel interrupt <session_selector>` or `j-cli kernel restart <session_selector>` as needed.
 
 **JSON output** (for parsing results programmatically):
 ```bash
-j-cli -j exec <session_id> --code "print('hello')"
+j-cli -j exec <session_selector> --code "print('hello')"
 # JSON: {"status": "ok", "outputs": [{"type": "stream", "stream_name": "stdout", "text": "hello\n"}]}
 
-j-cli -j exec <session_id> --file notebook.ipynb --cell 0:3
+j-cli -j exec <session_selector> --file notebook.ipynb --cell 0:3
 # JSONL:
 # {"status":"ok","cell":{"cell_index":0,"outputs":[...],"execution_count":1},"notebook_updated":"notebook.ipynb"}
 # {"status":"ok","cell":{"cell_index":1,"outputs":[...],"execution_count":2},"notebook_updated":"notebook.ipynb"}

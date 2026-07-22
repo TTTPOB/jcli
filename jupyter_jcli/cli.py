@@ -27,6 +27,20 @@ class Context:
         self.token = token
         self.use_json = use_json
 
+    def resolve_session(self, selector: str) -> str:
+        """Resolve a session selector using this context's server connection."""
+        from jupyter_jcli.session_selector import resolve_session_selector
+
+        return resolve_session_selector(self.server_url, selector, self.token)
+
+    def resolve_kernel(self, selector: str) -> tuple[str, str]:
+        """Resolve a session selector and return its session and kernel IDs."""
+        from jupyter_jcli.server import get_kernel_id_for_session
+
+        session_id = self.resolve_session(selector)
+        kernel_id = get_kernel_id_for_session(self.server_url, session_id, self.token)
+        return session_id, kernel_id
+
 
 pass_ctx = click.make_pass_decorator(Context)
 

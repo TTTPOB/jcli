@@ -34,7 +34,7 @@ _HINT = (
     "  1. j-cli healthcheck\n"
     "  2. j-cli session list           # reuse an existing session when possible\n"
     "  3. j-cli session create --kernel <spec> --path <file>   # only if none fits\n"
-    "  4. j-cli exec <session_id> --file <notebook-or-py> [--cell N | --cell N:M | --cell N: | --cell :M]   # 0-indexed slice\n"
+    "  4. j-cli exec <session_selector> --file <notebook-or-py> [--cell N | --cell N:M | --cell N: | --cell :M]   # 0-indexed slice\n"
     "See the `j-cli` skill for the full workflow."
 )
 
@@ -232,7 +232,7 @@ _PYTHON_HINT = (
     "  1. j-cli healthcheck\n"
     "  2. j-cli session list           # reuse an existing session when possible\n"
     "  3. j-cli session create --kernel <spec> --path {file}\n"
-    "  4. j-cli exec <session_id> --file {file} [--cell N | --cell N:M]\n\n"
+    "  4. j-cli exec <session_selector> --file {file} [--cell N | --cell N:M]\n\n"
     "If you truly need a one-shot script execution (e.g. the file also doubles as\n"
     "a CLI entrypoint), rename the entrypoint so it no longer shadows the notebook\n"
     "pair, or invoke it via `python -m <module>` to make the intent explicit."

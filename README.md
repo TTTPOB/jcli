@@ -130,14 +130,14 @@ j-cli -j kernelspec inspect-file analysis.py
 ```bash
 j-cli session create --kernel python3 --name my-session
 j-cli session list
-j-cli session kill <session_id>
+j-cli session kill <session_selector>
 ```
 
 ### `kernel`
 
 ```bash
-j-cli kernel interrupt <session_id>
-j-cli kernel restart <session_id>
+j-cli kernel interrupt <session_selector>
+j-cli kernel restart <session_selector>
 ```
 
 ### `notebook summary` and `notebook show`
@@ -270,17 +270,17 @@ Inspect variables in a kernel session.
 
 ```bash
 # list all variables (NAME / TYPE / VALUE table)
-j-cli vars <session_id>
+j-cli vars <session_selector>
 
 # inspect a single variable
-j-cli vars <session_id> --name x
+j-cli vars <session_selector> --name x
 
 # rich inspection (MIME-typed data, DAP kernels only)
-j-cli vars <session_id> --name x --rich
+j-cli vars <session_selector> --name x --rich
 
 # JSON output for programmatic use
-j-cli -j vars <session_id>
-j-cli -j vars <session_id> --name x
+j-cli -j vars <session_selector>
+j-cli -j vars <session_selector> --name x
 ```
 
 **Source**: when the kernel advertises debugger support (`kernel_info_reply.supported_features` contains `"debugger"`), the DAP `inspectVariables` control-channel path is used (`source="dap"`). Otherwise a shell-channel code snippet is executed (`source="fallback"`).
@@ -299,7 +299,7 @@ j-cli session list --no-vars  # faster, skips variable fetch
 j-cli session list --vars     # force fetch even when >10 sessions
 ```
 
-Each session row gets a `VARS` column showing the first 5 variable names. A hint line at the bottom points at `j-cli vars <SESSION_ID>` for the full list.
+Human output shows the shortest unique session ID prefix, with at least three characters. Commands accept a session selector: a full ID, the displayed short ID, or an exact unique session name. If a selector matches multiple sessions, the command exits without choosing one. A hint line at the bottom points at `j-cli vars <SESSION_SELECTOR>` for the full variable list.
 
 In JSON mode (`-j`), each session object gains a `vars_preview` key:
 ```json
@@ -312,22 +312,22 @@ Execute code in a kernel session. Supports inline code, py:percent files, and Ju
 
 ```bash
 # inline code
-j-cli exec <session_id> --code "import pandas as pd; df = pd.read_csv('data.csv'); df.head()"
+j-cli exec <session_selector> --code "import pandas as pd; df = pd.read_csv('data.csv'); df.head()"
 
 # display every top-level expression in inline code
-j-cli exec <session_id> --code $'df.head()\ndf.describe()' --display-mode all
+j-cli exec <session_selector> --code $'df.head()\ndf.describe()' --display-mode all
 
 # execute from py:percent file
-j-cli exec <session_id> --file analysis.py
+j-cli exec <session_selector> --file analysis.py
 
 # display every top-level expression instead of only the last one
-j-cli exec <session_id> --file analysis.py --display-mode all
+j-cli exec <session_selector> --file analysis.py --display-mode all
 
 # execute specific cells from a notebook
-j-cli exec <session_id> --file notebook.ipynb --cell 0:3
+j-cli exec <session_selector> --file notebook.ipynb --cell 0:3
 
 # execute a single cell
-j-cli exec <session_id> --file notebook.ipynb --cell 5
+j-cli exec <session_selector> --file notebook.ipynb --cell 5
 ```
 
 **Cell spec formats** (0-indexed):

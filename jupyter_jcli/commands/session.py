@@ -10,6 +10,7 @@ import click
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
+from jupyter_jcli.session_selector import SessionSelectorError, short_session_ids
 
 
 class KernelState(str, Enum):
@@ -94,7 +95,7 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
     appended as a VARS column.  Pass --no-vars to skip this (faster).
 
     Variable names are shown in first-definition order (not modification order).
-    Run 'j-cli vars <SESSION_ID>' for the full variable list.
+    Run 'j-cli vars <SESSION_SELECTOR>' for the full variable list.
     """
     try:
         from jupyter_jcli.server import list_sessions
@@ -129,20 +130,21 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
 
             if fetch_vars:
                 header = (
-                    f"{'SESSION_ID':<40} {'KERNEL':<20} {'STATE':<10} "
+                    f"{'SESSION':<12} {'KERNEL':<20} {'STATE':<10} "
                     f"{'NAME':<20} {'VARS'}"
                 )
                 lines = [header]
+                short_ids = short_session_ids(sessions)
                 for s in sessions:
                     preview = s.get("vars_preview", {})
                     vars_col = _format_vars_preview(preview)
                     lines.append(
-                        f"{s['session_id']:<40} {s['kernel_name']:<20} "
+                        f"{short_ids[s['session_id']]:<12} {s['kernel_name']:<20} "
                         f"{s['kernel_state']:<10} {s['name']:<20} {vars_col}"
                     )
                 lines.append("")
                 lines.append(
-                    "hint: run 'j-cli vars <SESSION_ID>' for full variable list"
+                    "hint: run 'j-cli vars <SESSION_SELECTOR>' for full variable list"
                 )
                 if _warn_skipped:
                     lines.append(
@@ -151,13 +153,14 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
                     )
             else:
                 header = (
-                    f"{'SESSION_ID':<40} {'KERNEL_ID':<40} "
+                    f"{'SESSION':<12} {'KERNEL_ID':<40} "
                     f"{'KERNEL':<20} {'STATE':<10} {'NAME':<20}"
                 )
                 lines = [header]
+                short_ids = short_session_ids(sessions)
                 for s in sessions:
                     lines.append(
-                        f"{s['session_id']:<40} {s['kernel_id']:<40} "
+                        f"{short_ids[s['session_id']]:<12} {s['kernel_id']:<40} "
                         f"{s['kernel_name']:<20} {s['kernel_state']:<10} {s['name']:<20}"
                     )
 
@@ -231,10 +234,19 @@ def _format_vars_preview(preview: dict) -> str:
 
 
 @session.command("kill")
-@click.argument("session_id")
+@click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def kill(ctx: Context, session_id: str):
-    """Kill (delete) a session."""
+def kill(ctx: Context, session_selector: str):
+    """Kill a session selected by ID, short ID, or name."""
+    try:
+        session_id = ctx.resolve_session(session_selector)
+    except SessionSelectorError as e:
+        emit_error(e.code, str(e), ctx.use_json)
+        return
+    except Exception as e:
+        emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
+        return
+
     try:
         from jupyter_jcli.server import delete_session
 

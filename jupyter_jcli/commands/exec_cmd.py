@@ -10,10 +10,11 @@ from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.executor import process_outputs, format_outputs_human
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
+from jupyter_jcli.session_selector import SessionSelectorError
 
 
 @click.command("exec")
-@click.argument("session_id")
+@click.argument("session_selector", metavar="SESSION_SELECTOR")
 @click.option("--code", "-c", default=None, help="Code to execute directly")
 @click.option(
     "--file", "-f", "file_path", default=None, help="Path to .py or .ipynb file"
@@ -39,14 +40,14 @@ from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 @pass_ctx
 def exec_cmd(
     ctx: Context,
-    session_id: str,
+    session_selector: str,
     code: str | None,
     file_path: str | None,
     cell: str | None,
     display_mode: str,
     timeout: int | None,
 ):
-    """Execute code in a kernel session.
+    """Execute code in a session selected by ID, short ID, or name.
 
     Either --code or --file (with --cell) must be provided.
     When using --file, outputs are automatically written back to the paired .ipynb.
@@ -57,9 +58,10 @@ def exec_cmd(
         )
 
     try:
-        from jupyter_jcli.server import get_kernel_id_for_session
-
-        kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
+        _, kernel_id = ctx.resolve_kernel(session_selector)
+    except SessionSelectorError as e:
+        emit_error(e.code, str(e), ctx.use_json)
+        return
     except Exception as e:
         emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
         return  # unreachable but helps type checker

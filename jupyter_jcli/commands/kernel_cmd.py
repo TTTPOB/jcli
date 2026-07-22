@@ -5,6 +5,7 @@ import click
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
+from jupyter_jcli.session_selector import SessionSelectorError
 
 
 @click.group()
@@ -13,14 +14,22 @@ def kernel():
 
 
 @kernel.command("interrupt")
-@click.argument("session_id")
+@click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def interrupt(ctx: Context, session_id: str):
-    """Interrupt a running kernel by session ID."""
+def interrupt(ctx: Context, session_selector: str):
+    """Interrupt a kernel selected by ID, short ID, or name."""
     try:
-        from jupyter_jcli.server import get_kernel_id_for_session, interrupt_kernel
+        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+    except SessionSelectorError as e:
+        emit_error(e.code, str(e), ctx.use_json)
+        return
+    except Exception as e:
+        emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)
+        return
 
-        kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
+    try:
+        from jupyter_jcli.server import interrupt_kernel
+
         interrupt_kernel(ctx.server_url, kernel_id, ctx.token)
         emit(
             {
@@ -34,14 +43,22 @@ def interrupt(ctx: Context, session_id: str):
 
 
 @kernel.command("restart")
-@click.argument("session_id")
+@click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def restart(ctx: Context, session_id: str):
-    """Restart a kernel by session ID."""
+def restart(ctx: Context, session_selector: str):
+    """Restart a kernel selected by ID, short ID, or name."""
     try:
-        from jupyter_jcli.server import get_kernel_id_for_session, restart_kernel
+        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+    except SessionSelectorError as e:
+        emit_error(e.code, str(e), ctx.use_json)
+        return
+    except Exception as e:
+        emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)
+        return
 
-        kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
+    try:
+        from jupyter_jcli.server import restart_kernel
+
         restart_kernel(ctx.server_url, kernel_id, ctx.token)
         emit(
             {

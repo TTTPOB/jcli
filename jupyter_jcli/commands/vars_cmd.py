@@ -4,6 +4,7 @@ import click
 
 from jupyter_jcli.cli import Context, pass_ctx
 from jupyter_jcli.output import emit, emit_error
+from jupyter_jcli.session_selector import SessionSelectorError
 
 
 _ORDERING_NOTE = (
@@ -18,7 +19,7 @@ _MTIME_NOTE = (
 
 
 @click.command("vars")
-@click.argument("session_id")
+@click.argument("session_selector", metavar="SESSION_SELECTOR")
 @click.option(
     "--name",
     "-n",
@@ -42,9 +43,9 @@ _MTIME_NOTE = (
 )
 @pass_ctx
 def vars_cmd(
-    ctx: Context, session_id: str, name: str | None, rich: bool, timeout: float
+    ctx: Context, session_selector: str, name: str | None, rich: bool, timeout: float
 ):
-    """Inspect variables in a kernel session.
+    """Inspect variables in a session selected by ID, short ID, or name.
 
     Lists all global variables in the kernel namespace as a NAME / TYPE / VALUE
     table, or inspects a single variable with --name.
@@ -76,9 +77,10 @@ def vars_cmd(
 
     # Resolve kernel
     try:
-        from jupyter_jcli.server import get_kernel_id_for_session
-
-        kernel_id = get_kernel_id_for_session(ctx.server_url, session_id, ctx.token)
+        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+    except SessionSelectorError as e:
+        emit_error(e.code, str(e), ctx.use_json)
+        return
     except Exception as e:
         emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
         return
