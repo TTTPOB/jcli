@@ -206,12 +206,10 @@ j-cli healthcheck
 # Output: OK  Jupyter server v2.14.2  0 kernel(s) running
 
 # 2. Detect kernel spec from the file
-j-cli -j kernelspec inspect-file analysis.py
-# Output: {"path": "analysis.py", "kernel_name": "ir", "kernel_display_name": null, "kernel_language": null}
+j-cli kernelspec inspect-file analysis.py
 
 # 3. Create a session with the detected kernel
-j-cli -j session create --kernel ir --name analysis
-# Output (JSON): {"session_id": "abc-123", "kernel_id": "def-456", "kernel_name": "ir"}
+j-cli session create --kernel ir --name analysis
 
 # 4. Execute inline code (use the session_id from step 3)
 j-cli exec abc-123 --code "print(1 + 1)"
@@ -234,8 +232,6 @@ Check server connectivity and running kernel count.
 
 ```bash
 j-cli healthcheck
-j-cli -j healthcheck
-# JSON: {"status": "ok", "version": "2.14.2", "kernels_running": 1}
 ```
 
 ### `kernelspec list`
@@ -254,8 +250,7 @@ Create a new session. Returns the full session_id for machine-readable output. H
 ```bash
 j-cli session create --kernel python3
 j-cli session create --kernel python3 --name my-analysis
-j-cli -j session create --kernel python3
-# JSON: {"session_id": "...", "kernel_id": "...", "kernel_name": "python3"}
+j-cli session create --kernel python3
 ```
 
 ### `session list`
@@ -330,12 +325,12 @@ Inspect kernel variables. Use after `exec` to check what's defined and what valu
 ```bash
 # List all global variables (NAME / TYPE / VALUE table)
 j-cli vars <session_selector>
-j-cli -j vars <session_selector>
+# j-cli -j vars <session_selector>
 # JSON: {"session_id": "...", "source": "dap", "variables": [{"name": "x", "type": "int", "value": "42", "variables_reference": 0}]}
 
 # Inspect a single variable
 j-cli vars <session_selector> --name x
-j-cli -j vars <session_selector> --name x
+# j-cli -j vars <session_selector> --name x
 
 # Rich inspection (MIME-typed data; DAP kernels only, e.g. ipykernel)
 j-cli vars <session_selector> --name df --rich
@@ -419,7 +414,7 @@ j-cli -j exec <session_selector> --file notebook.ipynb --cell 0:3
 
 A successful file run ends with the summary object. If a cell fails, stdout ends with that cell's `status: "error"` event, j-cli omits the summary, and it writes the structured `EXECUTION_ERROR` object to stderr.
 
-When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you are a machine; JSON/JSONL mode is for scripts or tools that need to parse output programmatically.
+When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you think you are a machine (coding agent); JSON/JSONL mode is for scripts or tools that need to parse output programmatically like jq.
 
 ## Notebook Writeback
 
