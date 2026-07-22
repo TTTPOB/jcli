@@ -381,7 +381,7 @@ j-cli exec <session_id> --file script.py --cell 0
 j-cli exec <session_id> --file script.py --display-mode all
 ```
 
-Each cell in the range is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies. Human output uses `--- cell N ---` separators.
+Each cell in the range is executed sequentially. After a cell finishes, j-cli immediately prints that cell's output and writes that cell's outputs back to the target notebook when writeback applies. If a cell fails, j-cli writes back its error output, exits with code 1, and does not execute later cells. Human output uses `--- cell N ---` separators.
 
 Inline code and file execution default to `--display-mode last_expr`, matching VS Code
 notebook behavior: only the final expression is displayed. Use `all` when every top-level
@@ -416,6 +416,8 @@ j-cli -j exec <session_id> --file notebook.ipynb --cell 0:3
 # {"status":"ok","cell":{"cell_index":1,"outputs":[...],"execution_count":2},"notebook_updated":"notebook.ipynb"}
 # {"status":"ok","summary":{"cells_executed":2,"notebook_updated":"notebook.ipynb"}}
 ```
+
+A successful file run ends with the summary object. If a cell fails, stdout ends with that cell's `status: "error"` event, j-cli omits the summary, and it writes the structured `EXECUTION_ERROR` object to stderr.
 
 When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you are a machine; JSON/JSONL mode is for scripts or tools that need to parse output programmatically.
 

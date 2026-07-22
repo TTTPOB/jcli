@@ -259,6 +259,66 @@ class TestExecFile:
         cell1_out = cell_events[1]["cell"]["outputs"]
         assert any("11" in o.get("text", "") for o in cell1_out)
 
+    def test_py_percent_cell_range_stops_after_error(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
+        import nbformat
+
+        display_mode_before = mock_kernel_connection.execute(
+            "get_ipython().ast_node_interactivity", timeout=10
+        )["outputs"][-1]["data"]["text/plain"]
+        script = tmp_path / "stop_on_error.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # %%
+            print("before error")
+
+            # %%
+            raise RuntimeError("cell failed")
+
+            # %%
+            print("must not execute")
+        """)
+        )
+
+        result = CliRunner().invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "--json",
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(script),
+                "--cell",
+                "0:3",
+            ],
+        )
+
+        assert result.exit_code == 1
+        events = _jsonl_events(result.stdout)
+        cell_events = [event for event in events if "cell" in event]
+        assert [event["cell"]["cell_index"] for event in cell_events] == [0, 1]
+        assert [event["status"] for event in cell_events] == ["ok", "error"]
+        assert not any("summary" in event for event in events)
+        assert json.loads(result.stderr) == {
+            "status": "error",
+            "code": "EXECUTION_ERROR",
+            "message": "Cell 1 execution failed",
+        }
+
+        updated = nbformat.read(tmp_path / "stop_on_error.ipynb", as_version=4)
+        assert any("before error" in str(output) for output in updated.cells[0].outputs)
+        assert any(output.output_type == "error" for output in updated.cells[1].outputs)
+        assert updated.cells[2].outputs == []
+        display_mode_after = mock_kernel_connection.execute(
+            "get_ipython().ast_node_interactivity", timeout=10
+        )["outputs"][-1]["data"]["text/plain"]
+        assert display_mode_after == display_mode_before
+
     def test_py_percent_displays_every_rich_expression(
         self, live_session, mock_kernel_connection, tmp_path
     ):

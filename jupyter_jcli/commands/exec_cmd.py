@@ -181,6 +181,11 @@ def _exec_file(
                     result = execute_with_timeout(
                         kernel, cell.source, timeout=remaining
                     )
+                    execution_status = (
+                        ResponseStatus.OK
+                        if result.get("status") == "ok"
+                        else ResponseStatus.ERROR
+                    )
                     raw_outputs = result.get("outputs", [])
                     outputs = process_outputs(raw_outputs)
 
@@ -205,9 +210,20 @@ def _exec_file(
 
                     cells_executed += 1
                     _emit_file_cell_result(
-                        ctx, cell_result, notebook_created, notebook_updated
+                        ctx,
+                        cell_result,
+                        notebook_created,
+                        notebook_updated,
+                        execution_status,
                     )
                     notebook_created = None
+
+                    if execution_status != ResponseStatus.OK:
+                        emit_error(
+                            "EXECUTION_ERROR",
+                            f"Cell {cell.index} execution failed",
+                            ctx.use_json,
+                        )
 
         if ctx.use_json:
             summary = {"cells_executed": cells_executed}
@@ -236,12 +252,13 @@ def _emit_file_cell_result(
     cell_result: dict,
     notebook_created: str | None,
     notebook_updated: str | None,
+    status: ResponseStatus,
 ) -> None:
     if ctx.use_json:
         cell_payload = {
             key: value for key, value in cell_result.items() if key != "raw_outputs"
         }
-        data = {"status": ResponseStatus.OK, "cell": cell_payload}
+        data = {"status": status, "cell": cell_payload}
         if notebook_created:
             data["notebook_created"] = notebook_created
         if notebook_updated:

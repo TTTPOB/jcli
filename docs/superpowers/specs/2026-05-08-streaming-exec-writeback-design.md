@@ -84,7 +84,7 @@ The skill documentation must make this usage expectation explicit: agents should
 - If no code cells are selected, behavior stays the same: print a parse error and exit non-zero.
 - If the total timeout expires before starting a later cell, previously completed cells have already been written and printed; j-cli emits the timeout error and exits non-zero.
 - If kernel execution raises an exception outside normal cell error output, previously completed cells remain written and printed; j-cli emits the execution error and exits non-zero.
-- If a notebook cell itself produces an error output and the kernel client returns it as normal outputs, j-cli writes and prints that error output for that cell, then continues following the existing kernel-client behavior.
+- If a notebook cell itself produces an error output, j-cli writes and prints that error output, then exits non-zero without executing later cells. JSON mode emits the failed cell event to stdout, omits the success summary, and emits the structured execution error to stderr.
 - If per-cell writeback fails, j-cli should emit an execution error and exit non-zero rather than continuing and misleading the caller about notebook state.
 
 ## Documentation
