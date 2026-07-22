@@ -321,19 +321,48 @@ class TestPyToIpynbUpdate:
         assert nb2.cells[1].outputs[0]["text"] == "2\n"
         assert nb2.cells[1].execution_count == 1
 
-    def test_clean_removes_outputs_from_changed_cells(self, tmp_path):
-        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
+    def test_clear_edited_removes_outputs_only_from_changed_cells(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"]), ("code", "y = 2", ["2\n"])])
         ipynb = tmp_path / "script.ipynb"
         nbformat.write(nb, str(ipynb))
         py = tmp_path / "script.py"
-        py.write_text("# %%\nx = 10\n", encoding="utf-8")
+        py.write_text("# %%\nx = 10\n\n# %%\ny = 2\n", encoding="utf-8")
 
-        result = _invoke("convert", "py-to-ipynb", "--clean", str(py), str(ipynb))
+        result = _invoke(
+            "convert",
+            "py-to-ipynb",
+            "--outputs",
+            "clear-edited",
+            str(py),
+            str(ipynb),
+        )
 
         assert result.exit_code == 0
-        cell = nbformat.read(str(ipynb), as_version=4).cells[0]
-        assert cell.outputs == []
-        assert cell.execution_count is None
+        cells = nbformat.read(str(ipynb), as_version=4).cells
+        assert cells[0].outputs == []
+        assert cells[0].execution_count is None
+        assert cells[1].outputs[0]["text"] == "2\n"
+
+    def test_clear_all_removes_outputs_from_all_cells(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"]), ("code", "y = 2", ["2\n"])])
+        ipynb = tmp_path / "script.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = tmp_path / "script.py"
+        py.write_text("# %%\nx = 10\n\n# %%\ny = 2\n", encoding="utf-8")
+
+        result = _invoke(
+            "convert",
+            "py-to-ipynb",
+            "--outputs",
+            "clear-all",
+            str(py),
+            str(ipynb),
+        )
+
+        assert result.exit_code == 0
+        cells = nbformat.read(str(ipynb), as_version=4).cells
+        assert all(cell.outputs == [] for cell in cells)
+        assert all(cell.execution_count is None for cell in cells)
 
     def test_update_outputs_updated_message(self, tmp_path, capsys):
         nb = _make_ipynb([("code", "x = 1", [])])

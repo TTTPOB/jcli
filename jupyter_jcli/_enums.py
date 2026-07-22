@@ -50,6 +50,14 @@ class OutputType(str, Enum):
     HTML = "html"
 
 
+class OutputPolicy(str, Enum):
+    """How py-to-ipynb conversion handles existing cell outputs."""
+
+    PRESERVE = "preserve"
+    CLEAR_EDITED = "clear-edited"
+    CLEAR_ALL = "clear-all"
+
+
 class MergeMode(str, Enum):
     """How a DriftResult with status=MERGED was produced."""
 

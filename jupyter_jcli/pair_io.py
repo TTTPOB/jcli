@@ -6,7 +6,7 @@ from pathlib import Path
 
 import nbformat
 
-from jupyter_jcli._enums import CellType
+from jupyter_jcli._enums import CellType, OutputPolicy
 from jupyter_jcli.cell_alignment import align_cells
 from jupyter_jcli.parser import Cell, ParsedFile, comment_ipython_magics
 
@@ -66,12 +66,15 @@ def emit_py_percent(parsed: ParsedFile) -> str:
 
 
 def update_ipynb_sources(
-    ipynb_path: Path, cells: list[Cell], *, clean_outputs: bool = False
+    ipynb_path: Path,
+    cells: list[Cell],
+    *,
+    output_policy: OutputPolicy = OutputPolicy.PRESERVE,
 ) -> None:
     """Rewrite .ipynb so its non-empty cells equal `cells`.
 
-    Outputs follow cells through two-way source alignment. When clean_outputs is
-    true, changed and new cells start with empty outputs.
+    Outputs follow cells through two-way source alignment according to
+    ``output_policy``. New cells always start with empty outputs.
     """
     nb = nbformat.read(str(ipynb_path), as_version=4)
     old_nonempty = [c for c in nb.cells if c.source.strip()]
@@ -92,7 +95,11 @@ def update_ipynb_sources(
             or alignment.new_cell is None
             or alignment.old_cell.cell_type != CellType.CODE
             or alignment.new_cell.cell_type != CellType.CODE
-            or (clean_outputs and alignment.kind == "edited")
+            or output_policy == OutputPolicy.CLEAR_ALL
+            or (
+                output_policy == OutputPolicy.CLEAR_EDITED
+                and alignment.kind == "edited"
+            )
         ):
             continue
         old_cell = old_nonempty[alignment.old_index]

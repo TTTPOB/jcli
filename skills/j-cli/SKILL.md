@@ -498,11 +498,10 @@ j-cli convert ipynb-to-py analysis.ipynb analysis.py
 # 2. Edit analysis.py using normal text tools (Edit tool, etc.)
 #    Cell markers: # %% (code), # %% [markdown], # %% [raw]
 
-# 3. Write edited sources back; existing cell outputs are preserved
+# 3. Write edited sources back; preserve outputs (default)
+# if a coding agent are the editor, it should trigger the hook and auto sync so no need 
+# to run this command manually
 j-cli convert py-to-ipynb analysis.py analysis.ipynb
-
-# Add --clean to clear outputs from edited cells
-j-cli convert py-to-ipynb --clean analysis.py analysis.ipynb
 ```
 
 If a paired `.py` already exists (same stem), you can go directly to step 2 and then step 3.

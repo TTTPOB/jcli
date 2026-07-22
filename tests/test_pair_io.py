@@ -6,6 +6,7 @@ from IPython.core.inputtransformer2 import TransformerManager
 import nbformat
 import pytest
 
+from jupyter_jcli._enums import OutputPolicy
 from jupyter_jcli.pair_io import (
     create_ipynb_from_parsed,
     emit_py_percent,
@@ -388,12 +389,16 @@ class TestUpdateIpynbSources:
         assert nb2.cells[1].source == "y = 2"
         assert nb2.cells[1].outputs[0]["text"] == "2\n"
 
-    def test_clean_outputs_removes_changed_cell_outputs(self, tmp_path):
+    def test_clear_edited_outputs_removes_changed_cell_outputs(self, tmp_path):
         nb = _make_ipynb([("code", "x = 1", ["1\n"])])
         p = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(p))
 
-        update_ipynb_sources(p, [Cell(0, "code", "x = 10")], clean_outputs=True)
+        update_ipynb_sources(
+            p,
+            [Cell(0, "code", "x = 10")],
+            output_policy=OutputPolicy.CLEAR_EDITED,
+        )
 
         cell = nbformat.read(str(p), as_version=4).cells[0]
         assert cell.outputs == []
@@ -506,7 +511,9 @@ class TestUpdateIpynbSources:
         assert nb2.cells[1].outputs[0]["text"] == "out-0\n"
         assert nb2.cells[-1].outputs[0]["text"] == "out-100\n"
 
-    def test_clean_preserves_large_repeated_equal_cells_after_insert(self, tmp_path):
+    def test_clear_edited_preserves_large_repeated_equal_cells_after_insert(
+        self, tmp_path
+    ):
         nb = _make_ipynb(
             [("code", "repeat", [f"out-{index}\n"]) for index in range(200)]
         )
@@ -515,7 +522,7 @@ class TestUpdateIpynbSources:
         new_cells = [Cell(0, "code", "inserted")]
         new_cells.extend(Cell(index + 1, "code", "repeat") for index in range(200))
 
-        update_ipynb_sources(p, new_cells, clean_outputs=True)
+        update_ipynb_sources(p, new_cells, output_policy=OutputPolicy.CLEAR_EDITED)
 
         nb2 = nbformat.read(str(p), as_version=4)
         assert nb2.cells[0].outputs == []

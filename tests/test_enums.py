@@ -10,6 +10,7 @@ from jupyter_jcli._enums import (
     CellType,
     DriftStatus,
     MergeMode,
+    OutputPolicy,
     OutputType,
     ResponseStatus,
 )
@@ -136,6 +137,25 @@ class TestOutputType:
     def test_invalid_raises(self):
         with pytest.raises(ValueError):
             OutputType("bogus")
+
+
+# ---------------------------------------------------------------------------
+# OutputPolicy
+# ---------------------------------------------------------------------------
+
+
+class TestOutputPolicy:
+    def test_values(self):
+        assert OutputPolicy.PRESERVE == "preserve"
+        assert OutputPolicy.CLEAR_EDITED == "clear-edited"
+        assert OutputPolicy.CLEAR_ALL == "clear-all"
+
+    def test_coerce_from_string(self):
+        assert OutputPolicy("clear-edited") is OutputPolicy.CLEAR_EDITED
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            OutputPolicy("bogus")
 
 
 # ---------------------------------------------------------------------------
