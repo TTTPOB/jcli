@@ -191,10 +191,12 @@ class TestEmitListDefensiveness:
     def test_emit_list_does_not_crash_on_list_value(self):
         from jupyter_jcli.cli import CliContext
         from jupyter_jcli.config import AppConfig
+        from jupyter_jcli.server import ServerClient
 
         ctx = CliContext(
             config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
             use_json=False,
+            server=ServerClient("http://localhost:8888"),
         )
         result = {
             "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
@@ -207,10 +209,12 @@ class TestEmitListDefensiveness:
 
         from jupyter_jcli.cli import CliContext
         from jupyter_jcli.config import AppConfig
+        from jupyter_jcli.server import ServerClient
 
         ctx = CliContext(
             config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
             use_json=False,
+            server=ServerClient("http://localhost:8888"),
         )
         result = {
             "variables": [{"name": "my_list", "type": "list", "value": [1, 2, 3]}],
@@ -232,10 +236,12 @@ class TestEmitListDefensiveness:
         """Rendering errors must not be labelled CONNECTION_FAILED."""
         from jupyter_jcli.cli import CliContext
         from jupyter_jcli.config import AppConfig
+        from jupyter_jcli.server import ServerClient
 
         ctx = CliContext(
             config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
             use_json=False,
+            server=ServerClient("http://localhost:8888"),
         )
         result = {
             "variables": [{"name": "x", "type": "int", "value": 99}],

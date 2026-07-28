@@ -12,9 +12,7 @@ from jupyter_jcli.output import emit, emit_error
 def healthcheck(ctx: CliContext):
     """Check if the Jupyter server is reachable."""
     try:
-        from jupyter_jcli.server import healthcheck as do_healthcheck
-
-        info = do_healthcheck(ctx.config.server_url, ctx.config.token)
+        info = ctx.server.healthcheck()
         emit(
             {
                 "status": ResponseStatus.OK,

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import click
 
 from jupyter_jcli.config import AppConfig
+from jupyter_jcli.server import ServerClient
 
 
 def _ensure_no_proxy(server_url: str) -> None:
@@ -26,24 +27,7 @@ class CliContext:
 
     config: AppConfig
     use_json: bool
-
-    def resolve_session(self, selector: str) -> str:
-        """Resolve a session selector using this context's server connection."""
-        from jupyter_jcli.session_selector import resolve_session_selector
-
-        return resolve_session_selector(
-            self.config.server_url, selector, self.config.token
-        )
-
-    def resolve_kernel(self, selector: str) -> tuple[str, str]:
-        """Resolve a session selector and return its session and kernel IDs."""
-        from jupyter_jcli.server import get_kernel_id_for_session
-
-        session_id = self.resolve_session(selector)
-        kernel_id = get_kernel_id_for_session(
-            self.config.server_url, session_id, self.config.token
-        )
-        return session_id, kernel_id
+    server: ServerClient
 
 
 pass_ctx = click.make_pass_decorator(CliContext)
@@ -77,7 +61,11 @@ def main(ctx, server_url, token, use_json):
     config = AppConfig.from_env(server_url=server_url, token=token)
     _ensure_no_proxy(config.server_url)
     ctx.ensure_object(dict)
-    ctx.obj = CliContext(config=config, use_json=use_json)
+    ctx.obj = CliContext(
+        config=config,
+        use_json=use_json,
+        server=ServerClient(config.server_url, config.token),
+    )
 
 
 # Import and register command groups

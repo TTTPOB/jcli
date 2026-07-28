@@ -36,13 +36,8 @@ def short_session_ids(sessions: list[dict]) -> dict[str, str]:
     return short_ids
 
 
-def resolve_session_selector(
-    server_url: str, selector: str, token: str | None = None
-) -> str:
+def resolve_session_selector(sessions: list[dict], selector: str) -> str:
     """Resolve an ID prefix or exact session name to a full active session ID."""
-    from jupyter_jcli.server import list_sessions
-
-    sessions = list_sessions(server_url, token)
     exact_id_matches = [
         session for session in sessions if session["session_id"] == selector
     ]

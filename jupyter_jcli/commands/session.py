@@ -58,9 +58,7 @@ def session():
 def create(ctx: CliContext, kernel: str, name: str | None):
     """Create a new session with the given kernel."""
     try:
-        from jupyter_jcli.server import create_session
-
-        info = create_session(ctx.config.server_url, kernel, name, ctx.config.token)
+        info = ctx.server.create_session(kernel, name)
         emit(
             {
                 **info,
@@ -98,9 +96,7 @@ def list_sessions(ctx: CliContext, skip_vars: bool, force_vars: bool):
     Run 'j-cli vars <SESSION_SELECTOR>' for the full variable list.
     """
     try:
-        from jupyter_jcli.server import list_sessions
-
-        sessions = list_sessions(ctx.config.server_url, ctx.config.token)
+        sessions = ctx.server.list_sessions()
 
         # Decide whether to fetch vars
         fetch_vars = not skip_vars
@@ -241,7 +237,7 @@ def _format_vars_preview(preview: dict) -> str:
 def kill(ctx: CliContext, session_selector: str):
     """Kill a session selected by ID, short ID, or name."""
     try:
-        session_id = ctx.resolve_session(session_selector)
+        session_id = ctx.server.resolve_session(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -250,9 +246,7 @@ def kill(ctx: CliContext, session_selector: str):
         return
 
     try:
-        from jupyter_jcli.server import delete_session
-
-        delete_session(ctx.config.server_url, session_id, ctx.config.token)
+        ctx.server.delete_session(session_id)
         emit(
             {"status": ResponseStatus.OK, "_human": f"Killed session {session_id}"},
             use_json=ctx.use_json,

@@ -76,7 +76,7 @@ def vars_cmd(
 
     # Resolve kernel
     try:
-        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+        session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return

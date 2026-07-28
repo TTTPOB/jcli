@@ -2,13 +2,13 @@
 
 import json
 from contextlib import nullcontext
-from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from click.testing import CliRunner
 
-from jupyter_jcli.cli import CliContext, main
-from jupyter_jcli.config import AppConfig
+from jupyter_jcli.cli import main
+from jupyter_jcli.server import ServerClient
 from jupyter_jcli.session_selector import (
     SessionSelectorAmbiguous,
     SessionSelectorError,
@@ -43,7 +43,7 @@ SESSIONS = [
 ]
 
 
-def _list_sessions(server_url, token=None):
+def _list_sessions(self):
     return SESSIONS
 
 
@@ -59,7 +59,7 @@ def test_short_session_ids_start_at_three_and_expand_for_collisions():
     "args", [["session", "list"], ["session", "list", "--no-vars"]]
 )
 def test_session_list_human_uses_short_ids_and_json_keeps_full_ids(monkeypatch, args):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
     monkeypatch.setattr(
         "jupyter_jcli.commands.session._enrich_with_vars", lambda *args: None
     )
@@ -84,54 +84,36 @@ def test_session_list_human_uses_short_ids_and_json_keeps_full_ids(monkeypatch, 
     ]
 
 
-def test_resolve_session_selector_accepts_full_id_short_id_and_name(monkeypatch):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
-
-    assert resolve_session_selector("http://example.invalid", "abc1-session-id") == (
-        "abc1-session-id"
-    )
-    assert (
-        resolve_session_selector("http://example.invalid", "abc1") == "abc1-session-id"
-    )
-    assert (
-        resolve_session_selector("http://example.invalid", "analysis")
-        == "abc1-session-id"
-    )
+def test_resolve_session_selector_accepts_full_id_short_id_and_name():
+    assert resolve_session_selector(SESSIONS, "abc1-session-id") == "abc1-session-id"
+    assert resolve_session_selector(SESSIONS, "abc1") == "abc1-session-id"
+    assert resolve_session_selector(SESSIONS, "analysis") == "abc1-session-id"
 
 
-def test_context_resolve_session_delegates_with_its_server_connection(monkeypatch):
+def test_server_client_resolve_session_uses_active_sessions(monkeypatch):
     calls = []
+    server = Mock(spec=ServerClient)
+    server.list_sessions.return_value = SESSIONS
+    server.resolve_session = ServerClient.resolve_session.__get__(server)
     monkeypatch.setattr(
-        "jupyter_jcli.session_selector.resolve_session_selector",
-        lambda server_url, selector, token=None: (
-            calls.append((server_url, selector, token)) or "session-one"
-        ),
-    )
-    ctx = CliContext(
-        AppConfig("http://example.invalid", "test-token", Path("/tmp/jcli-test")),
-        False,
+        "jupyter_jcli.server.resolve_session_selector",
+        lambda sessions, selector: calls.append((sessions, selector)) or "session-one",
     )
 
-    assert ctx.resolve_session("analysis") == "session-one"
-    assert calls == [("http://example.invalid", "analysis", "test-token")]
+    assert server.resolve_session("analysis") == "session-one"
+    assert calls == [(SESSIONS, "analysis")]
+    server.list_sessions.assert_called_once_with()
 
 
-def test_context_resolve_kernel_returns_session_and_kernel_ids(monkeypatch):
-    ctx = CliContext(
-        AppConfig("http://example.invalid", "test-token", Path("/tmp/jcli-test")),
-        False,
-    )
-    monkeypatch.setattr(ctx, "resolve_session", lambda selector: "session-one")
-    calls = []
-    monkeypatch.setattr(
-        "jupyter_jcli.server.get_kernel_id_for_session",
-        lambda server_url, session_id, token=None: (
-            calls.append((server_url, session_id, token)) or "kernel-one"
-        ),
-    )
+def test_server_client_resolve_kernel_reuses_client():
+    server = Mock(spec=ServerClient)
+    server.resolve_session.return_value = "session-one"
+    server.get_kernel_id_for_session.return_value = "kernel-one"
+    server.resolve_kernel = ServerClient.resolve_kernel.__get__(server)
 
-    assert ctx.resolve_kernel("analysis") == ("session-one", "kernel-one")
-    assert calls == [("http://example.invalid", "session-one", "test-token")]
+    assert server.resolve_kernel("analysis") == ("session-one", "kernel-one")
+    server.resolve_session.assert_called_once_with("analysis")
+    server.get_kernel_id_for_session.assert_called_once_with("session-one")
 
 
 @pytest.mark.parametrize(
@@ -142,24 +124,16 @@ def test_context_resolve_kernel_returns_session_and_kernel_ids(monkeypatch):
         ([{**SESSIONS[0], "name": "xyz"}, SESSIONS[2]], "xyz"),
     ],
 )
-def test_resolve_session_selector_rejects_ambiguous_prefix_or_name(
-    monkeypatch, sessions, selector
-):
-    monkeypatch.setattr(
-        "jupyter_jcli.server.list_sessions", lambda server_url, token=None: sessions
-    )
-
+def test_resolve_session_selector_rejects_ambiguous_prefix_or_name(sessions, selector):
     with pytest.raises(
         SessionSelectorAmbiguous, match="matches multiple active sessions"
     ):
-        resolve_session_selector("http://example.invalid", selector)
+        resolve_session_selector(sessions, selector)
 
 
-def test_resolve_session_selector_reports_no_match(monkeypatch):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
-
+def test_resolve_session_selector_reports_no_match():
     with pytest.raises(SessionSelectorNotFound, match="No active session matches"):
-        resolve_session_selector("http://example.invalid", "missing")
+        resolve_session_selector(SESSIONS, "missing")
 
 
 @pytest.mark.parametrize(
@@ -177,7 +151,7 @@ def test_session_selector_errors_have_stable_codes(error_type, code):
 
 
 def test_command_reports_unmatched_selector(monkeypatch):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
 
     result = CliRunner().invoke(main, ["--json", "vars", "missing"])
 
@@ -207,7 +181,7 @@ def test_commands_render_session_selector_errors(
     def raise_selector_error(self, selector):
         raise error_type("resolution failed")
 
-    monkeypatch.setattr(CliContext, resolver, raise_selector_error)
+    monkeypatch.setattr(ServerClient, resolver, raise_selector_error)
 
     result = CliRunner().invoke(main, ["--json", *args])
 
@@ -233,14 +207,12 @@ def test_commands_render_session_selector_errors(
 def test_commands_abort_before_operation_for_ambiguous_selector(
     monkeypatch, args, guarded_operation
 ):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
 
     def operation_must_not_run(*args, **kwargs):
         raise AssertionError("command ran after an ambiguous selector")
 
-    monkeypatch.setattr(
-        f"jupyter_jcli.server.{guarded_operation}", operation_must_not_run
-    )
+    monkeypatch.setattr(ServerClient, guarded_operation, operation_must_not_run)
     result = CliRunner().invoke(main, ["--json", *args])
 
     assert result.exit_code == 1
@@ -250,11 +222,12 @@ def test_commands_abort_before_operation_for_ambiguous_selector(
 
 
 def test_session_kill_resolves_name_to_full_id(monkeypatch):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
     deleted = []
     monkeypatch.setattr(
-        "jupyter_jcli.server.delete_session",
-        lambda server_url, session_id, token=None: deleted.append(session_id),
+        ServerClient,
+        "delete_session",
+        lambda self, session_id: deleted.append(session_id),
     )
 
     result = CliRunner().invoke(main, ["session", "kill", "analysis"])
@@ -265,17 +238,17 @@ def test_session_kill_resolves_name_to_full_id(monkeypatch):
 
 @pytest.mark.parametrize("command", ["interrupt", "restart"])
 def test_kernel_commands_resolve_short_id_to_full_id(monkeypatch, command):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
     resolved = []
     monkeypatch.setattr(
-        "jupyter_jcli.server.get_kernel_id_for_session",
-        lambda server_url, session_id, token=None: (
-            resolved.append(session_id) or "kernel-one"
-        ),
+        ServerClient,
+        "get_kernel_id_for_session",
+        lambda self, session_id: resolved.append(session_id) or "kernel-one",
     )
     monkeypatch.setattr(
-        f"jupyter_jcli.server.{command}_kernel",
-        lambda server_url, kernel_id, token=None: None,
+        ServerClient,
+        f"{command}_kernel",
+        lambda self, kernel_id: None,
     )
 
     result = CliRunner().invoke(main, ["kernel", command, "abc1"])
@@ -285,13 +258,12 @@ def test_kernel_commands_resolve_short_id_to_full_id(monkeypatch, command):
 
 
 def test_exec_and_vars_resolve_name_to_full_id(monkeypatch):
-    monkeypatch.setattr("jupyter_jcli.server.list_sessions", _list_sessions)
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
     resolved = []
     monkeypatch.setattr(
-        "jupyter_jcli.server.get_kernel_id_for_session",
-        lambda server_url, session_id, token=None: (
-            resolved.append(session_id) or "kernel-one"
-        ),
+        ServerClient,
+        "get_kernel_id_for_session",
+        lambda self, session_id: resolved.append(session_id) or "kernel-one",
     )
     monkeypatch.setattr(
         "jupyter_jcli.kernel.execute_code", lambda *args: {"outputs": []}

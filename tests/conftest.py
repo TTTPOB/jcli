@@ -1,12 +1,12 @@
 """Shared test fixtures: a real jupyter-server instance."""
 
 import os
+import shutil
 import signal
 import socket
 import subprocess
 import sys
 import time
-import shutil
 
 import pytest
 
@@ -153,7 +153,9 @@ def live_session(jupyter_server):
     their own private session via _create_session / _kill_session.
     """
     import json
+
     from click.testing import CliRunner
+
     from jupyter_jcli.cli import main
 
     runner = CliRunner()
@@ -198,11 +200,10 @@ def live_kernel(live_session):
     connection instead of opening a new one for every call.
     """
     from jupyter_jcli.kernel import kernel_connection
-    from jupyter_jcli.server import get_kernel_id_for_session
+    from jupyter_jcli.server import ServerClient
 
-    kernel_id = get_kernel_id_for_session(
-        live_session["url"], live_session["session_id"], live_session["token"]
-    )
+    server = ServerClient(live_session["url"], live_session["token"])
+    kernel_id = server.get_kernel_id_for_session(live_session["session_id"])
     with kernel_connection(
         live_session["url"], live_session["token"], kernel_id
     ) as kernel:

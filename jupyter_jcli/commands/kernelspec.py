@@ -16,9 +16,7 @@ def kernelspec():
 def list_specs(ctx: CliContext):
     """List available kernel specs."""
     try:
-        from jupyter_jcli.server import list_kernelspecs
-
-        specs = list_kernelspecs(ctx.config.server_url, ctx.config.token)
+        specs = ctx.server.list_kernelspecs()
 
         if ctx.use_json:
             emit({"kernelspecs": specs}, use_json=True)

@@ -19,7 +19,7 @@ def kernel():
 def interrupt(ctx: CliContext, session_selector: str):
     """Interrupt a kernel selected by ID, short ID, or name."""
     try:
-        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+        session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -28,9 +28,7 @@ def interrupt(ctx: CliContext, session_selector: str):
         return
 
     try:
-        from jupyter_jcli.server import interrupt_kernel
-
-        interrupt_kernel(ctx.config.server_url, kernel_id, ctx.config.token)
+        ctx.server.interrupt_kernel(kernel_id)
         emit(
             {
                 "status": ResponseStatus.OK,
@@ -48,7 +46,7 @@ def interrupt(ctx: CliContext, session_selector: str):
 def restart(ctx: CliContext, session_selector: str):
     """Restart a kernel selected by ID, short ID, or name."""
     try:
-        session_id, kernel_id = ctx.resolve_kernel(session_selector)
+        session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -57,9 +55,7 @@ def restart(ctx: CliContext, session_selector: str):
         return
 
     try:
-        from jupyter_jcli.server import restart_kernel
-
-        restart_kernel(ctx.config.server_url, kernel_id, ctx.config.token)
+        ctx.server.restart_kernel(kernel_id)
         emit(
             {
                 "status": ResponseStatus.OK,

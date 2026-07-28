@@ -58,7 +58,7 @@ def exec_cmd(
         )
 
     try:
-        _, kernel_id = ctx.resolve_kernel(session_selector)
+        _, kernel_id = ctx.server.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
