@@ -12,7 +12,6 @@ from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -212,7 +211,7 @@ class TestMergedPyNeedsUpdate:
 
         assert result.exit_code == 0
         # py must have x=10 (from ipynb) AND y=20 (own change)
-        from jupyter_jcli.parser import parse_py_percent
+        from jupyter_jcli.formats.percent import load as parse_py_percent
 
         cells = parse_py_percent(str(git_repo / "nb.py")).cells
         assert cells[0].source == "x = 10"
@@ -342,7 +341,7 @@ class TestMergeDifferentCells:
 
         assert result.exit_code == 0
 
-        from jupyter_jcli.parser import parse_py_percent
+        from jupyter_jcli.formats.percent import load as parse_py_percent
 
         py_cells = parse_py_percent(str(git_repo / "nb.py")).cells
         assert py_cells[0].source == "x = 10"
@@ -447,9 +446,11 @@ class TestPreCommitPairSyncDebug:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(log_dir))
-        from click.testing import CliRunner
-        from jupyter_jcli.cli import main
         import json as _json
+
+        from click.testing import CliRunner
+
+        from jupyter_jcli.cli import main
 
         runner = CliRunner()
         runner.invoke(

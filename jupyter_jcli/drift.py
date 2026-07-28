@@ -5,12 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import nbformat
-
-from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli import pair_baseline
-from jupyter_jcli.parser import Cell, parse_py_percent_text
-
+from jupyter_jcli._enums import DriftStatus, MergeMode
+from jupyter_jcli.formats import ipynb, percent
+from jupyter_jcli.formats.model import Cell
 
 # ---------------------------------------------------------------------------
 # Three-way merge (kept for backward compatibility)
@@ -66,17 +64,12 @@ def _get_git_base_text(path: Path) -> str | None:
 
 def _cells_from_ipynb_text(text: str) -> list[Cell]:
     """Parse cells from ipynb JSON text."""
-    nb = nbformat.reads(text, as_version=4)
-    return [
-        Cell(index=i, cell_type=c.cell_type, source=c.source)
-        for i, c in enumerate(nb.cells)
-        if c.source.strip()
-    ]
+    return [cell for cell in ipynb.loads(text).cells if cell.source.strip()]
 
 
 def _cells_from_py_text(text: str) -> list[Cell]:
     """Parse cells from py:percent text."""
-    return parse_py_percent_text(text).cells
+    return percent.loads(text).cells
 
 
 # ---------------------------------------------------------------------------
@@ -140,14 +133,11 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
 
     Raises any exception encountered (caller is responsible for fail-open).
     """
-    from jupyter_jcli.canonicalize import canonicalize_py_text
     from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_diff
-    from jupyter_jcli.pair_io import emit_py_percent
-    from jupyter_jcli.parser import parse_ipynb
     from jupyter_jcli.text_merge import merge_three_way
 
-    ours_text = canonicalize_py_text(py_path.read_text(encoding="utf-8"))
-    theirs_text = canonicalize_py_text(emit_py_percent(parse_ipynb(str(ipynb_path))))
+    ours_text = percent.canonicalize(py_path.read_text(encoding="utf-8"))
+    theirs_text = percent.canonicalize(percent.dumps(ipynb.load(ipynb_path)))
 
     base_raw = _get_git_base_text(py_path)
 
@@ -159,7 +149,7 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
             diff_text=render_no_baseline_diff(ours_text, theirs_text),
         )
 
-    base_text = canonicalize_py_text(base_raw)
+    base_text = percent.canonicalize(base_raw)
     merge = merge_three_way(base_text, ours_text, theirs_text)
 
     py_needs = merge.text != ours_text
@@ -168,7 +158,7 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     if not merge.has_conflict:
         if not py_needs and not ipynb_needs:
             return DriftResult(status=DriftStatus.IN_SYNC)
-        merged_cells = parse_py_percent_text(merge.text).cells
+        merged_cells = percent.loads(merge.text).cells
         return DriftResult(
             status=DriftStatus.MERGED,
             merge_mode=MergeMode.THREE_WAY,

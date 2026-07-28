@@ -1,19 +1,17 @@
-"""Tests for jupyter_jcli.pair_io."""
+"""Tests for py:percent and ipynb serialization."""
 
 import ast
 
-from IPython.core.inputtransformer2 import TransformerManager
 import nbformat
 import pytest
+from IPython.core.inputtransformer2 import TransformerManager
 
 from jupyter_jcli._enums import OutputPolicy
-from jupyter_jcli.pair_io import (
-    create_ipynb_from_parsed,
-    emit_py_percent,
-    update_ipynb_sources,
-)
-from jupyter_jcli.parser import Cell, ParsedFile, parse_py_percent_text
-
+from jupyter_jcli.formats.ipynb import to_node as create_ipynb_from_parsed
+from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.percent import dumps as emit_py_percent
+from jupyter_jcli.formats.percent import loads as parse_py_percent_text
+from jupyter_jcli.pairing import update_ipynb_sources
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -271,7 +269,7 @@ class TestEmitPyPercent:
     def test_synthesized_header_includes_display_name_and_language(self):
         """When ParsedFile carries display_name and language, they appear in the
         synthesized header in alphabetical order (display_name, language, name)."""
-        from jupyter_jcli.parser import ParsedFile
+        from jupyter_jcli.formats.model import ParsedFile
 
         parsed = ParsedFile(
             kernel_name="ir",

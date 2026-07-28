@@ -1,9 +1,9 @@
-"""Tests for jupyter_jcli.canonicalize."""
+"""Tests for py:percent canonicalization."""
 
 from __future__ import annotations
 
-from jupyter_jcli.canonicalize import canonicalize_py_text
-from jupyter_jcli.parser import parse_py_percent_text
+from jupyter_jcli.formats.percent import canonicalize as canonicalize_py_text
+from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 
 
 def _py_text(*cell_sources: str, kernel: str = "python3") -> str:

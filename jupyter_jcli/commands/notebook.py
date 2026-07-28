@@ -12,8 +12,9 @@ from jupyter_jcli.cell_alignment import (
     CellChange,
     diff_cells,  # noqa: F401 - public re-export
 )
+from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.output import emit, emit_error
-from jupyter_jcli.parser import Cell, ParsedFile, parse_cell_spec, parse_file
+from jupyter_jcli.parser import parse_cell_spec, parse_file
 
 if TYPE_CHECKING:
     from jupyter_jcli.cli import CliContext

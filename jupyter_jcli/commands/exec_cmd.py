@@ -150,14 +150,11 @@ def _exec_file(
         notebook_created = None
         ipynb_path = parsed.paired_ipynb
         if ipynb_path is None and parsed.is_py_percent and file_path.endswith(".py"):
-            import nbformat as _nbformat
-
-            from jupyter_jcli.pair_io import create_ipynb_from_parsed
+            from jupyter_jcli.formats import ipynb
             from jupyter_jcli.parser import ipynb_path_for_py
 
             target = ipynb_path_for_py(Path(file_path))
-            nb = create_ipynb_from_parsed(parsed)
-            _nbformat.write(nb, str(target))
+            ipynb.dump(parsed, target)
             parsed.paired_ipynb = str(target)
             ipynb_path = str(target)
             notebook_created = str(target)

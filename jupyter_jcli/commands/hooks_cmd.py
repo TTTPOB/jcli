@@ -534,19 +534,18 @@ def _prepare_merged_py(
     py_path: Path, merged_cells, logger=None
 ) -> tuple[str | None, str | None]:
     try:
-        from jupyter_jcli.canonicalize import canonicalize_py_text
-        from jupyter_jcli.pair_io import emit_py_percent
-        from jupyter_jcli.parser import ParsedFile, parse_py_percent
+        from jupyter_jcli.formats import percent
+        from jupyter_jcli.formats.model import ParsedFile
 
-        py_parsed = parse_py_percent(str(py_path))
+        py_parsed = percent.load(py_path)
         merged_parsed = ParsedFile(
             kernel_name=py_parsed.kernel_name,
             cells=merged_cells,
             source_path=py_parsed.source_path,
             front_matter_raw=py_parsed.front_matter_raw,
         )
-        merged_text = emit_py_percent(merged_parsed)
-        return merged_text, canonicalize_py_text(merged_text)
+        merged_text = percent.dumps(merged_parsed)
+        return merged_text, percent.canonicalize(merged_text)
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
             logger.record_exception(exc)
@@ -562,7 +561,7 @@ def _apply_merge_and_decide(
 ) -> str | None:
     """Write merged content and emit allow/deny based on which file changed."""
     from jupyter_jcli import pair_baseline
-    from jupyter_jcli.pair_io import update_ipynb_sources
+    from jupyter_jcli.pairing import update_ipynb_sources
 
     try:
         target_before = target.read_bytes()
@@ -947,7 +946,7 @@ def _sync_pair_after_edit(
 ) -> str | None:
     """Write the merge result to the OTHER side (not the one the agent just edited)."""
     from jupyter_jcli import pair_baseline
-    from jupyter_jcli.pair_io import update_ipynb_sources
+    from jupyter_jcli.pairing import update_ipynb_sources
 
     # Read before write_baseline advances the sticky pair-sync reference.
     old_baseline_text = pair_baseline.read_baseline(py_path)
@@ -1002,14 +1001,10 @@ def _sync_pair_after_edit(
                 diff_cells,
                 format_summary_human,
             )
-            from jupyter_jcli.parser import parse_py_percent_text
+            from jupyter_jcli.formats.percent import loads
 
-            baseline = parse_py_percent_text(
-                old_baseline_text, source_path=str(py_path)
-            )
-            current = parse_py_percent_text(
-                canonical_merged_py, source_path=str(py_path)
-            )
+            baseline = loads(old_baseline_text, source_path=str(py_path))
+            current = loads(canonical_merged_py, source_path=str(py_path))
             summary_text = format_summary_human(
                 build_summary_data(current, diff_cells(baseline, current)),
                 max_cells=_HOOK_SUMMARY_MAX_CELLS,
@@ -1147,11 +1142,10 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         # Initial sync: .py missing on disk but .ipynb exists
         if not py_path.exists() and ipynb_path.exists():
             try:
-                from jupyter_jcli.pair_io import emit_py_percent
-                from jupyter_jcli.parser import parse_ipynb
+                from jupyter_jcli.formats import ipynb, percent
 
-                parsed_nb = parse_ipynb(str(ipynb_path))
-                py_text = emit_py_percent(parsed_nb)
+                parsed_nb = ipynb.load(ipynb_path)
+                py_text = percent.dumps(parsed_nb)
                 py_path.parent.mkdir(parents=True, exist_ok=True)
                 py_path.write_text(py_text, encoding="utf-8")
                 subprocess.run(
@@ -1207,17 +1201,17 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         if result.status == DriftStatus.MERGED:
             if result.py_needs_update:
                 try:
-                    from jupyter_jcli.pair_io import emit_py_percent
-                    from jupyter_jcli.parser import ParsedFile, parse_py_percent
+                    from jupyter_jcli.formats import percent
+                    from jupyter_jcli.formats.model import ParsedFile
 
-                    py_parsed = parse_py_percent(str(py_path))
+                    py_parsed = percent.load(py_path)
                     merged_parsed = ParsedFile(
                         kernel_name=py_parsed.kernel_name,
                         cells=result.merged_cells,
                         source_path=py_parsed.source_path,
                         front_matter_raw=py_parsed.front_matter_raw,
                     )
-                    py_path.write_text(emit_py_percent(merged_parsed), encoding="utf-8")
+                    py_path.write_text(percent.dumps(merged_parsed), encoding="utf-8")
                     subprocess.run(
                         ["git", "add", str(py_path)],
                         check=False,
@@ -1232,7 +1226,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                     sys.exit(1)
             if result.ipynb_needs_update:
                 try:
-                    from jupyter_jcli.pair_io import update_ipynb_sources
+                    from jupyter_jcli.pairing import update_ipynb_sources
 
                     update_ipynb_sources(ipynb_path, result.merged_cells)
                     try:

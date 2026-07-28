@@ -6,8 +6,7 @@ from unittest.mock import patch
 import nbformat
 
 from jupyter_jcli.drift import check_drift, three_way_merge
-from jupyter_jcli.parser import Cell
-
+from jupyter_jcli.formats.model import Cell
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,7 +88,7 @@ class TestThreeWayMerge:
         base = _cells("x = 1")
         ours = _cells("x = 10")
         theirs = _cells("x = 99")
-        merged, conflicts = three_way_merge(base, ours, theirs)
+        _merged, conflicts = three_way_merge(base, ours, theirs)
         assert conflicts == [0]
 
     def test_both_changed_different_cells_no_conflict(self):

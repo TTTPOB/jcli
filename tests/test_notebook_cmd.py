@@ -9,15 +9,15 @@ from unittest.mock import patch
 import nbformat
 from click.testing import CliRunner
 
-from jupyter_jcli.cli import main
 from jupyter_jcli._enums import CellType
+from jupyter_jcli.cli import main
 from jupyter_jcli.commands.notebook import (
     CellChange,
     build_summary_data,
     diff_cells,
     format_summary_human,
 )
-from jupyter_jcli.parser import Cell, ParsedFile
+from jupyter_jcli.formats.model import Cell, ParsedFile
 
 
 def _write_percent_notebook(path):

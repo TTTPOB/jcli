@@ -2,7 +2,8 @@
 
 import pytest
 
-from jupyter_jcli.parser import parse_cell_spec, parse_py_percent_text
+from jupyter_jcli.formats.percent import loads as parse_py_percent_text
+from jupyter_jcli.parser import parse_cell_spec
 
 
 @pytest.mark.parametrize(

@@ -8,10 +8,9 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli import pair_baseline
-from jupyter_jcli.canonicalize import canonicalize_py_text
 from jupyter_jcli.cli import main
-from jupyter_jcli.parser import parse_py_percent
-
+from jupyter_jcli.formats.percent import canonicalize as canonicalize_py_text
+from jupyter_jcli.formats.percent import load as parse_py_percent
 
 # ---------------------------------------------------------------------------
 # Helpers

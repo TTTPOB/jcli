@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import difflib
 
-from jupyter_jcli.parser import parse_py_percent_text
+from jupyter_jcli.formats import percent
 
 
 def render_no_baseline_diff(
@@ -33,7 +33,7 @@ def render_no_baseline_diff(
 def locate_conflict_cells(merged_text: str) -> list[int]:
     """Return cell indices whose source contains '<<<<<<<' conflict markers."""
     try:
-        parsed = parse_py_percent_text(merged_text)
+        parsed = percent.loads(merged_text)
     except Exception:  # noqa: BLE001
         return []
     return [cell.index for cell in parsed.cells if "<<<<<<<" in cell.source]

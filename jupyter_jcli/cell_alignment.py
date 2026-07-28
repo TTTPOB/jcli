@@ -7,7 +7,7 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from jupyter_jcli.parser import Cell, ParsedFile
+from jupyter_jcli.formats.model import Cell, ParsedFile
 
 _MAX_REPLACE_DP_PRODUCT = 2_500
 _MAX_SEQUENCE_MATCHER_PRODUCT = 10_000
