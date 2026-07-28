@@ -11,7 +11,6 @@ import pytest
 
 from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -27,17 +26,15 @@ def _log_files(log_dir: Path) -> list[Path]:
 
 
 class TestHookDebugLoggerBasic:
-    def test_creates_log_file_on_exit(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("test-hook", enabled=True) as log:
+    def test_creates_log_file_on_exit(self, tmp_path):
+        with HookDebugLogger("test-hook", enabled=True, log_dir=tmp_path) as log:
             log.set_stdin('{"a": 1}', {"a": 1})
         files = _log_files(tmp_path)
         assert len(files) == 1
         assert files[0].name.startswith("test-hook-")
 
-    def test_log_json_structure(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("my-hook", enabled=True) as log:
+    def test_log_json_structure(self, tmp_path):
+        with HookDebugLogger("my-hook", enabled=True, log_dir=tmp_path) as log:
             log.set_stdin('{"x": 2}', {"x": 2})
             log.set_stdout('{"ok": true}', {"ok": True})
         data = json.loads(_log_files(tmp_path)[0].read_text())
@@ -53,9 +50,8 @@ class TestHookDebugLoggerBasic:
         assert "duration_ms" in data
         assert data["exit_code"] == 0
 
-    def test_no_log_when_disabled(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("test-hook", enabled=False) as log:
+    def test_no_log_when_disabled(self, tmp_path):
+        with HookDebugLogger("test-hook", enabled=False, log_dir=tmp_path) as log:
             log.set_stdin('{"a": 1}', {"a": 1})
         assert _log_files(tmp_path) == []
 
@@ -66,25 +62,26 @@ class TestHookDebugLoggerBasic:
 
 
 class TestExitCodeCapture:
-    def test_exit_code_zero_on_sys_exit_0(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with pytest.raises(SystemExit):
-            with HookDebugLogger("hook", enabled=True):
-                sys.exit(0)
+    def test_exit_code_zero_on_sys_exit_0(self, tmp_path):
+        with (
+            pytest.raises(SystemExit),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path),
+        ):
+            sys.exit(0)
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["exit_code"] == 0
 
-    def test_exit_code_one_on_sys_exit_1(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with pytest.raises(SystemExit):
-            with HookDebugLogger("hook", enabled=True):
-                sys.exit(1)
+    def test_exit_code_one_on_sys_exit_1(self, tmp_path):
+        with (
+            pytest.raises(SystemExit),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path),
+        ):
+            sys.exit(1)
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["exit_code"] == 1
 
-    def test_exit_code_zero_on_clean_exit(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("hook", enabled=True):
+    def test_exit_code_zero_on_clean_exit(self, tmp_path):
+        with HookDebugLogger("hook", enabled=True, log_dir=tmp_path):
             pass
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["exit_code"] == 0
@@ -96,9 +93,8 @@ class TestExitCodeCapture:
 
 
 class TestExceptionRecording:
-    def test_record_exception_populates_field(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("hook", enabled=True) as log:
+    def test_record_exception_populates_field(self, tmp_path):
+        with HookDebugLogger("hook", enabled=True, log_dir=tmp_path) as log:
             try:
                 raise ValueError("boom")
             except ValueError as exc:
@@ -109,11 +105,12 @@ class TestExceptionRecording:
         assert "traceback" in data["exception"]
         assert "ValueError" in data["exception"]["traceback"]
 
-    def test_unhandled_exception_recorded_and_reraised(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with pytest.raises(RuntimeError, match="unexpected"):
-            with HookDebugLogger("hook", enabled=True):
-                raise RuntimeError("unexpected")
+    def test_unhandled_exception_recorded_and_reraised(self, tmp_path):
+        with (
+            pytest.raises(RuntimeError, match="unexpected"),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path),
+        ):
+            raise RuntimeError("unexpected")
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["exception"]["type"] == "RuntimeError"
         assert data["exit_code"] == 1
@@ -125,9 +122,8 @@ class TestExceptionRecording:
 
 
 class TestSilentExit:
-    def test_silent_return_stdout_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        with HookDebugLogger("hook", enabled=True) as log:
+    def test_silent_return_stdout_empty(self, tmp_path):
+        with HookDebugLogger("hook", enabled=True, log_dir=tmp_path) as log:
             log.set_stdin('{"tool_name": "Read"}', {"tool_name": "Read"})
             # no set_stdout call — simulates IN_SYNC silent return
         data = json.loads(_log_files(tmp_path)[0].read_text())
@@ -142,10 +138,9 @@ class TestSilentExit:
 
 
 class TestJsonDecodeError:
-    def test_bad_stdin_raw_preserved(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+    def test_bad_stdin_raw_preserved(self, tmp_path):
         bad_input = "not json {"
-        with HookDebugLogger("hook", enabled=True) as log:
+        with HookDebugLogger("hook", enabled=True, log_dir=tmp_path) as log:
             log.set_stdin(bad_input, None)
             # parsed stays None, raw is preserved
         data = json.loads(_log_files(tmp_path)[0].read_text())
@@ -159,11 +154,10 @@ class TestJsonDecodeError:
 
 
 class TestStderrCapture:
-    def test_stderr_captured_in_log(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+    def test_stderr_captured_in_log(self, tmp_path):
         import sys as _sys
 
-        with HookDebugLogger("hook", enabled=True):
+        with HookDebugLogger("hook", enabled=True, log_dir=tmp_path):
             print("some warning", file=_sys.stderr)
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert "some warning" in data["stderr"]
@@ -175,28 +169,30 @@ class TestStderrCapture:
 
 
 class TestReadHookStdin:
-    def test_sets_raw_and_parsed(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+    def test_sets_raw_and_parsed(self, tmp_path):
         payload = {"tool_name": "Edit", "tool_input": {"file_path": "x.py"}}
         raw = json.dumps(payload)
         import io
 
-        with patch("sys.stdin", io.StringIO(raw)):
-            with HookDebugLogger("hook", enabled=True) as log:
-                result = read_hook_stdin(log)
+        with (
+            patch("sys.stdin", io.StringIO(raw)),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path) as log,
+        ):
+            result = read_hook_stdin(log)
         assert result == payload
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["stdin_raw"] == raw
         assert data["stdin_parsed"] == payload
 
-    def test_raises_on_bad_json(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
+    def test_raises_on_bad_json(self, tmp_path):
         import io
 
-        with patch("sys.stdin", io.StringIO("bad json")):
-            with HookDebugLogger("hook", enabled=True) as log:
-                with pytest.raises(json.JSONDecodeError):
-                    read_hook_stdin(log)
+        with (
+            patch("sys.stdin", io.StringIO("bad json")),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path) as log,
+            pytest.raises(json.JSONDecodeError),
+        ):
+            read_hook_stdin(log)
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["stdin_raw"] == "bad json"
         assert data["stdin_parsed"] is None

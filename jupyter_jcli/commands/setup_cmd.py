@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from jupyter_jcli._enums import ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 
@@ -138,7 +138,7 @@ def setup():
     help="Remove all j-cli managed hooks from the target settings file.",
 )
 @pass_ctx
-def claude(ctx: Context, scope: str, remove: bool):
+def claude(ctx: CliContext, scope: str, remove: bool):
     """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
     path = _resolve_claude_path(scope)
     _install_or_remove("claude", path, remove, ctx)
@@ -168,7 +168,7 @@ def claude(ctx: Context, scope: str, remove: bool):
     help="Remove all j-cli managed hooks from the target hooks file.",
 )
 @pass_ctx
-def codex(ctx: Context, scope: str, remove: bool):
+def codex(ctx: CliContext, scope: str, remove: bool):
     """Install Codex hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, and pair-drift-guard-post.
 
     notebook-edit-guard is not installed (Codex has no NotebookEdit tool).
@@ -213,7 +213,7 @@ def codex(ctx: Context, scope: str, remove: bool):
     help="Remove the j-cli managed OpenCode plugin.",
 )
 @pass_ctx
-def opencode(ctx: Context, scope: str, remove: bool) -> None:
+def opencode(ctx: CliContext, scope: str, remove: bool) -> None:
     """Install the OpenCode plugin for notebook guards and pair synchronization."""
     path = _resolve_opencode_path(scope)
     if Scope(scope) == Scope.LOCAL:
@@ -225,7 +225,9 @@ def opencode(ctx: Context, scope: str, remove: bool) -> None:
     _install_or_remove_opencode(path, remove, ctx)
 
 
-def _install_or_remove(platform: str, path: Path, remove: bool, ctx: Context) -> None:
+def _install_or_remove(
+    platform: str, path: Path, remove: bool, ctx: CliContext
+) -> None:
     """Install or remove managed hooks for a given platform."""
     if remove:
         if not path.exists():
@@ -379,7 +381,7 @@ def _opencode_plugin_source() -> str:
     )
 
 
-def _install_or_remove_opencode(path: Path, remove: bool, ctx: Context) -> None:
+def _install_or_remove_opencode(path: Path, remove: bool, ctx: CliContext) -> None:
     if remove:
         if not path.exists():
             emit(
@@ -645,7 +647,7 @@ def _clean_gitignore_block(path: Path) -> bool:
 )
 @pass_ctx
 def git_setup(
-    ctx: Context, scope: str, include_globs: tuple[str, ...], remove: bool
+    ctx: CliContext, scope: str, include_globs: tuple[str, ...], remove: bool
 ) -> None:
     """Install the pre-commit pair-sync hook and update .gitignore."""
 

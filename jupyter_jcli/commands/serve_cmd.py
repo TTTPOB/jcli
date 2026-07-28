@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import click
 
 from jupyter_jcli._enums import ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 
@@ -55,7 +55,7 @@ _SCHEME_PORTS = {"http": 80, "https": 443}
 )
 @pass_ctx
 def serve_cmd(
-    ctx: Context,
+    ctx: CliContext,
     serve_backend: str,
     ip: str | None,
     port: int | None,
@@ -76,7 +76,7 @@ def serve_cmd(
         --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
     """
     # Confirm token is available without inlining its value
-    if ctx.token is None:
+    if ctx.config.token is None:
         emit_error(
             "SERVE_CMD_NO_TOKEN",
             "JCLI_JUPYTER_SERVER_TOKEN is not set. Export it before using serve-cmd.",
@@ -85,13 +85,13 @@ def serve_cmd(
         return
 
     # Resolve hostname
-    parsed = urlparse(ctx.server_url)
+    parsed = urlparse(ctx.config.server_url)
     if ip is None:
         raw_host = parsed.hostname or ""
         if not raw_host or not _SAFE_HOST_RE.match(raw_host):
             emit_error(
                 "SERVE_CMD_BAD_URL",
-                f"Cannot parse a safe hostname from URL: {ctx.server_url!r}",
+                f"Cannot parse a safe hostname from URL: {ctx.config.server_url!r}",
                 ctx.use_json,
             )
             return

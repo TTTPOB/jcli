@@ -2,10 +2,9 @@
 
 import click
 
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.session_selector import SessionSelectorError
-
 
 _ORDERING_NOTE = (
     "NOTE: variables are returned in first-definition order (CPython dict insertion "
@@ -43,7 +42,7 @@ _MTIME_NOTE = (
 )
 @pass_ctx
 def vars_cmd(
-    ctx: Context, session_selector: str, name: str | None, rich: bool, timeout: float
+    ctx: CliContext, session_selector: str, name: str | None, rich: bool, timeout: float
 ):
     """Inspect variables in a session selected by ID, short ID, or name.
 
@@ -81,7 +80,7 @@ def vars_cmd(
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize command failures for CLI output
         emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
         return
 
@@ -94,7 +93,9 @@ def vars_cmd(
             list_variables,
         )
 
-        with kernel_connection(ctx.server_url, ctx.token, kernel_id) as kernel:
+        with kernel_connection(
+            ctx.config.server_url, ctx.config.token, kernel_id
+        ) as kernel:
             if name:
                 result = inspect_variable(kernel, name, rich=rich, timeout=timeout)
             else:
@@ -103,7 +104,7 @@ def vars_cmd(
     except VariablesUnavailable as e:
         emit_error("VARS_UNSUPPORTED", str(e), ctx.use_json)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize kernel failures for CLI output
         emit_error("CONNECTION_FAILED", str(e), ctx.use_json)
         return
 
@@ -112,11 +113,11 @@ def vars_cmd(
             _emit_single(ctx, result, session_id)
         else:
             _emit_list(ctx, result, session_id)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize rendering failures for CLI output
         emit_error("INTERNAL_ERROR", str(e), ctx.use_json)
 
 
-def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
+def _emit_list(ctx: CliContext, result: dict, session_id: str) -> None:
     variables = result["variables"]
     source = result["source"]
 
@@ -152,15 +153,15 @@ def _emit_list(ctx: Context, result: dict, session_id: str) -> None:
     emit({"_human": "\n".join(lines)}, use_json=False)
 
 
-def _emit_single(ctx: Context, result: dict, session_id: str) -> None:
+def _emit_single(ctx: CliContext, result: dict, session_id: str) -> None:
     if ctx.use_json:
         emit(result, use_json=True)
         return
 
     lines = [
-        f"name:  {str(result['name'])}",
-        f"type:  {str(result['type'])}",
-        f"value: {str(result['value'])}",
+        f"name:  {result['name']!s}",
+        f"type:  {result['type']!s}",
+        f"value: {result['value']!s}",
         f"source: {result['source'].value}",
     ]
     if "data" in result:

@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 
 from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
 from jupyter_jcli.hook_decision import (
     HookDecision,
@@ -138,9 +139,12 @@ def _check_exec_guard(sc) -> str | None:
     args = sc.args
 
     if name == "jupyter":
-        if args and args[0] == "nbconvert":
-            if any(a == "--execute" or a.startswith("--execute=") for a in args):
-                return "nbconvert --execute"
+        if (
+            args
+            and args[0] == "nbconvert"
+            and any(a == "--execute" or a.startswith("--execute=") for a in args)
+        ):
+            return "nbconvert --execute"
         return None
 
     # python -m jupyter nbconvert --execute …
@@ -178,9 +182,12 @@ def _check_exec_guard(sc) -> str | None:
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.",
 )
-def nbconvert_guard(platform: str, debug: bool):
+@pass_ctx
+def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
-    with HookDebugLogger("notebook-exec-guard", enabled=debug) as log:
+    with HookDebugLogger(
+        "notebook-exec-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
+    ) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -248,9 +255,12 @@ _PYTHON_HINT = (
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.",
 )
-def python_run_guard(platform: str, debug: bool):
+@pass_ctx
+def python_run_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
-    with HookDebugLogger("python-run-guard", enabled=debug) as log:
+    with HookDebugLogger(
+        "python-run-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
+    ) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -326,17 +336,18 @@ def python_run_guard(platform: str, debug: bool):
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.",
 )
-def pair_drift_guard_pre(platform: str, debug: bool) -> None:
+@pass_ctx
+def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
     if platform == "codex":
-        return _pair_drift_guard_pre_codex(debug)
+        return _pair_drift_guard_pre_codex(debug, ctx.config.debug_log_dir)
     else:
-        return _pair_drift_guard_pre_claude(debug)
+        return _pair_drift_guard_pre_claude(debug, ctx.config.debug_log_dir)
 
 
-def _pair_drift_guard_pre_claude(debug: bool) -> None:
+def _pair_drift_guard_pre_claude(debug: bool, log_dir: Path) -> None:
     """Claude Code: read tool_input.file_path from Edit/Write tools."""
-    with HookDebugLogger("pair-drift-guard-pre", enabled=debug) as log:
+    with HookDebugLogger("pair-drift-guard-pre", enabled=debug, log_dir=log_dir) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -385,9 +396,9 @@ def _pair_drift_guard_pre_claude(debug: bool) -> None:
             sys.exit(0)
 
 
-def _pair_drift_guard_pre_codex(debug: bool) -> None:
+def _pair_drift_guard_pre_codex(debug: bool, log_dir: Path) -> None:
     """Codex: parse apply_patch command for *** Update File: / *** Add File: paths."""
-    with HookDebugLogger("pair-drift-guard-pre", enabled=debug) as log:
+    with HookDebugLogger("pair-drift-guard-pre", enabled=debug, log_dir=log_dir) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -609,11 +620,10 @@ def _apply_merge_and_decide(
                 file=sys.stderr,
             )
 
-    if synced:
-        if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py(
-                py_path, result.merged_cells, logger
-            )
+    if synced and canonical_merged_py is None:
+        _, canonical_merged_py = _prepare_merged_py(
+            py_path, result.merged_cells, logger
+        )
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
 
@@ -685,11 +695,14 @@ def _diff_section(diff_text: str, py_name: str = "") -> str:
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.",
 )
-def notebook_edit_guard(platform: str, debug: bool) -> None:
+@pass_ctx
+def notebook_edit_guard(ctx: CliContext, platform: str, debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
     # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
     # --platform accepted for interface uniformity; not used for dispatch.
-    with HookDebugLogger("notebook-edit-guard", enabled=debug) as log:
+    with HookDebugLogger(
+        "notebook-edit-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
+    ) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -734,17 +747,20 @@ def notebook_edit_guard(platform: str, debug: bool) -> None:
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.",
 )
-def pair_drift_guard_post(platform: str, debug: bool) -> None:
+@pass_ctx
+def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
     """PostToolUse hook: auto-sync py/ipynb pair after agent's own edit."""
     if platform == "codex":
-        return _pair_drift_guard_post_codex(debug)
+        return _pair_drift_guard_post_codex(debug, ctx.config.debug_log_dir)
     else:
-        return _pair_drift_guard_post_claude(debug)
+        return _pair_drift_guard_post_claude(debug, ctx.config.debug_log_dir)
 
 
-def _pair_drift_guard_post_claude(debug: bool) -> None:
+def _pair_drift_guard_post_claude(debug: bool, log_dir: Path) -> None:
     """Claude Code: read tool_input.file_path from Edit/Write tools."""
-    with HookDebugLogger("pair-drift-guard-post", enabled=debug) as log:
+    with HookDebugLogger(
+        "pair-drift-guard-post", enabled=debug, log_dir=log_dir
+    ) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -777,9 +793,11 @@ def _pair_drift_guard_post_claude(debug: bool) -> None:
             sys.exit(0)
 
 
-def _pair_drift_guard_post_codex(debug: bool) -> None:
+def _pair_drift_guard_post_codex(debug: bool, log_dir: Path) -> None:
     """Codex: parse apply_patch command for file paths, run post-edit sync."""
-    with HookDebugLogger("pair-drift-guard-post", enabled=debug) as log:
+    with HookDebugLogger(
+        "pair-drift-guard-post", enabled=debug, log_dir=log_dir
+    ) as log:
         try:
             payload = read_hook_stdin(log)
         except (json.JSONDecodeError, ValueError):
@@ -971,37 +989,35 @@ def _sync_pair_after_edit(
             )
 
     synced = ipynb_converged and py_converged
-    if synced:
-        if canonical_merged_py is None:
-            _, canonical_merged_py = _prepare_merged_py(
-                py_path, result.merged_cells, logger
-            )
+    if synced and canonical_merged_py is None:
+        _, canonical_merged_py = _prepare_merged_py(
+            py_path, result.merged_cells, logger
+        )
     if synced and canonical_merged_py is not None:
         pair_baseline.write_baseline(py_path, canonical_merged_py)
-    if synced:
-        if old_baseline_text is not None and canonical_merged_py is not None:
-            try:
-                from jupyter_jcli.commands.notebook import (
-                    build_summary_data,
-                    diff_cells,
-                    format_summary_human,
-                )
-                from jupyter_jcli.parser import parse_py_percent_text
+    if synced and old_baseline_text is not None and canonical_merged_py is not None:
+        try:
+            from jupyter_jcli.commands.notebook import (
+                build_summary_data,
+                diff_cells,
+                format_summary_human,
+            )
+            from jupyter_jcli.parser import parse_py_percent_text
 
-                baseline = parse_py_percent_text(
-                    old_baseline_text, source_path=str(py_path)
-                )
-                current = parse_py_percent_text(
-                    canonical_merged_py, source_path=str(py_path)
-                )
-                summary_text = format_summary_human(
-                    build_summary_data(current, diff_cells(baseline, current)),
-                    max_cells=_HOOK_SUMMARY_MAX_CELLS,
-                    max_chars=_HOOK_SUMMARY_MAX_CHARS,
-                )
-            except Exception as exc:  # noqa: BLE001
-                if logger is not None:
-                    logger.record_exception(exc)
+            baseline = parse_py_percent_text(
+                old_baseline_text, source_path=str(py_path)
+            )
+            current = parse_py_percent_text(
+                canonical_merged_py, source_path=str(py_path)
+            )
+            summary_text = format_summary_human(
+                build_summary_data(current, diff_cells(baseline, current)),
+                max_cells=_HOOK_SUMMARY_MAX_CELLS,
+                max_chars=_HOOK_SUMMARY_MAX_CHARS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.record_exception(exc)
     if synced:
         other = ipynb_path if edited == py_path else py_path
         context = (
@@ -1032,9 +1048,14 @@ def _sync_pair_after_edit(
     default=False,
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pre-commit-pair-sync-{ts}.log.",
 )
-def pre_commit_pair_sync(include_globs: tuple[str, ...], debug: bool) -> None:
+@pass_ctx
+def pre_commit_pair_sync(
+    ctx: CliContext, include_globs: tuple[str, ...], debug: bool
+) -> None:
     """Git pre-commit hook: sync py/ipynb pairs before commit."""
-    with HookDebugLogger("pre-commit-pair-sync", enabled=debug) as _log:
+    with HookDebugLogger(
+        "pre-commit-pair-sync", enabled=debug, log_dir=ctx.config.debug_log_dir
+    ) as _log:
         _run_pre_commit_pair_sync(include_globs)
 
 
@@ -1126,8 +1147,8 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         # Initial sync: .py missing on disk but .ipynb exists
         if not py_path.exists() and ipynb_path.exists():
             try:
-                from jupyter_jcli.parser import parse_ipynb
                 from jupyter_jcli.pair_io import emit_py_percent
+                from jupyter_jcli.parser import parse_ipynb
 
                 parsed_nb = parse_ipynb(str(ipynb_path))
                 py_text = emit_py_percent(parsed_nb)
@@ -1186,8 +1207,8 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         if result.status == DriftStatus.MERGED:
             if result.py_needs_update:
                 try:
-                    from jupyter_jcli.parser import parse_py_percent, ParsedFile
                     from jupyter_jcli.pair_io import emit_py_percent
+                    from jupyter_jcli.parser import ParsedFile, parse_py_percent
 
                     py_parsed = parse_py_percent(str(py_path))
                     merged_parsed = ParsedFile(

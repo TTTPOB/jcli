@@ -3,7 +3,7 @@
 import click
 
 from jupyter_jcli._enums import ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.session_selector import SessionSelectorError
 
@@ -16,21 +16,21 @@ def kernel():
 @kernel.command("interrupt")
 @click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def interrupt(ctx: Context, session_selector: str):
+def interrupt(ctx: CliContext, session_selector: str):
     """Interrupt a kernel selected by ID, short ID, or name."""
     try:
         session_id, kernel_id = ctx.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize command failures for CLI output
         emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)
         return
 
     try:
         from jupyter_jcli.server import interrupt_kernel
 
-        interrupt_kernel(ctx.server_url, kernel_id, ctx.token)
+        interrupt_kernel(ctx.config.server_url, kernel_id, ctx.config.token)
         emit(
             {
                 "status": ResponseStatus.OK,
@@ -38,28 +38,28 @@ def interrupt(ctx: Context, session_selector: str):
             },
             use_json=ctx.use_json,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize server failures for CLI output
         emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)
 
 
 @kernel.command("restart")
 @click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def restart(ctx: Context, session_selector: str):
+def restart(ctx: CliContext, session_selector: str):
     """Restart a kernel selected by ID, short ID, or name."""
     try:
         session_id, kernel_id = ctx.resolve_kernel(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize command failures for CLI output
         emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)
         return
 
     try:
         from jupyter_jcli.server import restart_kernel
 
-        restart_kernel(ctx.server_url, kernel_id, ctx.token)
+        restart_kernel(ctx.config.server_url, kernel_id, ctx.config.token)
         emit(
             {
                 "status": ResponseStatus.OK,
@@ -67,5 +67,5 @@ def restart(ctx: Context, session_selector: str):
             },
             use_json=ctx.use_json,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize server failures for CLI output
         emit_error("KERNEL_NOT_FOUND", str(e), ctx.use_json)

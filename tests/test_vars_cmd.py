@@ -1,7 +1,7 @@
 """Test the 'vars' subcommand end-to-end against a live kernel."""
 
 import json
-
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -189,9 +189,13 @@ class TestEmitListDefensiveness:
     """Unit tests — no live kernel; guard formatter against non-string values."""
 
     def test_emit_list_does_not_crash_on_list_value(self):
-        from jupyter_jcli.cli import Context
+        from jupyter_jcli.cli import CliContext
+        from jupyter_jcli.config import AppConfig
 
-        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        ctx = CliContext(
+            config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
+            use_json=False,
+        )
         result = {
             "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
             "source": VariableSource.FALLBACK,
@@ -200,9 +204,14 @@ class TestEmitListDefensiveness:
 
     def test_emit_list_output_contains_variable_name(self):
         import click as _click
-        from jupyter_jcli.cli import Context
 
-        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        from jupyter_jcli.cli import CliContext
+        from jupyter_jcli.config import AppConfig
+
+        ctx = CliContext(
+            config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
+            use_json=False,
+        )
         result = {
             "variables": [{"name": "my_list", "type": "list", "value": [1, 2, 3]}],
             "source": VariableSource.FALLBACK,
@@ -221,9 +230,13 @@ class TestEmitListDefensiveness:
 
     def test_emit_list_no_connection_failed_on_bad_value(self):
         """Rendering errors must not be labelled CONNECTION_FAILED."""
-        from jupyter_jcli.cli import Context
+        from jupyter_jcli.cli import CliContext
+        from jupyter_jcli.config import AppConfig
 
-        ctx = Context(server_url="http://localhost:8888", token=None, use_json=False)
+        ctx = CliContext(
+            config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
+            use_json=False,
+        )
         result = {
             "variables": [{"name": "x", "type": "int", "value": 99}],
             "source": VariableSource.FALLBACK,

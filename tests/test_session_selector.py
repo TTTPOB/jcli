@@ -2,11 +2,13 @@
 
 import json
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from jupyter_jcli.cli import Context, main
+from jupyter_jcli.cli import CliContext, main
+from jupyter_jcli.config import AppConfig
 from jupyter_jcli.session_selector import (
     SessionSelectorAmbiguous,
     SessionSelectorError,
@@ -15,7 +17,6 @@ from jupyter_jcli.session_selector import (
     short_session_ids,
 )
 from jupyter_jcli.variables import VariableSource
-
 
 SESSIONS = [
     {
@@ -106,14 +107,20 @@ def test_context_resolve_session_delegates_with_its_server_connection(monkeypatc
             calls.append((server_url, selector, token)) or "session-one"
         ),
     )
-    ctx = Context("http://example.invalid", "test-token", False)
+    ctx = CliContext(
+        AppConfig("http://example.invalid", "test-token", Path("/tmp/jcli-test")),
+        False,
+    )
 
     assert ctx.resolve_session("analysis") == "session-one"
     assert calls == [("http://example.invalid", "analysis", "test-token")]
 
 
 def test_context_resolve_kernel_returns_session_and_kernel_ids(monkeypatch):
-    ctx = Context("http://example.invalid", "test-token", False)
+    ctx = CliContext(
+        AppConfig("http://example.invalid", "test-token", Path("/tmp/jcli-test")),
+        False,
+    )
     monkeypatch.setattr(ctx, "resolve_session", lambda selector: "session-one")
     calls = []
     monkeypatch.setattr(
@@ -200,7 +207,7 @@ def test_commands_render_session_selector_errors(
     def raise_selector_error(self, selector):
         raise error_type("resolution failed")
 
-    monkeypatch.setattr(Context, resolver, raise_selector_error)
+    monkeypatch.setattr(CliContext, resolver, raise_selector_error)
 
     result = CliRunner().invoke(main, ["--json", *args])
 

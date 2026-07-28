@@ -3,18 +3,18 @@
 import click
 
 from jupyter_jcli._enums import ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 
 @click.command()
 @pass_ctx
-def healthcheck(ctx: Context):
+def healthcheck(ctx: CliContext):
     """Check if the Jupyter server is reachable."""
     try:
         from jupyter_jcli.server import healthcheck as do_healthcheck
 
-        info = do_healthcheck(ctx.server_url, ctx.token)
+        info = do_healthcheck(ctx.config.server_url, ctx.config.token)
         emit(
             {
                 "status": ResponseStatus.OK,
@@ -24,9 +24,9 @@ def healthcheck(ctx: Context):
             },
             use_json=ctx.use_json,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report client failures uniformly
         emit_error(
             "CONNECTION_FAILED",
-            f"Cannot reach Jupyter server at {ctx.server_url}: {e}",
+            f"Cannot reach Jupyter server at {ctx.config.server_url}: {e}",
             ctx.use_json,
         )

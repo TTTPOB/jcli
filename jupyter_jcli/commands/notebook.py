@@ -8,12 +8,15 @@ from typing import TYPE_CHECKING
 import click
 
 from jupyter_jcli._enums import CellType, ResponseStatus
-from jupyter_jcli.cell_alignment import CellChange, diff_cells as diff_cells
+from jupyter_jcli.cell_alignment import (
+    CellChange,
+    diff_cells,  # noqa: F401 - public re-export
+)
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.parser import Cell, ParsedFile, parse_cell_spec, parse_file
 
 if TYPE_CHECKING:
-    from jupyter_jcli.cli import Context
+    from jupyter_jcli.cli import CliContext
 
 
 _MAX_ANALYSIS_ITEMS = 8
@@ -34,7 +37,7 @@ def notebook():
     "file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False)
 )
 @click.pass_obj
-def summary(ctx: Context, file_path: str) -> None:
+def summary(ctx: CliContext, file_path: str) -> None:
     """Print a deterministic structural summary for each cell in FILE."""
     parsed = _parse_or_error(ctx, file_path)
     data = build_summary_data(parsed)
@@ -52,7 +55,7 @@ def summary(ctx: Context, file_path: str) -> None:
     "--cell", "cell_spec", required=True, help="Cell spec: 3, 3:7, 3:, :5 (0-indexed)"
 )
 @click.pass_obj
-def show(ctx: Context, file_path: str, cell_spec: str) -> None:
+def show(ctx: CliContext, file_path: str, cell_spec: str) -> None:
     """Print complete source for selected cells in FILE."""
     parsed = _parse_or_error(ctx, file_path)
     try:
@@ -77,10 +80,10 @@ def show(ctx: Context, file_path: str, cell_spec: str) -> None:
     emit({"_human": _format_show_human(cells)}, use_json=False)
 
 
-def _parse_or_error(ctx: Context, file_path: str) -> ParsedFile:
+def _parse_or_error(ctx: CliContext, file_path: str) -> ParsedFile:
     try:
         return parse_file(file_path)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - report parser failures uniformly
         emit_error("NOTEBOOK_PARSE_FAILED", str(error), ctx.use_json)
         raise AssertionError("emit_error should exit")
 
@@ -291,7 +294,7 @@ class _PythonSummaryCollector(ast.NodeVisitor):
             return
         try:
             self._append("writes", ast.unparse(target))
-        except Exception:
+        except Exception:  # noqa: BLE001 - ast.unparse may reject unknown nodes
             return
 
     def _append(self, field: str, value: str) -> None:
@@ -313,9 +316,8 @@ def _format_alias(name: str, alias: str | None) -> str:
 def _qualified_name(node: ast.expr) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
-    if isinstance(node, ast.Attribute):
-        if parent := _qualified_name(node.value):
-            return f"{parent}.{node.attr}"
+    if isinstance(node, ast.Attribute) and (parent := _qualified_name(node.value)):
+        return f"{parent}.{node.attr}"
     return None
 
 

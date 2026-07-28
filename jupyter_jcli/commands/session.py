@@ -8,7 +8,7 @@ from enum import Enum
 import click
 
 from jupyter_jcli._enums import ResponseStatus
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.session_selector import SessionSelectorError, short_session_ids
 
@@ -55,12 +55,12 @@ def session():
 @click.option("--kernel", "-k", required=True, help="Kernel spec name")
 @click.option("--name", "-n", default=None, help="Session name")
 @pass_ctx
-def create(ctx: Context, kernel: str, name: str | None):
+def create(ctx: CliContext, kernel: str, name: str | None):
     """Create a new session with the given kernel."""
     try:
         from jupyter_jcli.server import create_session
 
-        info = create_session(ctx.server_url, kernel, name, ctx.token)
+        info = create_session(ctx.config.server_url, kernel, name, ctx.config.token)
         emit(
             {
                 **info,
@@ -68,7 +68,7 @@ def create(ctx: Context, kernel: str, name: str | None):
             },
             use_json=ctx.use_json,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report client failures uniformly
         emit_error("SESSION_CREATE_FAILED", str(e), ctx.use_json)
 
 
@@ -88,7 +88,7 @@ def create(ctx: Context, kernel: str, name: str | None):
     help="Force variable preview even when there are more than 10 sessions.",
 )
 @pass_ctx
-def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
+def list_sessions(ctx: CliContext, skip_vars: bool, force_vars: bool):
     """List active sessions.
 
     By default, a short variable preview is fetched for each idle kernel and
@@ -100,7 +100,7 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
     try:
         from jupyter_jcli.server import list_sessions
 
-        sessions = list_sessions(ctx.server_url, ctx.token)
+        sessions = list_sessions(ctx.config.server_url, ctx.config.token)
 
         # Decide whether to fetch vars
         fetch_vars = not skip_vars
@@ -166,11 +166,11 @@ def list_sessions(ctx: Context, skip_vars: bool, force_vars: bool):
 
             emit({"_human": "\n".join(lines)}, use_json=False)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report client failures uniformly
         emit_error("CONNECTION_FAILED", str(e), ctx.use_json)
 
 
-def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
+def _enrich_with_vars(ctx: CliContext, sessions: list[dict]) -> None:
     """Fan out variable fetches in parallel and attach vars_preview to each session dict."""
     from jupyter_jcli.kernel import kernel_connection
     from jupyter_jcli.variables import list_variables
@@ -186,12 +186,14 @@ def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
         sid = s["session_id"]
         kid = s["kernel_id"]
         try:
-            with kernel_connection(ctx.server_url, ctx.token, kid) as kernel:
+            with kernel_connection(
+                ctx.config.server_url, ctx.config.token, kid
+            ) as kernel:
                 result = list_variables(kernel, timeout=_LIST_VARS_TIMEOUT)
             variables = result["variables"]
             names = [v["name"] for v in variables]
             return sid, {"names": names[:_PREVIEW_N], "total": len(names)}
-        except Exception:
+        except Exception:  # noqa: BLE001 - variable preview is best-effort
             return sid, {"names": [], "total": -1, "unavailable": True}
 
     previews: dict[str, dict] = {}
@@ -201,7 +203,7 @@ def _enrich_with_vars(ctx: Context, sessions: list[dict]) -> None:
             try:
                 sid, preview = future.result()
                 previews[sid] = preview
-            except Exception:
+            except Exception:  # noqa: BLE001 - variable preview is best-effort
                 sid = futures[future]
                 previews[sid] = {"names": [], "total": -1, "unavailable": True}
 
@@ -236,24 +238,24 @@ def _format_vars_preview(preview: dict) -> str:
 @session.command("kill")
 @click.argument("session_selector", metavar="SESSION_SELECTOR")
 @pass_ctx
-def kill(ctx: Context, session_selector: str):
+def kill(ctx: CliContext, session_selector: str):
     """Kill a session selected by ID, short ID, or name."""
     try:
         session_id = ctx.resolve_session(session_selector)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize command failures for CLI output
         emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
         return
 
     try:
         from jupyter_jcli.server import delete_session
 
-        delete_session(ctx.server_url, session_id, ctx.token)
+        delete_session(ctx.config.server_url, session_id, ctx.config.token)
         emit(
             {"status": ResponseStatus.OK, "_human": f"Killed session {session_id}"},
             use_json=ctx.use_json,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - normalize server failures for CLI output
         emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)

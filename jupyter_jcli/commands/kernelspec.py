@@ -2,7 +2,7 @@
 
 import click
 
-from jupyter_jcli.cli import Context, pass_ctx
+from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 
@@ -13,12 +13,12 @@ def kernelspec():
 
 @kernelspec.command("list")
 @pass_ctx
-def list_specs(ctx: Context):
+def list_specs(ctx: CliContext):
     """List available kernel specs."""
     try:
         from jupyter_jcli.server import list_kernelspecs
 
-        specs = list_kernelspecs(ctx.server_url, ctx.token)
+        specs = list_kernelspecs(ctx.config.server_url, ctx.config.token)
 
         if ctx.use_json:
             emit({"kernelspecs": specs}, use_json=True)
@@ -31,14 +31,14 @@ def list_specs(ctx: Context):
                 )
             emit({"_human": "\n".join(lines)}, use_json=False)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report client failures uniformly
         emit_error("CONNECTION_FAILED", str(e), ctx.use_json)
 
 
 @kernelspec.command("inspect-file")
 @click.argument("path", type=click.Path(exists=True, dir_okay=False))
 @pass_ctx
-def inspect_file(ctx: Context, path: str):
+def inspect_file(ctx: CliContext, path: str):
     """Inspect kernel metadata declared by a .py or .ipynb file."""
     try:
         from jupyter_jcli.parser import parse_file
@@ -56,5 +56,5 @@ def inspect_file(ctx: Context, path: str):
 
         kernel_name = parsed.kernel_name or "None"
         emit({"_human": kernel_name}, use_json=False)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report parser failures uniformly
         emit_error("INSPECT_FILE_FAILED", str(e), ctx.use_json)
