@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 from jupyter_jcli._enums import CellType
 from jupyter_jcli.cli import main
-from jupyter_jcli.diff import CellChange, diff_cells
+from jupyter_jcli.diff import CellChange, align_cells, diff_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 from jupyter_jcli.summ import build_summary_data, format_summary_human
@@ -292,6 +292,114 @@ def test_cli_registers_notebook_group():
     assert subcommand_help.exit_code == 0
     assert "summary" in subcommand_help.output
     assert "show" in subcommand_help.output
+    assert "map" in subcommand_help.output
+
+
+def test_map_returns_pair_alignment_lines_ids_and_baseline_changes(tmp_path):
+    py_path = tmp_path / "analysis.py"
+    ipynb_path = tmp_path / "analysis.ipynb"
+    py_path.write_text(
+        '# %% id="first"\nx = 2\n\n# %% id="second"\ny = 2\n',
+        encoding="utf-8",
+    )
+    notebook = nbformat.v4.new_notebook(
+        cells=[
+            nbformat.v4.new_code_cell("x = 2", id="first"),
+            nbformat.v4.new_code_cell("y = 3", id="second"),
+        ]
+    )
+    nbformat.write(notebook, ipynb_path)
+    baseline = '# %% id="first"\nx = 1\n\n# %% id="second"\ny = 2\n'
+
+    with patch("jupyter_jcli.commands.notebook.pair_baseline.read_baseline") as read:
+        read.return_value = baseline
+        result = CliRunner().invoke(main, ["--json", "notebook", "map", str(py_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["status"] == "ok"
+    assert data["python_path"] == str(py_path.resolve())
+    assert data["notebook_path"] == str(ipynb_path.resolve())
+    assert data["baseline_available"] is True
+    assert data["cells"] == [
+        {
+            "python_index": 0,
+            "notebook_index": 0,
+            "cell_id": "first",
+            "notebook_cell_id": "first",
+            "type": "code",
+            "source_start_line": 2,
+            "source_end_line": 2,
+            "alignment": "id",
+            "change": "equal",
+            "python_baseline_index": 0,
+            "notebook_baseline_index": 0,
+            "python_change": "edited",
+            "notebook_change": "edited",
+        },
+        {
+            "python_index": 1,
+            "notebook_index": 1,
+            "cell_id": "second",
+            "notebook_cell_id": "second",
+            "type": "code",
+            "source_start_line": 5,
+            "source_end_line": 5,
+            "alignment": "id",
+            "change": "edited",
+            "python_baseline_index": 1,
+            "notebook_baseline_index": 1,
+            "python_change": "equal",
+            "notebook_change": "edited",
+        },
+    ]
+
+
+def test_map_accepts_notebook_path_and_nulls_baseline_fields(tmp_path):
+    py_path = tmp_path / "paired.py"
+    ipynb_path = tmp_path / "paired.ipynb"
+    py_path.write_text("# %%\nvalue = 1\n", encoding="utf-8")
+    nbformat.write(
+        nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("value = 1")]),
+        ipynb_path,
+    )
+
+    result = CliRunner().invoke(main, ["--json", "notebook", "map", str(ipynb_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["python_path"] == str(py_path.resolve())
+    assert data["notebook_path"] == str(ipynb_path.resolve())
+    assert data["baseline_available"] is False
+    assert data["cells"][0]["alignment"] == "content"
+    assert data["cells"][0]["python_change"] is None
+    assert data["cells"][0]["notebook_change"] is None
+
+
+def test_map_missing_pair_uses_structured_error(tmp_path):
+    path = tmp_path / "unpaired.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["--json", "notebook", "map", str(path)])
+
+    assert result.exit_code == 1
+    assert json.loads(result.output) == {
+        "status": "error",
+        "code": "PAIR_NOT_FOUND",
+        "message": f"No paired file found for: {path}",
+    }
+
+
+def test_cell_alignment_reports_id_content_and_position_methods():
+    by_id_old = parse_py_percent_text('# %% id="same"\nold\n')
+    by_id_current = parse_py_percent_text('# %% id="same"\nnew\n')
+    by_id = align_cells(by_id_old, by_id_current)
+    by_content = align_cells(_parsed("same"), _parsed("same"))
+    by_position = align_cells(_parsed("old"), _parsed("new"))
+
+    assert by_id[0].alignment == "id"
+    assert by_content[0].alignment == "content"
+    assert by_position[0].alignment == "position"
 
 
 def test_notebook_helpers_import_without_cli_cycle(tmp_path):

@@ -33,6 +33,7 @@ class CellChange:
     old_cell: Cell | None
     new_cell: Cell | None
     current_insertion_index: int
+    alignment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ def _align_cells(
         new_cell = current_cells[new_index]
         kind = _paired_kind(old_cell, new_cell)
         if include_equal or kind != "equal":
-            alignments.append(_paired_change(kind, old_cell, new_cell))
+            alignments.append(_paired_change(kind, old_cell, new_cell, alignment="id"))
         old_start = old_index + 1
         new_start = new_index + 1
 
@@ -150,7 +151,7 @@ def _align_cells_by_content(
         if not include_equal:
             return []
         return [
-            _paired_change("equal", old_cell, new_cell)
+            _paired_change("equal", old_cell, new_cell, alignment="content")
             for old_cell, new_cell in zip(old_cells, current_cells)
         ]
 
@@ -173,6 +174,7 @@ def _align_cells_by_content(
                     "edited" if index in changed_positions else "equal",
                     old_cell,
                     new_cell,
+                    alignment="position" if index in changed_positions else "content",
                 )
                 for index, (old_cell, new_cell) in enumerate(
                     zip(old_cells, current_cells)
@@ -193,7 +195,7 @@ def _align_cells_by_content(
         if tag == "equal":
             if include_equal:
                 alignments.extend(
-                    _paired_change("equal", old_cell, new_cell)
+                    _paired_change("equal", old_cell, new_cell, alignment="content")
                     for old_cell, new_cell in zip(
                         old_cells[old_start:old_end], current_cells[new_start:new_end]
                     )
@@ -244,7 +246,13 @@ def _align_cells_by_content(
     return [alignment for alignment in alignments if alignment.kind != "equal"]
 
 
-def _paired_change(kind: str, old_cell: Cell, new_cell: Cell) -> CellChange:
+def _paired_change(
+    kind: str,
+    old_cell: Cell,
+    new_cell: Cell,
+    *,
+    alignment: str = "position",
+) -> CellChange:
     return CellChange(
         kind=kind,
         old_index=old_cell.index,
@@ -252,6 +260,7 @@ def _paired_change(kind: str, old_cell: Cell, new_cell: Cell) -> CellChange:
         old_cell=old_cell,
         new_cell=new_cell,
         current_insertion_index=new_cell.index,
+        alignment=alignment,
     )
 
 

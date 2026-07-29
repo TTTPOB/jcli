@@ -140,19 +140,27 @@ j-cli kernel interrupt <session_selector>
 j-cli kernel restart <session_selector>
 ```
 
-### `notebook summary` and `notebook show`
+### `notebook summary`, `notebook show`, and `notebook map`
 
 Inspect notebook cells without executing them. `summary` shows the complete source
 for short cells. For longer Python cells, it extracts imports, definitions, writes,
 and calls and includes a source preview. `show` prints complete source for a cell
-or range.
+or range. `map` returns the cell alignment for a paired `.py` / `.ipynb`,
+including stable IDs, Python source line ranges, pair changes, and each side's
+change relative to the latest pair baseline.
 
 ```bash
 j-cli notebook summary analysis.py
 j-cli notebook show analysis.py --cell 4
 j-cli notebook show analysis.py --cell 3:7
 j-cli -j notebook summary analysis.ipynb
+j-cli -j notebook map analysis.py
 ```
+
+`map` reports `alignment` as `id`, `content`, `position`, or `null` for an
+unpaired cell. `change`, `python_change`, and `notebook_change` use `equal`,
+`edited`, `inserted`, and `deleted`; baseline changes are `null` when no git or
+sticky pair baseline exists.
 
 Cell specs are 0-indexed and use the same half-open range syntax as `exec`.
 
