@@ -1,13 +1,103 @@
 """jcli — CLI tool for LLM agents to operate Jupyter Lab servers."""
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
+from importlib import import_module
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import click
 
 from jupyter_jcli.config import AppConfig
-from jupyter_jcli.server import ServerClient
+
+if TYPE_CHECKING:
+    from jupyter_jcli.server import ServerClient
+
+
+# Keep heavyweight command dependencies out of root CLI startup. Click normally
+# resolves every command while formatting help, so descriptions live here too.
+_LAZY_COMMANDS = {
+    "_hooks": ("jupyter_jcli.commands.hooks_cmd:hooks", "", True),
+    "convert": (
+        "jupyter_jcli.commands.convert_cmd:convert",
+        "Convert between .ipynb and py:percent (.py) formats.",
+        False,
+    ),
+    "exec": (
+        "jupyter_jcli.commands.exec_cmd:exec_cmd",
+        "Execute code in a session selected by ID, short ID, or name.",
+        False,
+    ),
+    "healthcheck": (
+        "jupyter_jcli.commands.healthcheck:healthcheck",
+        "Check if the Jupyter server is reachable.",
+        False,
+    ),
+    "kernel": (
+        "jupyter_jcli.commands.kernel_cmd:kernel",
+        "Manage kernels (interrupt, restart).",
+        False,
+    ),
+    "kernelspec": (
+        "jupyter_jcli.commands.kernelspec:kernelspec",
+        "Manage kernel specifications.",
+        False,
+    ),
+    "notebook": (
+        "jupyter_jcli.commands.notebook:notebook",
+        "Inspect notebook cells.",
+        False,
+    ),
+    "serve-cmd": (
+        "jupyter_jcli.commands.serve_cmd:serve_cmd",
+        "Print a copy-pasteable Jupyter launch command that references env-var token.",
+        False,
+    ),
+    "session": (
+        "jupyter_jcli.commands.session:session",
+        "Manage Jupyter sessions.",
+        False,
+    ),
+    "setup": (
+        "jupyter_jcli.commands.setup_cmd:setup",
+        "Install integrations for external tools.",
+        False,
+    ),
+    "vars": (
+        "jupyter_jcli.commands.vars_cmd:vars_cmd",
+        "Inspect variables in a session selected by ID, short ID, or name.",
+        False,
+    ),
+}
+
+
+class _LazyGroup(click.Group):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted(set(super().list_commands(ctx)) | _LAZY_COMMANDS.keys())
+
+    def get_command(self, ctx: click.Context, name: str) -> click.Command | None:
+        command = super().get_command(ctx, name)
+        if command is not None:
+            return command
+        entry = _LAZY_COMMANDS.get(name)
+        if entry is None:
+            return None
+        module_name, attribute = entry[0].split(":", 1)
+        return getattr(import_module(module_name), attribute)
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        rows = [
+            (name, description)
+            for name, (_target, description, hidden) in sorted(_LAZY_COMMANDS.items())
+            if not hidden
+        ]
+        if rows:
+            with formatter.section("Commands"):
+                formatter.write_dl(rows)
 
 
 def _ensure_no_proxy(server_url: str) -> None:
@@ -33,7 +123,7 @@ class CliContext:
 pass_ctx = click.make_pass_decorator(CliContext)
 
 
-@click.group()
+@click.group(cls=_LazyGroup)
 @click.option(
     "--server-url",
     "-s",
@@ -58,6 +148,8 @@ pass_ctx = click.make_pass_decorator(CliContext)
 @click.pass_context
 def main(ctx, server_url, token, use_json):
     """CLI tool for LLM agents to operate Jupyter Lab servers."""
+    from jupyter_jcli.server import ServerClient
+
     config = AppConfig.from_env(server_url=server_url, token=token)
     _ensure_no_proxy(config.server_url)
     ctx.ensure_object(dict)
@@ -66,29 +158,3 @@ def main(ctx, server_url, token, use_json):
         use_json=use_json,
         server=ServerClient(config.server_url, config.token),
     )
-
-
-# Import and register command groups
-from jupyter_jcli.commands.convert_cmd import convert
-from jupyter_jcli.commands.exec_cmd import exec_cmd
-from jupyter_jcli.commands.healthcheck import healthcheck
-from jupyter_jcli.commands.hooks_cmd import hooks
-from jupyter_jcli.commands.kernel_cmd import kernel
-from jupyter_jcli.commands.kernelspec import kernelspec
-from jupyter_jcli.commands.notebook import notebook
-from jupyter_jcli.commands.serve_cmd import serve_cmd
-from jupyter_jcli.commands.session import session
-from jupyter_jcli.commands.setup_cmd import setup
-from jupyter_jcli.commands.vars_cmd import vars_cmd
-
-main.add_command(healthcheck)
-main.add_command(kernelspec)
-main.add_command(session)
-main.add_command(kernel)
-main.add_command(exec_cmd, name="exec")
-main.add_command(setup)
-main.add_command(hooks, name="_hooks")
-main.add_command(convert)
-main.add_command(vars_cmd, name="vars")
-main.add_command(serve_cmd, name="serve-cmd")
-main.add_command(notebook)
