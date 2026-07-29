@@ -1,26 +1,19 @@
 """Serializer and deserializer for Jupyter notebook files."""
 
+from copy import deepcopy
 from pathlib import Path
 
 import nbformat
 
-from jupyter_jcli._enums import CellType
-from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.model import ParsedFile
 
 
-def from_node(nb: "nbformat.NotebookNode", *, source_path: str = "") -> ParsedFile:
-    """Convert a NotebookNode to the shared document model."""
-    kernelspec = nb.metadata.get("kernelspec", {})
+def from_node(nb: nbformat.NotebookNode, *, source_path: str = "") -> ParsedFile:
+    """Wrap a NotebookNode in the shared document model."""
     return ParsedFile(
-        kernel_name=kernelspec.get("name"),
-        cells=[
-            Cell(index=index, cell_type=cell.cell_type, source=cell.source)
-            for index, cell in enumerate(nb.cells)
-        ],
+        notebook=nb,
         source_path=source_path,
         paired_ipynb=source_path or None,
-        kernel_display_name=kernelspec.get("display_name") or None,
-        kernel_language=kernelspec.get("language") or None,
     )
 
 
@@ -35,25 +28,15 @@ def loads(text: str) -> ParsedFile:
     return from_node(nbformat.reads(text, as_version=4))
 
 
-def to_node(parsed: ParsedFile) -> "nbformat.NotebookNode":
-    """Convert the shared document model to a NotebookNode."""
-    nb = nbformat.v4.new_notebook()
+def to_node(parsed: ParsedFile) -> nbformat.NotebookNode:
+    """Return a writable NotebookNode without mutating the wrapped notebook."""
+    notebook = deepcopy(parsed.notebook)
+    notebook.cells = [cell for cell in notebook.cells if cell.source.strip()]
     if parsed.kernel_name:
-        nb.metadata["kernelspec"] = {
-            "name": parsed.kernel_name,
-            "display_name": parsed.kernel_display_name or parsed.kernel_name,
-            "language": parsed.kernel_language or "python",
-        }
-    for cell in parsed.cells:
-        if not cell.source.strip():
-            continue
-        if cell.cell_type == CellType.CODE:
-            nb.cells.append(nbformat.v4.new_code_cell(cell.source))
-        elif cell.cell_type == CellType.MARKDOWN:
-            nb.cells.append(nbformat.v4.new_markdown_cell(cell.source))
-        else:
-            nb.cells.append(nbformat.v4.new_raw_cell(cell.source))
-    return nb
+        kernelspec = notebook.metadata.setdefault("kernelspec", {})
+        kernelspec.setdefault("display_name", parsed.kernel_name)
+        kernelspec.setdefault("language", "python")
+    return notebook
 
 
 def dump(parsed: ParsedFile, path: str | Path) -> None:

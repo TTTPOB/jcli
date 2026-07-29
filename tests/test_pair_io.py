@@ -7,6 +7,7 @@ import pytest
 from IPython.core.inputtransformer2 import TransformerManager
 
 from jupyter_jcli._enums import OutputPolicy
+from jupyter_jcli.formats.ipynb import from_node as parsed_from_ipynb
 from jupyter_jcli.formats.ipynb import to_node as create_ipynb_from_parsed
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.formats.percent import dumps as emit_py_percent
@@ -338,6 +339,20 @@ def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
 
 
 class TestUpdateIpynbSources:
+    def test_preserves_aligned_cell_identity_and_metadata(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", ["1\n"])])
+        nb.cells[0].metadata["tags"] = ["parameters"]
+        cell_id = nb.cells[0].id
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(p, [Cell(0, "code", "x = 10")])
+
+        cell = nbformat.read(str(p), as_version=4).cells[0]
+        assert cell.id == cell_id
+        assert cell.metadata["tags"] == ["parameters"]
+        assert cell.outputs[0]["text"] == "1\n"
+
     def test_updates_source_preserves_outputs_on_unchanged_cell(self, tmp_path):
         """Cells whose source is unchanged keep their outputs (hash match)."""
         nb = _make_ipynb(
@@ -674,6 +689,21 @@ class TestUpdateIpynbSources:
 
 
 class TestCreateIpynbFromParsed:
+    def test_wraps_complete_nbformat_notebook(self):
+        notebook = _make_ipynb([("code", "x = 1", ["1\n"])])
+        notebook.metadata["custom"] = {"owner": "jcli"}
+        notebook.cells[0].metadata["tags"] = ["keep"]
+        parsed = parsed_from_ipynb(notebook)
+
+        notebook.cells[0].source = "x = 2"
+        emitted = create_ipynb_from_parsed(parsed)
+
+        assert parsed.cells[0].source == "x = 2"
+        assert emitted.metadata["custom"] == {"owner": "jcli"}
+        assert emitted.cells[0].metadata["tags"] == ["keep"]
+        assert emitted.cells[0].outputs[0]["text"] == "1\n"
+        assert emitted.cells[0].id == notebook.cells[0].id
+
     def test_creates_notebook_with_cells(self, tmp_path):
         parsed = _parsed("python3", ("code", "x = 1"), ("markdown", "## Title"))
         nb = create_ipynb_from_parsed(parsed)
