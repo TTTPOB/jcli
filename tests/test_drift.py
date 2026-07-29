@@ -273,9 +273,14 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
 
-    def test_no_git_base_py_trailing_empty_cell_is_in_sync(self, tmp_path):
-        """No git base + py has trailing empty cell -> filtered out, still IN_SYNC."""
+    def test_no_git_base_trailing_empty_cell_difference_is_drift(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 1", ""], ["x = 1"])
+        with self._patch_git(None):
+            result = check_drift(py, ipynb)
+        assert result.status == "drift_only"
+
+    def test_no_git_base_matching_empty_cells_are_in_sync(self, tmp_path):
+        py, ipynb = _write_pair(tmp_path, ["", "x = 1", ""], ["", "x = 1", ""])
         with self._patch_git(None):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"

@@ -64,7 +64,7 @@ def _get_git_base_text(path: Path) -> str | None:
 
 def _cells_from_ipynb_text(text: str) -> list[Cell]:
     """Parse cells from ipynb JSON text."""
-    return [cell for cell in ipynb.loads(text).cells if cell.source.strip()]
+    return ipynb.loads(text).cells
 
 
 def _cells_from_py_text(text: str) -> list[Cell]:

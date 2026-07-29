@@ -299,12 +299,37 @@ class TestEmitPyPercent:
         parsed2 = parse_py_percent_text(text)
         assert len(parsed2.cells) == 1
 
-    def test_skips_empty_cells(self):
-        parsed = _parsed("python3", ("code", ""), ("code", "x = 1"))
+    def test_roundtrips_empty_cells(self):
+        parsed = _parsed(
+            "python3",
+            ("code", ""),
+            ("markdown", ""),
+            ("raw", ""),
+            ("code", "x = 1"),
+        )
         text = emit_py_percent(parsed)
         parsed2 = parse_py_percent_text(text)
-        assert len(parsed2.cells) == 1
-        assert parsed2.cells[0].source == "x = 1"
+        assert [(cell.cell_type, cell.source) for cell in parsed2.cells] == [
+            ("code", ""),
+            ("markdown", ""),
+            ("raw", ""),
+            ("code", "x = 1"),
+        ]
+
+    def test_marker_only_represents_one_empty_cell(self):
+        parsed = parse_py_percent_text("# %%\n")
+
+        assert len(parsed.cells) == 1
+        assert parsed.cells[0].cell_type == "code"
+        assert parsed.cells[0].source == ""
+
+    def test_whitespace_only_source_normalizes_without_dropping_cell(self):
+        parsed = parse_py_percent_text(
+            emit_py_percent(_parsed(None, ("code", " \n\t")))
+        )
+
+        assert len(parsed.cells) == 1
+        assert parsed.cells[0].source == ""
 
     def test_raw_cell_roundtrip(self):
         source = "raw content"
@@ -339,6 +364,21 @@ def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
 
 
 class TestUpdateIpynbSources:
+    def test_preserves_empty_aligned_cell(self, tmp_path):
+        nb = _make_ipynb([("code", "", ["output\n"]), ("code", "x = 1", [])])
+        nb.cells[0].metadata["tags"] = ["empty"]
+        cell_id = nb.cells[0].id
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+
+        update_ipynb_sources(p, _cells(("code", ""), ("code", "x = 1")))
+
+        cell = nbformat.read(str(p), as_version=4).cells[0]
+        assert cell.source == ""
+        assert cell.id == cell_id
+        assert cell.metadata["tags"] == ["empty"]
+        assert cell.outputs[0]["text"] == "output\n"
+
     def test_preserves_aligned_cell_identity_and_metadata(self, tmp_path):
         nb = _make_ipynb([("code", "x = 1", ["1\n"])])
         nb.cells[0].metadata["tags"] = ["parameters"]
@@ -723,11 +763,10 @@ class TestCreateIpynbFromParsed:
         nb = create_ipynb_from_parsed(parsed)
         assert "kernelspec" not in nb.metadata
 
-    def test_skips_empty_cells(self):
+    def test_preserves_empty_cells(self):
         parsed = _parsed(None, ("code", ""), ("code", "x = 1"))
         nb = create_ipynb_from_parsed(parsed)
-        assert len(nb.cells) == 1
-        assert nb.cells[0].source == "x = 1"
+        assert [cell.source for cell in nb.cells] == ["", "x = 1"]
 
     def test_writable_with_nbformat(self, tmp_path):
         parsed = _parsed("python3", ("code", "x = 1"))

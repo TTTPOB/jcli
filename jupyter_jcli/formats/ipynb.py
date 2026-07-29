@@ -31,7 +31,6 @@ def loads(text: str) -> ParsedFile:
 def to_node(parsed: ParsedFile) -> nbformat.NotebookNode:
     """Return a writable NotebookNode without mutating the wrapped notebook."""
     notebook = deepcopy(parsed.notebook)
-    notebook.cells = [cell for cell in notebook.cells if cell.source.strip()]
     if parsed.kernel_name:
         kernelspec = notebook.metadata.setdefault("kernelspec", {})
         kernelspec.setdefault("display_name", parsed.kernel_name)

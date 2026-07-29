@@ -276,9 +276,13 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
     found_percent_marker = False
     current_start_line = content_start + 1
 
-    def append_cell(raw_lines: list[str], start_line: int) -> None:
+    def append_cell(
+        raw_lines: list[str], start_line: int, *, preserve_empty: bool = False
+    ) -> None:
         source = "".join(raw_lines).strip()
         if not source:
+            if preserve_empty:
+                cells.append(Cell(index=len(cells), cell_type=current_type, source=""))
             return
         first_content_line = next(
             index for index, raw_line in enumerate(raw_lines) if raw_line.strip()
@@ -305,8 +309,12 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
     for line_number, line in enumerate(lines[content_start:], content_start + 1):
         stripped = line.rstrip()
         if _CELL_MARKER_RE.match(stripped):
+            append_cell(
+                current_lines,
+                current_start_line,
+                preserve_empty=found_percent_marker,
+            )
             found_percent_marker = True
-            append_cell(current_lines, current_start_line)
             tag = stripped[4:].strip().lower()
             if "[markdown]" in tag:
                 current_type = CellType.MARKDOWN
@@ -318,7 +326,7 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
             current_start_line = line_number + 1
         else:
             current_lines.append(line)
-    append_cell(current_lines, current_start_line)
+    append_cell(current_lines, current_start_line, preserve_empty=found_percent_marker)
 
     is_py_percent = front_matter_raw is not None or found_percent_marker
     if not is_py_percent:
@@ -360,8 +368,6 @@ def dumps(parsed: ParsedFile) -> str:
         parts.extend([f"#     name: {parsed.kernel_name}\n", "# ---\n", "\n"])
 
     for cell in parsed.cells:
-        if not cell.source.strip():
-            continue
         if cell.cell_type == CellType.CODE:
             parts.append("# %%\n")
             source = _transform_ipython_magics(cell.source, comment=True)

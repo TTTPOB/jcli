@@ -81,11 +81,11 @@ Markdown and raw source lines receive one comment prefix in Python text. The
 parser removes one prefix when reconstructing the cell. A blank line inside
 such a cell emits as a bare `#`.
 
-The parser trims outer whitespace from cell source. The parser and emitter omit
-empty cells and renumber the remaining cells densely. Empty notebook cells,
-marker-only cells, and exact leading or trailing cell whitespace therefore do
-not round-trip. Source line ranges describe non-empty py:percent cells only;
-plain scripts do not expose those ranges.
+The parser trims outer whitespace from cell source. An explicit cell marker
+preserves an empty cell and its type; whitespace-only source normalizes to an
+empty string. Empty files and front matter without a cell marker do not create
+a cell. Source line ranges describe non-empty py:percent cells only; plain
+scripts do not expose those ranges.
 
 Cell IDs, tags, attachments, and arbitrary per-cell metadata are outside the
 current model.
@@ -148,7 +148,7 @@ parsed cells. It writes kernelspec metadata when a kernel name is available;
 missing display name and language values default to the kernel name and
 `python`.
 
-When the target exists, j-cli replaces its cell list from the non-empty parsed
+When the target exists, j-cli replaces its cell list from the parsed
 cells. Notebook-level metadata remains in place. j-cli creates new notebook
 cell objects, so arbitrary metadata on old cells does not survive this update.
 
@@ -157,7 +157,7 @@ explicit noncanonical output path act as exports and do not refresh it.
 
 ## Output Preservation
 
-Updating an existing notebook aligns old non-empty cells with the new parsed
+Updating an existing notebook aligns old cells with the new parsed
 cells by type and source. The alignment handles unchanged, edited, inserted,
 and deleted cells, including repeated source. It uses bounded fallbacks for
 large replacement regions so alignment does not require unbounded quadratic
@@ -180,11 +180,11 @@ that the common cell model does not represent.
 ## Canonical Text and Drift
 
 Drift comparison first converts both sides to canonical py:percent text. The
-canonicalizer parses and re-emits cells, normalizes markers and spacing, drops
-empty cells, and synthesizes front matter from the kernel name only. It removes
-raw front matter, display name, and language from comparison so equivalent
-kernel identities do not create metadata-only drift. Plain scripts pass
-through unchanged.
+canonicalizer parses and re-emits cells, normalizes markers and spacing,
+preserves empty cells, and synthesizes front matter from the kernel name only.
+It removes raw front matter, display name, and language from comparison so
+equivalent kernel identities do not create metadata-only drift. Plain scripts
+pass through unchanged.
 
 For a canonical pair in a Git worktree, j-cli obtains the Python baseline from
 the newer of:

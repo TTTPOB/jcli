@@ -81,7 +81,7 @@ class TestCanonicalizePyText:
 
         assert len({canonicalize_py_text(text) for text in variants}) == 1
 
-    def test_empty_cells_dropped(self):
+    def test_empty_cells_preserved(self):
         text = (
             "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
             "# %%\n\n"
@@ -89,8 +89,7 @@ class TestCanonicalizePyText:
         )
         result = canonicalize_py_text(text)
         parsed = parse_py_percent_text(result)
-        assert len(parsed.cells) == 1
-        assert parsed.cells[0].source == "x = 1"
+        assert [cell.source for cell in parsed.cells] == ["", "x = 1"]
 
     def test_py_percent_marker_only_is_py_percent(self):
         text = "# %%\nx = 1\n\n"

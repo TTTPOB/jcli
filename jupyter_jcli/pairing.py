@@ -18,7 +18,7 @@ def update_ipynb_sources(
 ) -> None:
     """Rewrite notebook cells while applying the requested output policy."""
     nb = nbformat.read(str(ipynb_path), as_version=4)
-    old_nodes = [cell for cell in nb.cells if cell.source.strip()]
+    old_nodes = list(nb.cells)
     old_cells = [Cell.from_node(index, cell) for index, cell in enumerate(old_nodes)]
     aligned_old_indices = {
         alignment.new_index: (alignment.old_index, alignment.kind)

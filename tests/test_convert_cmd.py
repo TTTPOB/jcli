@@ -141,6 +141,33 @@ class TestIpynbToPy:
         assert parsed.cells[0].source == "a = 1"
         assert parsed.cells[1].source == "b = 2"
 
+    def test_roundtrip_preserves_empty_cells(self, tmp_path):
+        notebook = nbformat.v4.new_notebook(
+            cells=[
+                nbformat.v4.new_code_cell(""),
+                nbformat.v4.new_code_cell("x = 1"),
+                nbformat.v4.new_markdown_cell(""),
+                nbformat.v4.new_raw_cell(""),
+            ]
+        )
+        source_ipynb = tmp_path / "source.ipynb"
+        nbformat.write(notebook, str(source_ipynb))
+        py = tmp_path / "notebook.py"
+        output_ipynb = tmp_path / "output.ipynb"
+
+        to_py = _invoke("convert", "ipynb-to-py", str(source_ipynb), str(py))
+        to_ipynb = _invoke("convert", "py-to-ipynb", str(py), str(output_ipynb))
+
+        assert to_py.exit_code == 0
+        assert to_ipynb.exit_code == 0
+        roundtripped = nbformat.read(str(output_ipynb), as_version=4)
+        assert [(cell.cell_type, cell.source) for cell in roundtripped.cells] == [
+            ("code", ""),
+            ("code", "x = 1"),
+            ("markdown", ""),
+            ("raw", ""),
+        ]
+
     def test_roundtrip_comments_and_restores_ipython_magics(self, tmp_path):
         line_magics = "%load_ext autoreload\n%autoreload 2"
         cell_magic = "%%bash\necho hello"
