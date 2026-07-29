@@ -23,6 +23,7 @@ def test_cli_import_does_not_load_tree_sitter():
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
+        check=False,
         text=True,
     )
     assert result.returncode == 0, (
@@ -41,6 +42,7 @@ def test_hooks_parser_import_does_not_load_tree_sitter():
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
+        check=False,
         text=True,
     )
     assert result.returncode == 0, (
@@ -61,6 +63,7 @@ def test_tree_sitter_loaded_after_first_parse():
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
+        check=False,
         text=True,
     )
     assert result.returncode == 0, result.stderr

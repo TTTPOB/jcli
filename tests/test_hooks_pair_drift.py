@@ -12,12 +12,11 @@ import nbformat
 import pytest
 from click.testing import CliRunner
 
+from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.cli import main
 from jupyter_jcli.drift import check_drift
-from jupyter_jcli import pair_baseline
 from jupyter_jcli.parser import parse_file
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -231,7 +230,7 @@ class TestNonPairedFiles:
 
 class TestNoDrift:
     def test_in_sync_pair_allows(self, tmp_path):
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
@@ -250,9 +249,9 @@ class TestAutoMergeOtherSide:
         """ipynb drifted (x=1->x=99), agent edits py (still has x=1).
         Merged = x=99. py needs update. py IS target -> deny (agent's old_string stale).
         """
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
 
-        from tests.test_drift import _make_py_text, _make_ipynb_text
+        from tests.test_drift import _make_ipynb_text, _make_py_text
 
         base_py = _make_py_text("x = 1")
         base_ipynb = _make_ipynb_text("x = 1")
@@ -276,7 +275,7 @@ class TestAutoMergeOtherSide:
 
     def test_direct_ipynb_edit_is_always_denied(self, tmp_path):
         """Agent tries to Edit .ipynb directly — blocked regardless of drift state."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
+        _py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
 
         from tests.test_drift import _make_py_text
 
@@ -301,9 +300,9 @@ class TestAutoMergeOtherSide:
         Merged = x=99. py already has x=99 -> no py update.
         ipynb needs update (x=1->x=99). ipynb is OTHER side -> allow.
         """
-        py, ipynb = _make_pair(tmp_path, ["x = 99"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 99"], ["x = 1"])
 
-        from tests.test_drift import _make_py_text, _make_ipynb_text
+        from tests.test_drift import _make_ipynb_text, _make_py_text
 
         base_py = _make_py_text("x = 1")
         base_ipynb = _make_ipynb_text("x = 1")
@@ -332,9 +331,9 @@ class TestAutoMergeOtherSide:
 
 class TestConflict:
     def test_conflict_returns_deny(self, tmp_path):
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
-        from tests.test_drift import _make_py_text, _make_ipynb_text
+        from tests.test_drift import _make_ipynb_text, _make_py_text
 
         base_py = _make_py_text("x = 1")
         base_ipynb = _make_ipynb_text("x = 1")
@@ -357,7 +356,7 @@ class TestConflict:
 
     def test_drift_only_count_mismatch_returns_deny(self, tmp_path):
         """No git base + cell count mismatch -> deny."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 99"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
@@ -370,7 +369,7 @@ class TestConflict:
 
     def test_drift_only_content_diff_returns_deny(self, tmp_path):
         """No git base + different sources -> deny (DRIFT_ONLY, pick a side)."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
@@ -413,7 +412,7 @@ class TestFailOpen:
                 )
 
     def test_drift_exception_allows(self, tmp_path):
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
             "jupyter_jcli.commands.hooks_cmd._run_pre_drift_check",
             side_effect=RuntimeError("boom"),
@@ -492,7 +491,7 @@ class TestNotebookEditGuard:
 
     def test_message_contains_three_step_workflow(self):
         payload = {"tool_name": "NotebookEdit", "tool_input": {}}
-        code, out = _invoke_nb_edit_guard(payload)
+        _code, out = _invoke_nb_edit_guard(payload)
         reason = _reason(out)
         assert "ipynb-to-py" in reason
         assert "py-to-ipynb" in reason
@@ -532,7 +531,7 @@ class TestPairDriftGuardPost:
 
     def test_in_sync_after_edit_is_silent(self, tmp_path):
         """Agent edits py, pair stays in sync -> no output."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
 
         from tests.test_drift import _make_py_text
 
@@ -582,7 +581,7 @@ class TestPairDriftGuardPost:
 
     def test_ipynb_as_edited_file_in_post_is_silent(self, tmp_path):
         """Post hook silently exits for .ipynb — Pre should have blocked it already."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
+        _py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
 
         from tests.test_drift import _make_py_text
 
@@ -605,7 +604,7 @@ class TestPairDriftGuardPost:
 
         base_py = _make_py_text("x = 1")
         # py has x=10, ipynb has x=99 -> both changed same cell -> conflict
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else None
@@ -624,7 +623,7 @@ class TestPairDriftGuardPost:
 
     def test_drift_only_count_mismatch_after_edit_warns(self, tmp_path):
         """py has no git baseline + count mismatch after agent's edit -> warn with convert hint."""
-        py, ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
@@ -639,7 +638,7 @@ class TestPairDriftGuardPost:
 
     def test_drift_only_content_diff_after_edit_warns(self, tmp_path):
         """py has no git baseline + different sources -> context notification (DRIFT_ONLY, pick a side)."""
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
@@ -676,7 +675,7 @@ class TestPairDriftGuardPost:
                 assert False, f"Unexpected JSON output on bad input: {line}"
 
     def test_post_exception_allows(self, tmp_path):
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
             "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
             side_effect=RuntimeError("boom"),
@@ -689,7 +688,7 @@ class TestPairDriftGuardPost:
 
     def test_ipynb_edit_in_post_is_silent(self, tmp_path):
         """If .ipynb somehow reached Post (Pre should have blocked it), exit silently."""
-        py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        _py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         code, out = _invoke_post(
             {"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}}
         )
@@ -704,7 +703,7 @@ class TestPairDriftGuardPost:
 
 class TestConsecutiveEdits:
     def test_post_context_includes_baseline_cell_summary(self, git_repo: Path):
-        py, ipynb = _make_pair(
+        py, _ipynb = _make_pair(
             git_repo,
             ["x = 1", "y = 2", "gone = 3"],
             ["x = 1", "y = 2", "gone = 3"],
@@ -1088,7 +1087,7 @@ class TestPostToolUseSchema:
         from tests.test_drift import _make_py_text
 
         base_py = _make_py_text("x = 1")
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else None
@@ -1108,7 +1107,7 @@ class TestPostToolUseSchema:
         assert "decision" not in out
 
     def test_drift_only_post_schema(self, tmp_path):
-        py, ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
         with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
@@ -1128,7 +1127,7 @@ class TestPostToolUseSchema:
         from tests.test_drift import _make_py_text
 
         base_py = _make_py_text("x = 1")
-        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
+        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
 
         with patch(
             "jupyter_jcli.drift._get_git_base_text",

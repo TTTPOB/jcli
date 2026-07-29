@@ -9,7 +9,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _REF_PREFIX = "refs/jcli/pair-sync/"
 _SUBJECT_PREFIX = "jcli pair-sync baseline: "
 
@@ -72,7 +71,6 @@ def _run_git(
     kwargs: dict[str, object] = {
         "cwd": str(repo_root),
         "capture_output": True,
-        "check": False,
     }
     if env is not None:
         kwargs["env"] = env
@@ -83,7 +81,7 @@ def _run_git(
         kwargs["input"] = input_bytes
     else:
         kwargs["text"] = True
-    return subprocess.run(["git", *args], **kwargs)
+    return subprocess.run(["git", *args], check=False, **kwargs)
 
 
 def _commit_timestamp(repo_root: Path, ref_name: str) -> int | None:
@@ -192,7 +190,7 @@ def read_baseline(py_path: Path) -> str | None:
     if ref_ts is not None and head_ts is not None and head_ts > ref_ts:
         try:
             _delete_ref(repo_root, ref_name)
-        except Exception:
+        except RuntimeError:
             pass
     return head_text
 
@@ -248,7 +246,7 @@ def write_baseline(py_path: Path, text: str) -> bool:
         )
         if update.returncode != 0:
             raise RuntimeError(update.stderr.strip())
-    except Exception as exc:
+    except (OSError, RuntimeError, UnicodeError) as exc:
         print(
             f"pair-drift-guard: could not update baseline ref: {exc}",
             file=sys.stderr,

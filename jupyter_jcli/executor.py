@@ -1,6 +1,7 @@
 """Output processing: extract images to temp files, strip ANSI codes."""
 
 import base64
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ def save_base64_image(data: str, suffix: str = ".png") -> str:
     """Decode base64 image data and save to a temp file. Returns path."""
     img_bytes = base64.b64decode(data)
     fd, path = tempfile.mkstemp(prefix="jcli_", suffix=suffix)
+    os.close(fd)
     Path(path).write_bytes(img_bytes)
     return path
 
@@ -98,9 +100,7 @@ def format_outputs_human(outputs: list[dict]) -> str:
     """Format processed outputs for human-readable display."""
     parts = []
     for o in outputs:
-        if o["type"] == OutputType.STREAM:
-            parts.append(o["text"])
-        elif o["type"] == OutputType.EXECUTE_RESULT:
+        if o["type"] == OutputType.STREAM or o["type"] == OutputType.EXECUTE_RESULT:
             parts.append(o["text"])
         elif o["type"] == OutputType.IMAGE:
             parts.append(f"[image saved: {o['path']}]")

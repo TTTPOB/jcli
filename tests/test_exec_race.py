@@ -25,7 +25,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Unit tests — verify the fix is in place
 # ---------------------------------------------------------------------------
@@ -90,11 +89,13 @@ class TestKernelWebsocketReadyProbe:
             mock_instance = MockClient.return_value
             mock_stop = mock_instance.stop
 
-            with pytest.raises(
-                TimeoutError, match="Kernel didn't respond in 30 seconds"
+            with (
+                pytest.raises(
+                    TimeoutError, match="Kernel didn't respond in 30 seconds"
+                ),
+                kernel_connection("http://x", "tok", "kid"),
             ):
-                with kernel_connection("http://x", "tok", "kid"):
-                    pass
+                pass
 
             assert mock_stop.call_count == 3
 
@@ -330,7 +331,9 @@ class TestFreshConnectionExec:
     def test_exec_code_fresh_connection(self, jupyter_server):
         """Create a fresh session, open a brand-new connection, execute immediately."""
         import json
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
@@ -392,7 +395,9 @@ class TestFreshConnectionExec:
         """Fresh connection + file-based exec must also succeed."""
         import json
         import textwrap
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
@@ -464,7 +469,9 @@ class TestFreshConnectionExec:
         cause intermittent failures depending on server timing.
         """
         import json
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
@@ -526,7 +533,9 @@ class TestFreshConnectionExec:
 class TestExecutionTimeoutIntegration:
     def test_timeout_interrupts_kernel_and_preserves_session(self, jupyter_server):
         import json
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
@@ -606,7 +615,9 @@ class TestExecutionTimeoutIntegration:
 
     def test_file_cell_timeout_interrupts_kernel(self, jupyter_server, tmp_path):
         import json
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         script = tmp_path / "timeout_cell.py"
@@ -798,7 +809,9 @@ class TestSigintHandlerIntegration:
     def test_sigint_interrupts_long_running_code(self, jupyter_server):
         """Sending SIGINT to jcli exec interrupts the kernel."""
         import json
+
         from click.testing import CliRunner
+
         from jupyter_jcli.cli import main
 
         runner = CliRunner()
@@ -856,10 +869,10 @@ class TestSigintHandlerIntegration:
             proc.send_signal(signal.SIGINT)
 
             try:
-                stdout, stderr = proc.communicate(timeout=15)
+                _stdout, stderr = proc.communicate(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                stdout, stderr = proc.communicate()
+                _stdout, stderr = proc.communicate()
                 pytest.fail(
                     f"Process did not exit after SIGINT. stderr: {stderr.decode()}"
                 )

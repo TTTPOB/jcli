@@ -6,12 +6,11 @@ import sys
 import threading
 import time
 import urllib.request
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from uuid import uuid4
 
 from jupyter_kernel_client import KernelClient
 from jupyter_kernel_client.client import output_hook
-
 
 _KERNEL_READY_TIMEOUT = 30
 # A failed attach attempt should be abandoned quickly.  The total budget below
@@ -44,7 +43,7 @@ def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
     def handler(signum: int, _frame) -> None:
         # Second signal → instant death (don't wait for the HTTP round-trip)
         signal.signal(signum, signal.SIG_DFL)
-        try:
+        with suppress(OSError):
             headers: dict[str, str] = {}
             if token:
                 headers["Authorization"] = f"Bearer {token}"
@@ -54,9 +53,7 @@ def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
                 data=b"",
                 headers=headers,
             )
-            urllib.request.urlopen(req, timeout=2)
-        except Exception:
-            pass
+            urllib.request.urlopen(req, timeout=2).close()
         sys.exit(128 + signum)
 
     return handler
@@ -379,8 +376,10 @@ def execute_code(
     Returns dict with 'outputs' key containing list of output dicts,
     and 'execution_count'.
     """
-    with kernel_connection(server_url, token, kernel_id) as kernel:
-        with expression_display_mode(kernel, display_mode, timeout=10):
-            deadline = time.monotonic() + timeout
-            remaining = max(deadline - time.monotonic(), 0)
-            return execute_with_timeout(kernel, code, timeout=remaining)
+    with (
+        kernel_connection(server_url, token, kernel_id) as kernel,
+        expression_display_mode(kernel, display_mode, timeout=10),
+    ):
+        deadline = time.monotonic() + timeout
+        remaining = max(deadline - time.monotonic(), 0)
+        return execute_with_timeout(kernel, code, timeout=remaining)

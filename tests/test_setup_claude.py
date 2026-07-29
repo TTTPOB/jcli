@@ -9,7 +9,6 @@ from click.testing import CliRunner
 from jupyter_jcli.cli import main
 from jupyter_jcli.commands.setup_cmd import Scope
 
-
 # ---------------------------------------------------------------------------
 # Scope enum behaviour
 # ---------------------------------------------------------------------------

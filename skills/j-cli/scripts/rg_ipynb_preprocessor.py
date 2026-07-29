@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-
 BINARY_MIME_TYPES = {
     "application/pdf",
     "image/gif",

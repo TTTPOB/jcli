@@ -8,7 +8,6 @@ from click.testing import CliRunner
 from jupyter_jcli.cli import main
 from jupyter_jcli.commands.serve_cmd import ServeBackend
 
-
 # ---------------------------------------------------------------------------
 # ServeBackend enum behaviour
 # ---------------------------------------------------------------------------

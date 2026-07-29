@@ -7,7 +7,6 @@ from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -192,6 +191,7 @@ class TestPythonRunGuardDebug:
     def test_debug_creates_log_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
         import json as _json
+
         from click.testing import CliRunner as _CliRunner
 
         runner = _CliRunner()

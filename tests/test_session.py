@@ -8,7 +8,6 @@ from click.testing import CliRunner
 from jupyter_jcli.cli import main
 from jupyter_jcli.commands.session import KernelState, _coerce_state
 
-
 # ---------------------------------------------------------------------------
 # KernelState enum behaviour
 # ---------------------------------------------------------------------------

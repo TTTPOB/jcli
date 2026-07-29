@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import typing as t
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class VariableSource(str, Enum):
@@ -31,6 +34,7 @@ def _supports_debugger(kernel) -> bool:
         info = kernel.kernel_info or {}
         return "debugger" in info.get("supported_features", [])
     except Exception:
+        logger.debug("Could not inspect kernel debugger support", exc_info=True)
         return False
 
 
@@ -168,7 +172,7 @@ def list_variables(kernel, *, timeout: float = 5.0) -> dict[str, t.Any]:
             variables = [_normalise_dap_variable(v) for v in raw]
             return {"variables": variables, "source": VariableSource.DAP}
         except Exception:
-            pass  # fall through to fallback
+            logger.debug("DAP variable listing failed; using fallback", exc_info=True)
 
     # Shell-channel fallback
     try:
@@ -241,7 +245,9 @@ def inspect_variable(
         except VariablesUnavailable:
             raise
         except Exception:
-            pass  # fall through
+            logger.debug(
+                "DAP variable inspection failed; using fallback", exc_info=True
+            )
 
     # Fallback: list all and filter
     try:

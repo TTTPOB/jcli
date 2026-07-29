@@ -5,11 +5,11 @@ from types import SimpleNamespace
 import pytest
 
 from jupyter_jcli.variables import (
-    VariablesUnavailable,
     VariableSource,
+    VariablesUnavailable,
     _fallback_list_variables,
-    list_variables,
     inspect_variable,
+    list_variables,
 )
 
 

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.skipif(shutil.which("bun") is None, reason="Bun is required")
 
 

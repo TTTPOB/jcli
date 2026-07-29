@@ -11,7 +11,6 @@ from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------

@@ -7,7 +7,6 @@ from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -177,8 +176,6 @@ class TestNotebookExecGuardDebug:
             input=payload,
             catch_exceptions=False,
         )
-        data = json.loads(
-            sorted(tmp_path.glob("notebook-exec-guard-*.log"))[0].read_text()
-        )
+        data = json.loads(min(tmp_path.glob("notebook-exec-guard-*.log")).read_text())
         assert data["stdout_raw"] == ""
         assert data["exit_code"] == 0
