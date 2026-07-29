@@ -60,22 +60,30 @@ An unclosed block does not count as front matter.
 ## Cells and Markers
 
 `# %%` starts a code cell. A marker containing `[markdown]` starts a markdown
-cell, and one containing `[raw]` starts a raw cell. Other marker annotations do
-not become cell metadata and default to a code cell unless they include one of
-those type tags.
+cell, and one containing `[raw]` starts a raw cell. The optional `id` marker
+option maps to the top-level nbformat cell ID, not cell metadata. Other marker
+annotations do not become cell metadata and default to a code cell unless they
+include one of those type tags.
 
 The emitter uses canonical markers:
 
 ```python
-# %%
+# %% id="a1b2c3d4"
 print("code")
 
-# %% [markdown]
+# %% [markdown] id="report-title"
 # Markdown text
 
-# %% [raw]
+# %% [raw] id="raw_data"
 # Raw text
 ```
+
+Cell IDs contain 1 to 64 letters, digits, hyphens, or underscores and must be
+unique within a notebook. The parser accepts quoted and unquoted values. The
+emitter uses quoted values, retains the first occurrence of a duplicate ID, and
+assigns a new ID to later occurrences. Once any marker in a file has an ID,
+drift synchronization assigns IDs to newly added marker-only cells and writes
+them to both sides.
 
 Markdown and raw source lines receive one comment prefix in Python text. The
 parser removes one prefix when reconstructing the cell. A blank line inside
@@ -87,8 +95,9 @@ empty string. Empty files and front matter without a cell marker do not create
 a cell. Source line ranges describe non-empty py:percent cells only; plain
 scripts do not expose those ranges.
 
-Cell IDs, tags, attachments, and arbitrary per-cell metadata are outside the
-current model.
+Legacy files without IDs remain valid and continue to use content alignment.
+Tags, attachments, and arbitrary per-cell metadata remain outside the text
+format.
 
 ## IPython Syntax
 
@@ -133,9 +142,10 @@ claiming that direct Python execution has notebook semantics.
 
 ### Notebook to Python
 
-`ipynb-to-py` reads cell type and source plus the notebook kernelspec. The
-emitter writes py:percent text, omits execution outputs, and synthesizes a
-minimal commented kernelspec block when the notebook declares a kernel name.
+`ipynb-to-py` reads cell type, source, stable cell ID, and the notebook
+kernelspec. The emitter writes py:percent text, omits execution outputs, and
+synthesizes a minimal commented kernelspec block when the notebook declares a
+kernel name.
 Raw front matter preservation applies to py:percent parse-and-emit paths, not
 to notebook input.
 
@@ -148,20 +158,23 @@ parsed cells. It writes kernelspec metadata when a kernel name is available;
 missing display name and language values default to the kernel name and
 `python`.
 
-When the target exists, j-cli replaces its cell list from the parsed
-cells. Notebook-level metadata remains in place. j-cli creates new notebook
-cell objects, so arbitrary metadata on old cells does not survive this update.
+When the target exists, j-cli replaces its cell list from the parsed cells.
+Notebook-level metadata remains in place. Aligned cells reuse old notebook cell
+objects, preserving their IDs, metadata, outputs, and execution counts according
+to the output policy.
 
 Canonical pair conversions refresh the pair baseline. Conversions to an
 explicit noncanonical output path act as exports and do not refresh it.
 
 ## Output Preservation
 
-Updating an existing notebook aligns old cells with the new parsed
-cells by type and source. The alignment handles unchanged, edited, inserted,
-and deleted cells, including repeated source. It uses bounded fallbacks for
-large replacement regions so alignment does not require unbounded quadratic
-work.
+Updating an existing notebook first aligns unique IDs in relative order, then
+falls back to type and source within unmatched regions. The alignment handles
+unchanged, edited, inserted, and deleted cells, including repeated source. It
+uses bounded fallbacks for large replacement regions so alignment does not
+require unbounded quadratic work. Notebook writeback also maps unique IDs
+directly, preserving cell state across a reorder even though textual diff
+represents a move as deletion plus insertion.
 
 The `--outputs` policy controls aligned code cells:
 
@@ -174,8 +187,7 @@ The `--outputs` policy controls aligned code cells:
 New code cells always start without outputs. Markdown and raw cells do not
 carry execution outputs.
 
-Alignment is a source synchronization mechanism. It cannot preserve metadata
-that the common cell model does not represent.
+New cells without a matching ID or content anchor do not inherit old metadata.
 
 ## Canonical Text and Drift
 
@@ -185,6 +197,11 @@ preserves empty cells, and synthesizes front matter from the kernel name only.
 It removes raw front matter, display name, and language from comparison so
 equivalent kernel identities do not create metadata-only drift. Plain scripts
 pass through unchanged.
+
+Canonicalization preserves the presence or absence of IDs in legacy text. When
+an ID-enabled tracked file contains new cells without IDs, drift synchronization
+assigns IDs once and requests Python writeback. For a legacy Python file, drift
+comparison suppresses notebook IDs and keeps the previous content-based form.
 
 For a canonical pair in a Git worktree, j-cli obtains the Python baseline from
 the newer of:

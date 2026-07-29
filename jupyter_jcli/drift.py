@@ -136,8 +136,22 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
     from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_diff
     from jupyter_jcli.text_merge import merge_three_way
 
-    ours_text = percent.canonicalize(py_path.read_text(encoding="utf-8"))
-    theirs_text = percent.canonicalize(percent.dumps(ipynb.load(ipynb_path)))
+    ours_raw = py_path.read_text(encoding="utf-8")
+    ours_parsed = percent.loads(ours_raw)
+    include_cell_ids = bool(ours_parsed.stable_cell_ids)
+    ours_preserved = percent.canonicalize(
+        ours_raw,
+        include_cell_ids=None if include_cell_ids else False,
+    )
+    ours_text = percent.canonicalize(
+        ours_raw,
+        include_cell_ids=include_cell_ids,
+    )
+    py_ids_need_writeback = ours_text != ours_preserved
+    theirs_text = percent.canonicalize(
+        percent.dumps(ipynb.load(ipynb_path), include_cell_ids=include_cell_ids),
+        include_cell_ids=None if include_cell_ids else False,
+    )
 
     base_raw = _get_git_base_text(py_path)
 
@@ -149,10 +163,13 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
             diff_text=render_no_baseline_diff(ours_text, theirs_text),
         )
 
-    base_text = percent.canonicalize(base_raw)
+    base_text = percent.canonicalize(
+        base_raw,
+        include_cell_ids=None if include_cell_ids else False,
+    )
     merge = merge_three_way(base_text, ours_text, theirs_text)
 
-    py_needs = merge.text != ours_text
+    py_needs = merge.text != ours_text or py_ids_need_writeback
     ipynb_needs = merge.text != theirs_text
 
     if not merge.has_conflict:

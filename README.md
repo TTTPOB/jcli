@@ -393,13 +393,17 @@ j-cli supports the [py:percent](https://jupytext.readthedocs.io/en/latest/format
 #     name: python3
 # ---
 
-# %%
+# %% id="imports"
 import numpy as np
 
-# %%
+# %% id="summary"
 x = np.random.randn(100)
 print(x.mean())
 ```
+
+j-cli stores nbformat cell IDs on markers as `id="..."`. Keep the ID when
+editing an existing cell. Legacy markers without IDs remain supported; j-cli
+uses content alignment for them.
 
 j-cli comments IPython magic commands in py:percent files so Python tools can
 parse them, then restores the commands when syncing to `.ipynb`. Python-body

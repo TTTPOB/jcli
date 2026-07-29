@@ -458,20 +458,25 @@ j-cli supports py:percent format — plain Python files with `# %%` cell markers
 #     name: python3
 # ---
 
-# %%
+# %% id="imports"
 import matplotlib.pyplot as plt
 import numpy as np
 
-# %%
+# %% id="plot"
 x = np.linspace(0, 10, 100)
 fig, ax = plt.subplots()
 ax.plot(x, np.sin(x))
 fig
 
-# %% [markdown]
+# %% [markdown] id="results"
 # ## Results
 # The plot above shows a sine wave.
 ```
+
+Cell markers may carry a stable nbformat ID as `id="..."`. Preserve the ID when
+editing or moving an existing cell. Leave the option off a newly inserted cell;
+j-cli assigns one during synchronization. Legacy files without IDs remain
+supported through content alignment.
 
 j-cli comments IPython magic commands in py:percent files so Python tools can
 parse them, then restores the commands when syncing to `.ipynb`. Python-body
@@ -493,6 +498,7 @@ cells safely without losing outputs:
 j-cli convert ipynb-to-py analysis.ipynb analysis.py
 
 # 2. Edit analysis.py using normal text tools (Edit tool, etc.)
+#    Preserve id="..." on existing cell markers
 #    Cell markers: # %% (code), # %% [markdown], # %% [raw]
 
 # 3. Write edited sources back; preserve outputs (default)

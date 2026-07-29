@@ -10,6 +10,7 @@ from jupyter_jcli._enums import OutputPolicy
 from jupyter_jcli.formats.ipynb import from_node as parsed_from_ipynb
 from jupyter_jcli.formats.ipynb import to_node as create_ipynb_from_parsed
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.percent import canonicalize as canonicalize_py_percent
 from jupyter_jcli.formats.percent import dumps as emit_py_percent
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 from jupyter_jcli.pairing import update_ipynb_sources
@@ -40,6 +41,65 @@ def _parsed(
 
 
 class TestEmitPyPercent:
+    def test_roundtrip_preserves_top_level_cell_ids(self):
+        parsed = _parsed("python3", ("code", "x = 1"), ("markdown", "Title"))
+
+        text = emit_py_percent(parsed)
+        reparsed = parse_py_percent_text(text)
+
+        assert '# %% id="' in text
+        assert '# %% [markdown] id="' in text
+        assert [cell.cell_id for cell in reparsed.cells] == [
+            cell.node.id for cell in parsed.cells
+        ]
+        assert all("id" not in cell.node.metadata for cell in reparsed.cells)
+
+    def test_parses_quoted_and_unquoted_cell_ids(self):
+        parsed = parse_py_percent_text(
+            '# %% id="code_cell"\nx = 1\n\n# %% [markdown] id=markdown-cell\n# Title\n'
+        )
+
+        assert [cell.cell_id for cell in parsed.cells] == [
+            "code_cell",
+            "markdown-cell",
+        ]
+
+    @pytest.mark.parametrize("cell_id", ["", "has.dot", "has/slash", "x" * 65])
+    def test_rejects_invalid_cell_ids(self, cell_id):
+        with pytest.raises(ValueError, match="Invalid cell id"):
+            parse_py_percent_text(f'# %% id="{cell_id}"\nx = 1\n')
+
+    def test_duplicate_cell_id_is_repaired_on_emit(self):
+        parsed = parse_py_percent_text(
+            '# %% id="duplicate"\nfirst\n\n# %% id="duplicate"\nsecond\n'
+        )
+
+        reparsed = parse_py_percent_text(emit_py_percent(parsed))
+        ids = [cell.cell_id for cell in reparsed.cells]
+
+        assert ids[0] == "duplicate"
+        assert ids[1] is not None
+        assert len(set(ids)) == 2
+
+    def test_rejects_multiple_cell_id_options(self):
+        with pytest.raises(ValueError, match="multiple id options"):
+            parse_py_percent_text('# %% id="first" id="second"\nx = 1\n')
+
+    def test_canonicalize_assigns_ids_to_new_cells_after_ids_are_enabled(self):
+        text = '# %% id="existing"\nx = 1\n\n# %%\ny = 2\n\n'
+
+        canonical = canonicalize_py_percent(text, include_cell_ids=True)
+        reparsed = parse_py_percent_text(canonical)
+
+        assert reparsed.cells[0].cell_id == "existing"
+        assert reparsed.cells[1].cell_id is not None
+        assert canonicalize_py_percent(canonical, include_cell_ids=True) == canonical
+
+    def test_canonicalize_does_not_invent_ids_for_legacy_text(self):
+        text = "# %%\nx = 1\n\n"
+
+        assert canonicalize_py_percent(text) == text
+
     def test_roundtrip_code_cell(self):
         source = "x = 1\ny = 2"
         parsed = _parsed("python3", ("code", source))
@@ -364,6 +424,26 @@ def _make_ipynb(cells: list[tuple[str, str, list]]) -> nbformat.NotebookNode:
 
 
 class TestUpdateIpynbSources:
+    def test_stable_ids_preserve_outputs_across_reorder_and_edit(self, tmp_path):
+        nb = _make_ipynb(
+            [("code", "first = 1", ["first\n"]), ("code", "second = 2", ["second\n"])]
+        )
+        first_id, second_id = (cell.id for cell in nb.cells)
+        p = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(p))
+        parsed = parse_py_percent_text(
+            f'# %% id="{second_id}"\nsecond = 20\n\n# %% id="{first_id}"\nfirst = 10\n'
+        )
+
+        update_ipynb_sources(p, parsed.cells)
+
+        updated = nbformat.read(str(p), as_version=4)
+        assert [cell.id for cell in updated.cells] == [second_id, first_id]
+        assert [cell.outputs[0]["text"] for cell in updated.cells] == [
+            "second\n",
+            "first\n",
+        ]
+
     def test_preserves_empty_aligned_cell(self, tmp_path):
         nb = _make_ipynb([("code", "", ["output\n"]), ("code", "x = 1", [])])
         nb.cells[0].metadata["tags"] = ["empty"]

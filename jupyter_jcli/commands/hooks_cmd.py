@@ -538,14 +538,24 @@ def _prepare_merged_py(
         from jupyter_jcli.formats.model import ParsedFile
 
         py_parsed = percent.load(py_path)
+        include_cell_ids = bool(py_parsed.stable_cell_ids) or any(
+            cell.cell_id is not None for cell in merged_cells
+        )
         merged_parsed = ParsedFile(
             kernel_name=py_parsed.kernel_name,
             cells=merged_cells,
             source_path=py_parsed.source_path,
             front_matter_raw=py_parsed.front_matter_raw,
         )
-        merged_text = percent.dumps(merged_parsed)
-        return merged_text, percent.canonicalize(merged_text)
+        merged_text = percent.dumps(
+            merged_parsed,
+            include_cell_ids=include_cell_ids,
+            assign_missing_ids=include_cell_ids,
+        )
+        return merged_text, percent.canonicalize(
+            merged_text,
+            include_cell_ids=None if include_cell_ids else False,
+        )
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
             logger.record_exception(exc)
@@ -1201,17 +1211,10 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         if result.status == DriftStatus.MERGED:
             if result.py_needs_update:
                 try:
-                    from jupyter_jcli.formats import percent
-                    from jupyter_jcli.formats.model import ParsedFile
-
-                    py_parsed = percent.load(py_path)
-                    merged_parsed = ParsedFile(
-                        kernel_name=py_parsed.kernel_name,
-                        cells=result.merged_cells,
-                        source_path=py_parsed.source_path,
-                        front_matter_raw=py_parsed.front_matter_raw,
-                    )
-                    py_path.write_text(percent.dumps(merged_parsed), encoding="utf-8")
+                    merged_text, _ = _prepare_merged_py(py_path, result.merged_cells)
+                    if merged_text is None:
+                        raise RuntimeError("could not prepare merged py text")
+                    py_path.write_text(merged_text, encoding="utf-8")
                     subprocess.run(
                         ["git", "add", str(py_path)],
                         check=False,

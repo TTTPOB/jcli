@@ -45,6 +45,20 @@ def _make_ipynb_text(*sources: str, kernel: str = "python3") -> str:
     return nbformat.writes(nb)
 
 
+def _make_py_text_with_ids(cells: list[tuple[str | None, str]]) -> str:
+    lines = [
+        "# ---\n",
+        "# jupyter:\n",
+        "#   kernelspec:\n",
+        "#     name: python3\n",
+        "# ---\n\n",
+    ]
+    for cell_id, source in cells:
+        id_option = f' id="{cell_id}"' if cell_id is not None else ""
+        lines.append(f"# %%{id_option}\n{source}\n\n")
+    return "".join(lines)
+
+
 def _write_pair(
     tmp_path: Path, py_src: list[str], ipynb_src: list[str]
 ) -> tuple[Path, Path]:
@@ -151,6 +165,32 @@ class TestCheckDrift:
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
+
+    def test_new_cell_gets_id_written_to_both_sides(self, tmp_path):
+        notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+        notebook.metadata["kernelspec"] = {
+            "name": "python3",
+            "display_name": "python3",
+            "language": "python",
+        }
+        existing_id = notebook.cells[0].id
+        py = tmp_path / "nb.py"
+        ipynb = tmp_path / "nb.ipynb"
+        base = _make_py_text_with_ids([(existing_id, "x = 1")])
+        py.write_text(
+            _make_py_text_with_ids([(existing_id, "x = 1"), (None, "y = 2")]),
+            encoding="utf-8",
+        )
+        nbformat.write(notebook, str(ipynb))
+
+        with self._patch_git(base):
+            result = check_drift(py, ipynb)
+
+        assert result.status == "merged"
+        assert result.py_needs_update is True
+        assert result.ipynb_needs_update is True
+        assert result.merged_cells[0].cell_id == existing_id
+        assert result.merged_cells[1].cell_id is not None
 
     def test_commented_magic_is_in_sync_with_notebook_magic(self, tmp_path):
         py, ipynb = _write_pair(

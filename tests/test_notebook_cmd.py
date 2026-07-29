@@ -18,6 +18,7 @@ from jupyter_jcli.commands.notebook import (
     format_summary_human,
 )
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 
 
 def _write_percent_notebook(path):
@@ -360,6 +361,27 @@ def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor
     ] == [
         ("inserted", None, 0),
         ("edited", 0, 1),
+    ]
+
+
+def test_cell_diff_uses_stable_ids_before_source_similarity():
+    old = parse_py_percent_text(
+        '# %% id="first"\nshared old\n\n# %% id="second"\nshared old\n'
+    )
+    current = parse_py_percent_text(
+        '# %% id="first"\nfirst rewritten\n\n'
+        '# %% id="inserted"\nshared old\n\n'
+        '# %% id="second"\nsecond rewritten\n'
+    )
+
+    changes = diff_cells(old, current)
+
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in changes
+    ] == [
+        ("edited", 0, 0),
+        ("inserted", None, 1),
+        ("edited", 1, 2),
     ]
 
 

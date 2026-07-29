@@ -29,9 +29,11 @@ class Cell:
         source_end_line: int | None = None,
         *,
         node: nbformat.NotebookNode | None = None,
+        has_stable_id: bool = False,
     ) -> None:
         self.index = index
         self.node = node if node is not None else _new_cell(cell_type, source)
+        self.has_stable_id = has_stable_id
         self.source_start_line = source_start_line
         self.source_end_line = source_end_line
 
@@ -41,6 +43,8 @@ class Cell:
         index: int,
         node: nbformat.NotebookNode,
         span: SourceSpan | None = None,
+        *,
+        has_stable_id: bool = True,
     ) -> Cell:
         """Create a view over an existing nbformat cell."""
         return cls(
@@ -50,6 +54,7 @@ class Cell:
             source_start_line=span.start_line if span else None,
             source_end_line=span.end_line if span else None,
             node=node,
+            has_stable_id=has_stable_id,
         )
 
     @property
@@ -59,6 +64,14 @@ class Cell:
     @property
     def source(self) -> str:
         return self.node.source
+
+    @property
+    def cell_id(self) -> str | None:
+        """Return the persistent cell ID when the source supplied one."""
+        if not self.has_stable_id:
+            return None
+        value = self.node.get("id")
+        return str(value) if value is not None else None
 
 
 class ParsedFile:
@@ -77,6 +90,7 @@ class ParsedFile:
         *,
         notebook: nbformat.NotebookNode | None = None,
         cell_spans: dict[str, SourceSpan] | None = None,
+        stable_cell_ids: set[str] | None = None,
     ) -> None:
         if notebook is not None and cells is not None:
             raise ValueError("notebook and cells cannot both be provided")
@@ -90,6 +104,17 @@ class ParsedFile:
         self.front_matter_raw = front_matter_raw
         self.is_py_percent = is_py_percent
         self.cell_spans = dict(cell_spans or {})
+
+        if stable_cell_ids is not None:
+            self.stable_cell_ids = set(stable_cell_ids)
+        elif cells is not None:
+            self.stable_cell_ids = {
+                cell.cell_id for cell in cells if cell.cell_id is not None
+            }
+        else:
+            self.stable_cell_ids = {
+                str(cell.id) for cell in notebook.cells if cell.get("id") is not None
+            }
 
         if cells is not None:
             for cell in cells:
@@ -111,7 +136,12 @@ class ParsedFile:
     @property
     def cells(self) -> list[Cell]:
         return [
-            Cell.from_node(index, node, self.cell_spans.get(node.id))
+            Cell.from_node(
+                index,
+                node,
+                self.cell_spans.get(node.id),
+                has_stable_id=str(node.id) in self.stable_cell_ids,
+            )
             for index, node in enumerate(self.notebook.cells)
         ]
 
