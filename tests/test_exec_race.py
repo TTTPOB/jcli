@@ -80,6 +80,7 @@ class TestKernelWebsocketReadyProbe:
     def test_kernel_connection_calls_ready_probe(self):
         """kernel_connection uses j-cli's ready probe after start."""
         from jupyter_jcli.kernel import (
+            _KERNEL_READY_ATTEMPT_TIMEOUT,
             _JCLIKernelWebSocketClient,
             kernel_connection,
         )
@@ -98,10 +99,14 @@ class TestKernelWebsocketReadyProbe:
                 token="tok",
                 kernel_id="kid",
                 client_factory=_JCLIKernelWebSocketClient,
-                client_kwargs={"timeout": 2},
+                client_kwargs={"timeout": _KERNEL_READY_ATTEMPT_TIMEOUT},
             )
-            mock_instance.start.assert_called_once_with(timeout=2)
-            mock_ready.assert_called_once_with(mock_instance, timeout=2)
+            mock_instance.start.assert_called_once_with(
+                timeout=_KERNEL_READY_ATTEMPT_TIMEOUT
+            )
+            mock_ready.assert_called_once_with(
+                mock_instance, timeout=_KERNEL_READY_ATTEMPT_TIMEOUT
+            )
 
     def test_websocket_shutdown_wakes_connection_thread(self):
         """Socket shutdown wakes the reader before stop_channels joins it."""
@@ -138,7 +143,7 @@ class TestKernelWebsocketReadyProbe:
 
     def test_kernel_stopped_when_ready_probe_fails(self):
         """kernel.stop() must be called even if the ready probe raises."""
-        from jupyter_jcli.kernel import kernel_connection
+        from jupyter_jcli.kernel import _KERNEL_READY_MAX_ATTEMPTS, kernel_connection
 
         with (
             patch("jupyter_jcli.kernel.KernelClient") as MockClient,
@@ -158,11 +163,11 @@ class TestKernelWebsocketReadyProbe:
             ):
                 pass
 
-            assert mock_stop.call_count == 3
+            assert mock_stop.call_count == _KERNEL_READY_MAX_ATTEMPTS
 
     def test_kernel_connection_retries_fresh_websocket_after_probe_timeout(self):
         """A wedged WebSocket should not poison the whole exec attempt."""
-        from jupyter_jcli.kernel import kernel_connection
+        from jupyter_jcli.kernel import _KERNEL_READY_ATTEMPT_TIMEOUT, kernel_connection
 
         first_kernel = MagicMock()
         second_kernel = MagicMock()
@@ -177,8 +182,12 @@ class TestKernelWebsocketReadyProbe:
             with kernel_connection("http://x", "tok", "kid") as kernel:
                 assert kernel is second_kernel
 
-            first_kernel.start.assert_called_once_with(timeout=2)
-            second_kernel.start.assert_called_once_with(timeout=2)
+            first_kernel.start.assert_called_once_with(
+                timeout=_KERNEL_READY_ATTEMPT_TIMEOUT
+            )
+            second_kernel.start.assert_called_once_with(
+                timeout=_KERNEL_READY_ATTEMPT_TIMEOUT
+            )
             first_kernel.stop.assert_called_once()
             second_kernel.stop.assert_called_once()
 
