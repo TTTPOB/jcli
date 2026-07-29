@@ -98,7 +98,53 @@ class TestEmitPyPercent:
     def test_canonicalize_does_not_invent_ids_for_legacy_text(self):
         text = "# %%\nx = 1\n\n"
 
-        assert canonicalize_py_percent(text) == text
+        assert parse_py_percent_text(text).cells[0].source == "x = 1"
+        assert canonicalize_py_percent(text) == "# %%\nx = 1\n"
+
+    def test_emits_one_blank_line_between_cells_and_one_final_newline(self):
+        parsed = _parsed(None, ("code", "x = 1"), ("markdown", "Title"))
+
+        text = emit_py_percent(parsed, include_cell_ids=False, assign_missing_ids=False)
+
+        assert text == "# %%\nx = 1\n\n# %% [markdown]\n# Title\n"
+
+    @pytest.mark.parametrize("cell_type", ["code", "markdown", "raw"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("value", "value"),
+            ("value\n", "value"),
+            ("value\n\n", "value"),
+            ("value\n \t\n", "value"),
+            ("value  \n\n", "value  "),
+        ],
+    )
+    def test_emitter_removes_trailing_blank_lines(self, cell_type, source, expected):
+        text = emit_py_percent(
+            _parsed(None, (cell_type, source)),
+            include_cell_ids=False,
+            assign_missing_ids=False,
+        )
+
+        assert text.endswith("\n")
+        assert not text.endswith("\n\n")
+        assert parse_py_percent_text(text).cells[0].source == expected
+
+    def test_empty_final_cell_ends_with_one_newline(self):
+        text = emit_py_percent(
+            _parsed(None, ("code", "")),
+            include_cell_ids=False,
+            assign_missing_ids=False,
+        )
+
+        assert text == "# %%\n"
+
+    def test_roundtrip_preserves_leading_blank_lines_and_final_spaces(self):
+        text = "# %%\n\nvalue = 1  \n\n# %% [markdown]\n# line  \n"
+
+        parsed = parse_py_percent_text(text)
+
+        assert [cell.source for cell in parsed.cells] == ["\nvalue = 1  ", "line  "]
 
     def test_roundtrip_code_cell(self):
         source = "x = 1\ny = 2"
@@ -174,10 +220,11 @@ class TestEmitPyPercent:
         assert parse_py_percent_text(text).cells[0].source == source
 
     def test_cell_magic_after_blank_line_is_restored(self):
-        text = emit_py_percent(_parsed("python3", ("code", "\n%%bash\necho hi")))
+        source = "\n%%bash\necho hi"
+        text = emit_py_percent(_parsed("python3", ("code", source)))
 
         compile(text, "notebook.py", "exec")
-        assert parse_py_percent_text(text).cells[0].source == "%%bash\necho hi"
+        assert parse_py_percent_text(text).cells[0].source == source
 
     def test_indented_magic_adds_and_removes_parseable_placeholder(self):
         source = "if ready:\n    %timeit value + 1"

@@ -193,7 +193,13 @@ def _transform_ipython_magics(source: str, *, comment: bool) -> str:
         and lines[first_content_index + 1].rstrip() == _COMMENTED_CELL_MAGIC_BODY
     )
     if commented_body_marker:
-        lines.pop(first_content_index + 1)
+        marker_index = first_content_index + 1
+        marker_was_last_line = marker_index == len(lines) - 1
+        lines.pop(marker_index)
+        if marker_was_last_line:
+            lines[first_content_index] = _without_final_line_ending(
+                lines[first_content_index]
+            )
 
     comment_entire_cell = False
     if cell_magic_match:
@@ -243,6 +249,21 @@ def _transform_ipython_magics(source: str, *, comment: bool) -> str:
         lines.insert(index, f"{indent}{_MAGIC_PLACEHOLDER}\n")
 
     return "".join(lines)
+
+
+def _without_final_line_ending(text: str) -> str:
+    if text.endswith("\r\n"):
+        return text[:-2]
+    if text.endswith(("\n", "\r")):
+        return text[:-1]
+    return text
+
+
+def _without_trailing_blank_lines(source: str) -> str:
+    lines = source.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
 
 
 def loads(text: str, *, source_path: str = "") -> ParsedFile:
@@ -296,10 +317,17 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
         return cell_id
 
     def append_cell(
-        raw_lines: list[str], start_line: int, *, preserve_empty: bool = False
+        raw_lines: list[str],
+        start_line: int,
+        *,
+        preserve_empty: bool = False,
+        has_separator: bool = False,
     ) -> None:
-        source = "".join(raw_lines).strip()
-        if not source:
+        source_lines = raw_lines.copy()
+        if has_separator and source_lines and not source_lines[-1].strip():
+            source_lines.pop()
+        source = _without_final_line_ending("".join(source_lines))
+        if not source.strip():
             if preserve_empty:
                 cell = Cell(
                     index=len(cells),
@@ -313,17 +341,17 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
                 cells.append(cell)
             return
         first_content_line = next(
-            index for index, raw_line in enumerate(raw_lines) if raw_line.strip()
+            index for index, raw_line in enumerate(source_lines) if raw_line.strip()
         )
         last_content_line = next(
             index
-            for index, raw_line in reversed(list(enumerate(raw_lines)))
+            for index, raw_line in reversed(list(enumerate(source_lines)))
             if raw_line.strip()
         )
         if current_type in (CellType.MARKDOWN, CellType.RAW):
             source = re.sub(r"^# ?", "", source, flags=re.MULTILINE)
         else:
-            source = _transform_ipython_magics(source, comment=False).strip()
+            source = _transform_ipython_magics(source, comment=False)
         cell = Cell(
             index=len(cells),
             cell_type=current_type,
@@ -344,6 +372,7 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
                 current_lines,
                 current_start_line,
                 preserve_empty=found_percent_marker,
+                has_separator=True,
             )
             found_percent_marker = True
             tag = stripped[4:].strip().lower()
@@ -358,7 +387,12 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
             current_start_line = line_number + 1
         else:
             current_lines.append(line)
-    append_cell(current_lines, current_start_line, preserve_empty=found_percent_marker)
+    append_cell(
+        current_lines,
+        current_start_line,
+        preserve_empty=found_percent_marker,
+        has_separator=True,
+    )
 
     is_py_percent = front_matter_raw is not None or found_percent_marker
     if not is_py_percent:
@@ -392,21 +426,28 @@ def dumps(
 ) -> str:
     """Serialize a document as py:percent text."""
     parts: list[str] = []
+    cells = parsed.cells
     if parsed.front_matter_raw is not None:
-        parts.append(parsed.front_matter_raw)
-        if not parsed.front_matter_raw.endswith("\n"):
-            parts.append("\n")
-        parts.append("\n")
+        parts.append(parsed.front_matter_raw.rstrip("\r\n"))
+        parts.append("\n\n" if cells else "\n")
     elif parsed.kernel_name is not None:
         parts.extend(["# ---\n", "# jupyter:\n", "#   kernelspec:\n"])
         if parsed.kernel_display_name is not None:
             parts.append(f"#     display_name: {parsed.kernel_display_name}\n")
         if parsed.kernel_language is not None:
             parts.append(f"#     language: {parsed.kernel_language}\n")
-        parts.extend([f"#     name: {parsed.kernel_name}\n", "# ---\n", "\n"])
+        parts.extend(
+            [
+                f"#     name: {parsed.kernel_name}\n",
+                "# ---\n",
+                "\n" if cells else "",
+            ]
+        )
 
     emitted_ids: set[str] = set()
-    for cell in parsed.cells:
+    for index, cell in enumerate(cells):
+        if index:
+            parts.append("\n")
         cell_id = cell.cell_id
         if cell_id is not None and (
             not _VALID_CELL_ID_RE.fullmatch(cell_id) or cell_id in emitted_ids
@@ -421,11 +462,11 @@ def dumps(
         id_option = f' id="{cell_id}"' if include_cell_ids and cell_id else ""
         if cell.cell_type == CellType.CODE:
             parts.append(f"# %%{id_option}\n")
-            source = _transform_ipython_magics(cell.source, comment=True)
-            parts.append(source)
-            if not source.endswith("\n"):
-                parts.append("\n")
-            parts.append("\n")
+            source = _without_trailing_blank_lines(
+                _transform_ipython_magics(cell.source, comment=True)
+            )
+            if source:
+                parts.extend([source, "\n"])
         else:
             marker = (
                 "markdown"
@@ -433,9 +474,9 @@ def dumps(
                 else cell.cell_type.value
             )
             parts.append(f"# %% [{marker}]{id_option}\n")
-            for line in cell.source.splitlines():
+            source = _without_trailing_blank_lines(cell.source)
+            for line in source.splitlines():
                 parts.append(f"# {line}\n" if line else "#\n")
-            parts.append("\n")
     return "".join(parts)
 
 

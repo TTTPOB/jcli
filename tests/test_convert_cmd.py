@@ -112,6 +112,23 @@ class TestIpynbToPy:
         parsed = parse_py_percent(str(py))
         assert parsed.kernel_name == "ir"
 
+    def test_normalizes_trailing_blank_lines_and_eof(self, tmp_path):
+        nb = _make_ipynb([("code", "x = 1", []), ("markdown", "Title\n\n \t\n", [])])
+        ipynb = tmp_path / "nb.ipynb"
+        nbformat.write(nb, str(ipynb))
+        py = tmp_path / "nb.py"
+
+        result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
+
+        assert result.exit_code == 0
+        text = py.read_text(encoding="utf-8")
+        assert text.endswith("# Title\n")
+        assert not text.endswith("\n\n")
+        assert [cell.source for cell in parse_py_percent(str(py)).cells] == [
+            "x = 1",
+            "Title",
+        ]
+
     def test_roundtrip_content(self, tmp_path):
         """ipynb -> py -> parse should give same sources."""
         nb = _make_ipynb(

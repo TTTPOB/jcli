@@ -89,11 +89,20 @@ Markdown and raw source lines receive one comment prefix in Python text. The
 parser removes one prefix when reconstructing the cell. A blank line inside
 such a cell emits as a bare `#`.
 
-The parser trims outer whitespace from cell source. An explicit cell marker
-preserves an empty cell and its type; whitespace-only source normalizes to an
-empty string. Empty files and front matter without a cell marker do not create
-a cell. Source line ranges describe non-empty py:percent cells only; plain
-scripts do not expose those ranges.
+The emitter removes trailing blank and whitespace-only lines from every cell.
+It preserves blank lines inside a cell and spaces on the final nonblank line,
+including the two spaces that create a Markdown hard line break. It writes one
+blank line between cells. The final cell has no following blank line, and every
+nonempty emitted file ends with exactly one `\n`.
+
+The parser removes one trailing blank separator from a cell, including the EOF
+separator written by older j-cli versions, and the physical line ending after
+a cell's final body line. It preserves leading blank lines, internal blank
+lines, and spaces on the final nonblank line. An explicit cell marker preserves
+an empty cell and its type; whitespace-only source normalizes to an empty
+string. Empty files and front matter without a cell marker do not create a cell.
+Source line ranges describe non-empty py:percent cells only; plain scripts do
+not expose those ranges.
 
 Legacy files without IDs remain valid and continue to use content alignment.
 Tags, attachments, and arbitrary per-cell metadata remain outside the text
@@ -202,10 +211,11 @@ New cells without a matching ID or content anchor do not inherit old metadata.
 
 Drift comparison first converts both sides to canonical py:percent text. The
 canonicalizer parses and re-emits cells, normalizes markers and spacing,
-preserves empty cells, and synthesizes front matter from the kernel name only.
-It removes raw front matter, display name, and language from comparison so
-equivalent kernel identities do not create metadata-only drift. Plain scripts
-pass through unchanged.
+removes trailing cell blank lines, preserves empty cells, writes one blank line
+between cells and one final newline, and synthesizes front matter from the
+kernel name only. It removes raw front matter, display name, and language from
+comparison so equivalent kernel identities do not create metadata-only drift.
+Plain scripts pass through unchanged.
 
 Canonicalization preserves the presence or absence of IDs in legacy text. When
 an ID-enabled tracked file contains new cells without IDs, drift synchronization
@@ -260,7 +270,7 @@ It removes transient fields that cannot be persisted as valid notebook output.
 The current design does not promise:
 
 - full Jupytext syntax or metadata compatibility;
-- lossless empty-cell or whitespace round trips;
+- byte-for-byte preservation of outer cell whitespace;
 - preservation of arbitrary notebook cell metadata;
 - complete coverage of IPython input transformations;
 - source-aligned execution writeback;
