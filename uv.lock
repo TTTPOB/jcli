@@ -968,6 +968,7 @@ dependencies = [
     { name = "nbformat" },
     { name = "tree-sitter" },
     { name = "tree-sitter-bash" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -996,6 +997,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'test'" },
     { name = "tree-sitter", specifier = ">=0.22" },
     { name = "tree-sitter-bash", specifier = ">=0.22" },
+    { name = "typing-extensions", specifier = ">=4.4" },
 ]
 provides-extras = ["test"]
 

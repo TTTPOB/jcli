@@ -19,7 +19,9 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
+
+from typing_extensions import Self
 
 
 def _ensure_log_dir(log_dir: Path) -> None:
