@@ -477,6 +477,15 @@ Cell markers may carry a stable nbformat ID as `id="..."`. Preserve the ID when
 editing or moving an existing cell. Hook synchronization will assign an ID to a
 newly inserted cell, so you don't have to assign it manually.
 
+Fill missing IDs before explicit conversion (meaning if you are running this
+manually instead of through the hook, and you know the file is having a mix of
+cells with and without IDs). The command reuses IDs from an
+aligned paired notebook and generates IDs for cells without a pair match:
+
+```bash
+j-cli convert assign-ids analysis.py
+```
+
 j-cli comments IPython magic commands in py:percent files so Python tools can
 parse them, then restores the commands when syncing to `.ipynb`. Python-body
 cell magics such as `%%timeit` and `%%writefile` keep their body as Python code;

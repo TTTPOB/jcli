@@ -6,10 +6,11 @@ import click
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import OutputPolicy
+from jupyter_jcli.cell_alignment import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
 from jupyter_jcli.pairing import update_ipynb_sources
-from jupyter_jcli.parser import ipynb_path_for_py
+from jupyter_jcli.parser import find_paired_ipynb, ipynb_path_for_py
 
 
 @click.group()
@@ -63,6 +64,59 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     if _is_canonical_pair(out_py_path, in_ipynb_path):
         _refresh_pair_baseline(out_py_path)
     click.echo(f"Wrote {out_py}")
+
+
+@convert.command("assign-ids")
+@click.argument(
+    "py_file", metavar="<file.py>", type=click.Path(exists=True, dir_okay=False)
+)
+def assign_ids(py_file: str) -> None:
+    """Assign persistent IDs to cells that do not have one."""
+    py_path = Path(py_file)
+    parsed = percent.load(py_path)
+    if not parsed.is_py_percent:
+        raise click.ClickException(f"Not a py:percent file: {py_file}")
+
+    missing_indices = [cell.index for cell in parsed.cells if cell.cell_id is None]
+    if not missing_indices:
+        click.echo(f"All {len(parsed.cells)} cells already have IDs in {py_file}")
+        return
+
+    from_pair: list[int] = []
+    paired_path = find_paired_ipynb(py_path)
+    if paired_path is not None:
+        paired = ipynb.load(paired_path)
+        used_ids = set(parsed.stable_cell_ids)
+        for alignment in align_cells(paired, parsed):
+            old_cell = alignment.old_cell
+            new_cell = alignment.new_cell
+            if (
+                old_cell is None
+                or new_cell is None
+                or new_cell.cell_id is not None
+                or old_cell.cell_id is None
+                or old_cell.cell_id in used_ids
+            ):
+                continue
+            new_cell.node.id = old_cell.cell_id
+            parsed.stable_cell_ids.add(old_cell.cell_id)
+            used_ids.add(old_cell.cell_id)
+            from_pair.append(new_cell.index)
+
+    text = percent.dumps(parsed)
+    py_path.write_text(text, encoding="utf-8")
+    from_pair_set = set(from_pair)
+    generated = [index for index in missing_indices if index not in from_pair_set]
+    click.echo(f"Assigned IDs to {len(missing_indices)} cells in {py_file}")
+    if paired_path is not None:
+        click.echo(
+            f"From paired notebook ({len(from_pair)}): {_format_indices(from_pair)}"
+        )
+    click.echo(f"Generated ({len(generated)}): {_format_indices(generated)}")
+
+
+def _format_indices(indices: list[int]) -> str:
+    return ", ".join(map(str, indices)) if indices else "none"
 
 
 @convert.command("py-to-ipynb")

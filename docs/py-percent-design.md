@@ -153,6 +153,12 @@ Notebook metadata outside kernelspec and all cell metadata are omitted.
 
 ### Python to Notebook
 
+`convert assign-ids FILE.py` fills missing marker IDs in place. When the
+canonical paired notebook exists, j-cli aligns its cells with the Python cells
+and reuses nonconflicting notebook IDs. It generates IDs for remaining cells.
+The command leaves a file unchanged when every cell already has an ID and
+rejects plain Python without py:percent markers or front matter.
+
 When the target notebook does not exist, `py-to-ipynb` creates one from the
 parsed cells. It writes kernelspec metadata when a kernel name is available;
 missing display name and language values default to the kernel name and

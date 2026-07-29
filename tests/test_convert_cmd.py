@@ -242,6 +242,75 @@ class TestIpynbToPy:
 
 
 # ---------------------------------------------------------------------------
+# assign-ids
+# ---------------------------------------------------------------------------
+
+
+class TestAssignIds:
+    def test_uses_paired_ids_and_generates_unmatched_ids(self, tmp_path):
+        notebook = _make_ipynb([("code", "x = 1", []), ("code", "y = 2", [])])
+        paired_ids = [cell.id for cell in notebook.cells]
+        ipynb = tmp_path / "analysis.ipynb"
+        nbformat.write(notebook, str(ipynb))
+        original_notebook = ipynb.read_bytes()
+        py = tmp_path / "analysis.py"
+        py.write_text(
+            "# %%\nx = 1\n\n# %%\ny = 2\n\n# %%\nz = 3\n",
+            encoding="utf-8",
+        )
+
+        result = _invoke("convert", "assign-ids", str(py))
+
+        assert result.exit_code == 0
+        cells = parse_py_percent(str(py)).cells
+        assert [cell.cell_id for cell in cells[:2]] == paired_ids
+        assert cells[2].cell_id is not None
+        assert cells[2].cell_id not in paired_ids
+        assert "From paired notebook (2): 0, 1" in result.output
+        assert "Generated (1): 2" in result.output
+        assert ipynb.read_bytes() == original_notebook
+
+    def test_generates_missing_ids_without_pair_and_preserves_existing(self, tmp_path):
+        py = tmp_path / "standalone.py"
+        py.write_text(
+            '# %% id="existing"\nx = 1\n\n# %%\ny = 2\n',
+            encoding="utf-8",
+        )
+
+        result = _invoke("convert", "assign-ids", str(py))
+
+        assert result.exit_code == 0
+        cells = parse_py_percent(str(py)).cells
+        assert cells[0].cell_id == "existing"
+        assert cells[1].cell_id is not None
+        assert cells[1].cell_id != "existing"
+        assert "Generated (1): 1" in result.output
+        assert "paired notebook" not in result.output
+
+    def test_all_ids_present_is_noop(self, tmp_path):
+        py = tmp_path / "complete.py"
+        original = '# %% id="first"\nx = 1\n\n# %% id="second"\ny = 2\n'
+        py.write_text(original, encoding="utf-8")
+
+        result = _invoke("convert", "assign-ids", str(py))
+
+        assert result.exit_code == 0
+        assert "All 2 cells already have IDs" in result.output
+        assert py.read_text(encoding="utf-8") == original
+
+    def test_rejects_plain_python(self, tmp_path):
+        py = tmp_path / "plain.py"
+        original = "x = 1\n"
+        py.write_text(original, encoding="utf-8")
+
+        result = _invoke("convert", "assign-ids", str(py))
+
+        assert result.exit_code == 1
+        assert "Not a py:percent file" in result.output
+        assert py.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
 # py-to-ipynb — new file creation
 # ---------------------------------------------------------------------------
 

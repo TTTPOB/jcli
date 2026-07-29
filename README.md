@@ -405,6 +405,13 @@ j-cli stores nbformat cell IDs on markers as `id="..."`. Keep the ID when
 editing an existing cell. Legacy markers without IDs remain supported; j-cli
 uses content alignment for them.
 
+Assign missing IDs in place before converting a mixed-ID file. When a paired
+notebook exists, the command reuses its aligned cell IDs:
+
+```bash
+j-cli convert assign-ids analysis.py
+```
+
 j-cli comments IPython magic commands in py:percent files so Python tools can
 parse them, then restores the commands when syncing to `.ipynb`. Python-body
 cell magics such as `%%timeit` and `%%writefile` keep their body as Python code;
