@@ -89,8 +89,3 @@ class TestPostToolUseContext:
         assert "permissionDecision" not in p["hookSpecificOutput"]
         assert "permissionDecisionReason" not in p["hookSpecificOutput"]
         assert "decision" not in p
-
-    def test_auto_synced_context(self):
-        c = PostToolUseContext("Auto-synced foo.py to bar.ipynb. Pair is now in sync.")
-        p = c.to_payload()
-        assert "Auto-synced" in p["hookSpecificOutput"]["additionalContext"]

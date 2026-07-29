@@ -22,12 +22,6 @@ from jupyter_jcli.diff import DriftResult
 
 
 class TestDriftStatus:
-    def test_members_exist(self):
-        assert DriftStatus.IN_SYNC
-        assert DriftStatus.MERGED
-        assert DriftStatus.CONFLICT
-        assert DriftStatus.DRIFT_ONLY
-
     def test_str_inheritance(self):
         assert DriftStatus.IN_SYNC == "in_sync"
         assert DriftStatus.MERGED == "merged"
@@ -65,9 +59,6 @@ class TestDriftStatus:
 
 
 class TestMergeMode:
-    def test_members_exist(self):
-        assert MergeMode.THREE_WAY
-
     def test_str_inheritance(self):
         assert MergeMode.THREE_WAY == "three_way"
         assert isinstance(MergeMode.THREE_WAY, str)
@@ -90,11 +81,6 @@ class TestMergeMode:
 
 
 class TestCellType:
-    def test_members_exist(self):
-        assert CellType.CODE
-        assert CellType.MARKDOWN
-        assert CellType.RAW
-
     def test_str_inheritance(self):
         assert CellType.CODE == "code"
         assert CellType.MARKDOWN == "markdown"
@@ -163,11 +149,6 @@ class TestOutputPolicy:
 
 
 class TestResponseStatus:
-    def test_members_exist(self):
-        assert ResponseStatus.OK
-        assert ResponseStatus.NOOP
-        assert ResponseStatus.ERROR
-
     def test_str_inheritance(self):
         assert ResponseStatus.OK == "ok"
         assert ResponseStatus.NOOP == "noop"

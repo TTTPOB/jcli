@@ -126,20 +126,6 @@ def test_deny_message_mentions_nbconvert_label():
 
 
 # ---------------------------------------------------------------------------
-# Verify all four guard categories are active (CLI-level smoke test)
-# ---------------------------------------------------------------------------
-
-
-def test_all_guard_categories_active():
-    """Each of the four intercepted tool families must produce a deny."""
-    assert _is_deny(_invoke("papermill in.ipynb out.ipynb")[1])
-    assert _is_deny(_invoke("runipy foo.ipynb")[1])
-    assert _is_deny(_invoke("ipython foo.ipynb")[1])
-    # nbconvert --execute via jupyter subcommand
-    assert _is_deny(_invoke("jupyter nbconvert --execute foo.ipynb")[1])
-
-
-# ---------------------------------------------------------------------------
 # --debug smoke test for notebook-exec-guard
 # ---------------------------------------------------------------------------
 

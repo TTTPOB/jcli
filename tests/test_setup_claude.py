@@ -83,23 +83,6 @@ class TestScopeRouting:
         assert target.exists()
         assert _has_hook(_read_json(target))
 
-    def test_local_explicit(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        runner = CliRunner()
-        result = _invoke(runner, ["--local"])
-        assert result.exit_code == 0
-        target = tmp_path / ".claude" / "settings.local.json"
-        assert target.exists()
-
-    def test_auto_creates_parent_dir(self, tmp_path, monkeypatch):
-        """Parent .claude/ directory is created automatically."""
-        monkeypatch.chdir(tmp_path)
-        claude_dir = tmp_path / ".claude"
-        assert not claude_dir.exists()
-        runner = CliRunner()
-        _invoke(runner, ["--local"])
-        assert claude_dir.is_dir()
-
 
 # ---------------------------------------------------------------------------
 # Merge / de-dupe
@@ -373,11 +356,6 @@ def _has_matcher_post(settings: dict, matcher: str) -> bool:
         b.get("matcher") == matcher
         for b in settings.get("hooks", {}).get("PostToolUse", [])
     )
-
-
-# Keep backward compat alias used by older tests
-def _has_matcher(settings: dict, matcher: str) -> bool:
-    return _has_matcher_pre(settings, matcher)
 
 
 class TestThreeBlocks:

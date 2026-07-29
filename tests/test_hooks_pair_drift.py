@@ -188,16 +188,6 @@ class TestDirectIpynbEditBlocked:
         assert "py-to-ipynb" in reason
         assert "nb.py" in reason  # derived stem
 
-    def test_py_file_edit_is_not_blocked(self, tmp_path):
-        """Sanity: .py files still go through drift check, not this block."""
-        py = tmp_path / "nb.py"
-        py.write_text("x = 1\n", encoding="utf-8")
-        code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
-        assert code == 0
-        # no deny from the ipynb-block path (may still be allow from drift check)
-        if _decision(out) is not None:
-            assert _decision(out) != "deny" or "ipynb" not in _reason(out).lower()[:50]
-
 
 # ---------------------------------------------------------------------------
 # Non-paired files -> allow

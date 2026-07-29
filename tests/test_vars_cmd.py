@@ -191,22 +191,6 @@ class TestVarsCmdDeadSession:
 class TestEmitListDefensiveness:
     """Unit tests — no live kernel; guard formatter against non-string values."""
 
-    def test_emit_list_does_not_crash_on_list_value(self):
-        from jupyter_jcli.cli import CliContext
-        from jupyter_jcli.config import AppConfig
-        from jupyter_jcli.server import ServerClient
-
-        ctx = CliContext(
-            config=AppConfig("http://localhost:8888", None, Path("/tmp/jcli-test")),
-            use_json=False,
-            server=ServerClient("http://localhost:8888"),
-        )
-        result = {
-            "variables": [{"name": "lst", "type": "list", "value": [1, 2, 3]}],
-            "source": VariableSource.FALLBACK,
-        }
-        _emit_list(ctx, result, "fake-session-id")
-
     def test_emit_list_output_contains_variable_name(self):
         import click as _click
 

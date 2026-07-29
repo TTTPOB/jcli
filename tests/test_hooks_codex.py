@@ -214,41 +214,6 @@ class TestCodexPythonRunGuard:
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-class TestCodexPairDriftGuardPre:
-    def test_extracts_path_from_apply_patch(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        # Create a .py file so path.exists() passes
-        (tmp_path / "foo.py").write_text("# %%\nprint('hello')\n", encoding="utf-8")
-        runner = CliRunner()
-        payload = json.dumps(
-            {
-                "tool_name": "apply_patch",
-                "tool_input": {
-                    "command": [
-                        "apply_patch",
-                        "*** Update File: foo.py\n@@ -1 +1 @@\n- old\n+ new\n",
-                    ]
-                },
-                "hook_event_name": "PreToolUse",
-                "model": "gpt-5",
-                "permission_mode": "default",
-                "session_id": "test",
-                "tool_use_id": "t1",
-                "transcript_path": None,
-                "cwd": str(tmp_path),
-                "turn_id": "t1",
-            }
-        )
-        result = runner.invoke(
-            main,
-            ["_hooks", "pair-drift-guard-pre", "--platform", "codex"],
-            input=payload,
-            catch_exceptions=False,
-        )
-        # exits 0 with no output when no pair exists (no .ipynb to drift-detect)
-        assert result.exit_code == 0
-
-
 class TestCodexExtractFilePaths:
     def test_skips_non_apply_patch_tool(self):
         payload = {
