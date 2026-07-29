@@ -6,7 +6,7 @@ import click
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import OutputPolicy
-from jupyter_jcli.cell_alignment import align_cells
+from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
 from jupyter_jcli.pairing import update_ipynb_sources

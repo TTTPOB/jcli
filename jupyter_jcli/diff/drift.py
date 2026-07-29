@@ -10,47 +10,8 @@ from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import Cell
 
-# ---------------------------------------------------------------------------
-# Three-way merge (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-
-def three_way_merge(
-    base: list[Cell],
-    ours: list[Cell],
-    theirs: list[Cell],
-) -> tuple[list[Cell], list[int]]:
-    """Per-cell three-way merge (position-aligned, cell count must match).
-
-    Returns (merged_cells, conflict_indices).
-    If conflict_indices is non-empty, merged_cells contains placeholders at
-    those positions (base cell).
-
-    Cell count mismatch → all indices are treated as conflicting.
-    """
-    if len(base) != len(ours) or len(base) != len(theirs):
-        n = max(len(base), len(ours), len(theirs), 1)
-        return [], list(range(n))
-
-    merged: list[Cell] = []
-    conflicts: list[int] = []
-
-    for i, (b, o, t) in enumerate(zip(base, ours, theirs)):
-        ours_changed = o.source != b.source
-        theirs_changed = t.source != b.source
-
-        if not ours_changed and not theirs_changed:
-            merged.append(Cell(index=i, cell_type=b.cell_type, source=b.source))
-        elif ours_changed and not theirs_changed:
-            merged.append(Cell(index=i, cell_type=o.cell_type, source=o.source))
-        elif not ours_changed and theirs_changed:
-            merged.append(Cell(index=i, cell_type=t.cell_type, source=t.source))
-        else:
-            conflicts.append(i)
-            merged.append(Cell(index=i, cell_type=b.cell_type, source=b.source))
-
-    return merged, conflicts
-
+from .merge import merge_three_way
+from .render import locate_conflict_cells, render_no_baseline_diff
 
 # ---------------------------------------------------------------------------
 # Git base helpers
@@ -60,21 +21,6 @@ def three_way_merge(
 def _get_git_base_text(path: Path) -> str | None:
     """Return the freshest available git-backed baseline for *path*."""
     return pair_baseline.read_baseline(path)
-
-
-def _cells_from_ipynb_text(text: str) -> list[Cell]:
-    """Parse cells from ipynb JSON text."""
-    return ipynb.loads(text).cells
-
-
-def _cells_from_py_text(text: str) -> list[Cell]:
-    """Parse cells from py:percent text."""
-    return percent.loads(text).cells
-
-
-# ---------------------------------------------------------------------------
-# DriftResult
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -133,9 +79,6 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
 
     Raises any exception encountered (caller is responsible for fail-open).
     """
-    from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_diff
-    from jupyter_jcli.text_merge import merge_three_way
-
     ours_raw = py_path.read_text(encoding="utf-8")
     ours_parsed = percent.loads(ours_raw)
     include_cell_ids = bool(ours_parsed.stable_cell_ids)

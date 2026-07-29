@@ -150,7 +150,7 @@ class TestInSync:
         _make_ipynb(git_repo / "nb.ipynb", "x = 1")
         _git(git_repo, "git", "add", "nb.py")
 
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             runner = CliRunner()
             result = _invoke(runner)
 

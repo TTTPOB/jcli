@@ -6,7 +6,7 @@ from pathlib import Path
 import nbformat
 
 from jupyter_jcli._enums import CellType, OutputPolicy
-from jupyter_jcli.cell_alignment import align_cells
+from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats.model import Cell
 
 

@@ -1,20 +1,15 @@
-"""Tests for jupyter_jcli.drift."""
+"""Tests for jupyter_jcli.diff.drift."""
 
 from pathlib import Path
 from unittest.mock import patch
 
 import nbformat
 
-from jupyter_jcli.drift import check_drift, three_way_merge
-from jupyter_jcli.formats.model import Cell
+from jupyter_jcli.diff import check_drift
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _cells(*sources: str, cell_type: str = "code") -> list[Cell]:
-    return [Cell(index=i, cell_type=cell_type, source=s) for i, s in enumerate(sources)]
 
 
 def _make_py_text(*sources: str, kernel: str = "python3") -> str:
@@ -70,80 +65,6 @@ def _write_pair(
 
 
 # ---------------------------------------------------------------------------
-# three_way_merge — unit tests (no file I/O)
-# ---------------------------------------------------------------------------
-
-
-class TestThreeWayMerge:
-    def test_no_changes(self):
-        cells = _cells("x = 1", "y = 2")
-        merged, conflicts = three_way_merge(cells, cells, cells)
-        assert conflicts == []
-        assert [c.source for c in merged] == ["x = 1", "y = 2"]
-
-    def test_ours_changed_only(self):
-        base = _cells("x = 1", "y = 2")
-        ours = _cells("x = 10", "y = 2")
-        theirs = _cells("x = 1", "y = 2")
-        merged, conflicts = three_way_merge(base, ours, theirs)
-        assert conflicts == []
-        assert merged[0].source == "x = 10"
-        assert merged[1].source == "y = 2"
-
-    def test_theirs_changed_only(self):
-        base = _cells("x = 1", "y = 2")
-        ours = _cells("x = 1", "y = 2")
-        theirs = _cells("x = 1", "y = 20")
-        merged, conflicts = three_way_merge(base, ours, theirs)
-        assert conflicts == []
-        assert merged[1].source == "y = 20"
-
-    def test_both_changed_same_cell_is_conflict(self):
-        base = _cells("x = 1")
-        ours = _cells("x = 10")
-        theirs = _cells("x = 99")
-        _merged, conflicts = three_way_merge(base, ours, theirs)
-        assert conflicts == [0]
-
-    def test_both_changed_different_cells_no_conflict(self):
-        base = _cells("x = 1", "y = 2")
-        ours = _cells("x = 10", "y = 2")
-        theirs = _cells("x = 1", "y = 20")
-        merged, conflicts = three_way_merge(base, ours, theirs)
-        assert conflicts == []
-        assert merged[0].source == "x = 10"
-        assert merged[1].source == "y = 20"
-
-    def test_cell_count_mismatch_all_conflict(self):
-        base = _cells("x = 1")
-        ours = _cells("x = 1", "y = 2")  # extra cell
-        theirs = _cells("x = 1")
-        _, conflicts = three_way_merge(base, ours, theirs)
-        assert len(conflicts) >= 1
-
-    def test_empty_base_and_ours(self):
-        merged, conflicts = three_way_merge([], [], [])
-        assert merged == []
-        assert conflicts == []
-
-    def test_conflict_indices_returned(self):
-        base = _cells("a", "b", "c")
-        ours2 = _cells("a", "B", "C")
-        theirs2 = _cells("a", "b", "X")
-        _, conflicts = three_way_merge(base, ours2, theirs2)
-        # cell 2: ours2[2]="C" vs theirs2[2]="X" vs base[2]="c" -> conflict
-        assert 2 in conflicts
-
-    def test_md_code_type_mismatch_same_index(self):
-        """Cell type difference at same index is detected via source comparison."""
-        base = [Cell(0, "code", "text")]
-        ours = [Cell(0, "markdown", "## Header")]
-        theirs = [Cell(0, "code", "x = 1")]
-        _, conflicts = three_way_merge(base, ours, theirs)
-        assert 0 in conflicts
-
-
-# ---------------------------------------------------------------------------
 # check_drift — with mocked git
 # ---------------------------------------------------------------------------
 
@@ -157,7 +78,9 @@ class TestCheckDrift:
                 return py_base
             return None
 
-        return patch("jupyter_jcli.drift._get_git_base_text", side_effect=_side_effect)
+        return patch(
+            "jupyter_jcli.diff.drift._get_git_base_text", side_effect=_side_effect
+        )
 
     def test_in_sync_no_drift(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 2"])
@@ -297,7 +220,9 @@ class TestCheckDrift:
             calls_by_suffix[path.suffix] = calls_by_suffix.get(path.suffix, 0) + 1
             return base_py if path.suffix == ".py" else None
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_side_effect):
+        with patch(
+            "jupyter_jcli.diff.drift._get_git_base_text", side_effect=_side_effect
+        ):
             check_drift(py, ipynb)
 
         assert calls_by_suffix[".ipynb"] == 0, (

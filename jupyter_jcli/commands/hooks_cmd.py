@@ -467,7 +467,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
         return None
 
     try:
-        from jupyter_jcli.drift import check_drift
+        from jupyter_jcli.diff import check_drift
 
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
@@ -889,7 +889,7 @@ def _run_post_drift_check(path: Path, logger=None) -> str | None:
         return None
 
     try:
-        from jupyter_jcli.drift import check_drift
+        from jupyter_jcli.diff import check_drift
 
         result = check_drift(py_path, ipynb_path)
     except UnicodeDecodeError:
@@ -1006,12 +1006,9 @@ def _sync_pair_after_edit(
         pair_baseline.write_baseline(py_path, canonical_merged_py)
     if synced and old_baseline_text is not None and canonical_merged_py is not None:
         try:
-            from jupyter_jcli.commands.notebook import (
-                build_summary_data,
-                diff_cells,
-                format_summary_human,
-            )
+            from jupyter_jcli.diff import diff_cells
             from jupyter_jcli.formats.percent import loads
+            from jupyter_jcli.summ import build_summary_data, format_summary_human
 
             baseline = loads(old_baseline_text, source_path=str(py_path))
             current = loads(canonical_merged_py, source_path=str(py_path))
@@ -1188,7 +1185,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
 
         # Drift check (fail-closed for decode/format errors)
         try:
-            from jupyter_jcli.drift import check_drift
+            from jupyter_jcli.diff import check_drift
 
             result = check_drift(py_path, ipynb_path)
         except UnicodeDecodeError:

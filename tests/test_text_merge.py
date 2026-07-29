@@ -1,10 +1,10 @@
-"""Tests for jupyter_jcli.text_merge."""
+"""Tests for jupyter_jcli.diff.merge."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from jupyter_jcli.text_merge import MergeResult, merge_three_way
+from jupyter_jcli.diff.merge import MergeResult, merge_three_way
 
 
 def _simple_py(*cell_sources: str, kernel: str = "python3") -> str:

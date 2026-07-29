@@ -11,14 +11,10 @@ from click.testing import CliRunner
 
 from jupyter_jcli._enums import CellType
 from jupyter_jcli.cli import main
-from jupyter_jcli.commands.notebook import (
-    CellChange,
-    build_summary_data,
-    diff_cells,
-    format_summary_human,
-)
+from jupyter_jcli.diff import CellChange, diff_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
+from jupyter_jcli.summ import build_summary_data, format_summary_human
 
 
 def _write_percent_notebook(path):
@@ -303,7 +299,7 @@ def test_notebook_helpers_import_without_cli_cycle(tmp_path):
         [
             sys.executable,
             "-c",
-            "from jupyter_jcli.commands.notebook import diff_cells; print(diff_cells.__name__)",
+            "from jupyter_jcli.diff import diff_cells; print(diff_cells.__name__)",
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -390,7 +386,7 @@ def test_large_replace_block_uses_linear_positional_fallback():
     current = _parsed(*(f"new value {index}" for index in range(100)))
 
     with patch(
-        "jupyter_jcli.cell_alignment._cell_edit_cost",
+        "jupyter_jcli.diff.alignment._cell_edit_cost",
         side_effect=AssertionError("large replace block allocated similarity DP"),
     ):
         changes = diff_cells(old, current)
@@ -411,7 +407,7 @@ def test_long_cell_edit_uses_bounded_similarity_input():
         return RealSequenceMatcher(*args, **kwargs)
 
     with patch(
-        "jupyter_jcli.cell_alignment.SequenceMatcher", side_effect=recording_matcher
+        "jupyter_jcli.diff.alignment.SequenceMatcher", side_effect=recording_matcher
     ):
         changes = diff_cells(_parsed("a" * 10_000 + "x"), _parsed("a" * 10_000 + "y"))
 
@@ -427,7 +423,7 @@ def test_large_equal_repeated_sequence_skips_sequence_matcher():
     current = _parsed(*("same" for _ in range(4_000)))
 
     with patch(
-        "jupyter_jcli.cell_alignment.SequenceMatcher",
+        "jupyter_jcli.diff.alignment.SequenceMatcher",
         side_effect=AssertionError("equal sequence used SequenceMatcher"),
     ):
         assert diff_cells(old, current) == []
@@ -441,7 +437,7 @@ def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
     current = _parsed(*current_sources)
 
     with patch(
-        "jupyter_jcli.cell_alignment.SequenceMatcher",
+        "jupyter_jcli.diff.alignment.SequenceMatcher",
         side_effect=AssertionError("sparse sequence used SequenceMatcher"),
     ):
         changes = diff_cells(old, current)
@@ -488,7 +484,7 @@ def test_large_replace_fallback_detects_leading_insertion_before_edits():
         return RealSequenceMatcher(*args, **kwargs)
 
     with patch(
-        "jupyter_jcli.cell_alignment.SequenceMatcher", side_effect=recording_matcher
+        "jupyter_jcli.diff.alignment.SequenceMatcher", side_effect=recording_matcher
     ):
         changes = diff_cells(old, current)
 

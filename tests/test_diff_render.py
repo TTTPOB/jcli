@@ -1,8 +1,8 @@
-"""Tests for jupyter_jcli.diff_render."""
+"""Tests for jupyter_jcli.diff.render."""
 
 from __future__ import annotations
 
-from jupyter_jcli.diff_render import locate_conflict_cells, render_no_baseline_diff
+from jupyter_jcli.diff.render import locate_conflict_cells, render_no_baseline_diff
 
 
 def _py_text(*sources: str, kernel: str = "python3") -> str:

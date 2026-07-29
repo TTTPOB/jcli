@@ -14,7 +14,7 @@ from jupyter_jcli._enums import (
     OutputType,
     ResponseStatus,
 )
-from jupyter_jcli.drift import DriftResult
+from jupyter_jcli.diff import DriftResult
 
 # ---------------------------------------------------------------------------
 # DriftStatus
@@ -83,7 +83,7 @@ class TestMergeMode:
         assert MergeMode("three_way") is MergeMode.THREE_WAY
 
     def test_drift_result_defaults_to_three_way(self):
-        from jupyter_jcli.drift import DriftResult
+        from jupyter_jcli.diff import DriftResult
 
         r = DriftResult(status="in_sync")
         assert r.merge_mode is MergeMode.THREE_WAY

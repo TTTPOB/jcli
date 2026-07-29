@@ -15,7 +15,7 @@ from click.testing import CliRunner
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.cli import main
-from jupyter_jcli.drift import check_drift
+from jupyter_jcli.diff import check_drift
 from jupyter_jcli.parser import parse_file
 
 # ---------------------------------------------------------------------------
@@ -231,7 +231,7 @@ class TestNonPairedFiles:
 class TestNoDrift:
     def test_in_sync_pair_allows(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -259,7 +259,7 @@ class TestAutoMergeOtherSide:
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -282,7 +282,7 @@ class TestAutoMergeOtherSide:
         base_py = _make_py_text("x = 1")
 
         with patch(
-            "jupyter_jcli.drift._get_git_base_text",
+            "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
             code, out = _invoke(
@@ -310,7 +310,7 @@ class TestAutoMergeOtherSide:
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -341,7 +341,7 @@ class TestConflict:
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -357,7 +357,7 @@ class TestConflict:
     def test_drift_only_count_mismatch_returns_deny(self, tmp_path):
         """No git base + cell count mismatch -> deny."""
         py, _ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 99"])
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -370,7 +370,7 @@ class TestConflict:
     def test_drift_only_content_diff_returns_deny(self, tmp_path):
         """No git base + different sources -> deny (DRIFT_ONLY, pick a side)."""
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -538,7 +538,7 @@ class TestPairDriftGuardPost:
         base_py = _make_py_text("x = 1")
 
         with patch(
-            "jupyter_jcli.drift._get_git_base_text",
+            "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
             code, out = _invoke_post(
@@ -556,7 +556,7 @@ class TestPairDriftGuardPost:
         py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
 
         with patch(
-            "jupyter_jcli.drift._get_git_base_text",
+            "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
             code, out = _invoke_post(
@@ -588,7 +588,7 @@ class TestPairDriftGuardPost:
         base_py = _make_py_text("x = 1", "y = 2")
 
         with patch(
-            "jupyter_jcli.drift._get_git_base_text",
+            "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
             code, out = _invoke_post(
@@ -609,7 +609,7 @@ class TestPairDriftGuardPost:
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else None
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
             code, out = _invoke_post(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -625,7 +625,7 @@ class TestPairDriftGuardPost:
         """py has no git baseline + count mismatch after agent's edit -> warn with convert hint."""
         py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -640,7 +640,7 @@ class TestPairDriftGuardPost:
         """py has no git baseline + different sources -> context notification (DRIFT_ONLY, pick a side)."""
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -1092,7 +1092,7 @@ class TestPostToolUseSchema:
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else None
 
-        with patch("jupyter_jcli.drift._get_git_base_text", side_effect=_git_side):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
             code, out = _invoke_post(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -1109,7 +1109,7 @@ class TestPostToolUseSchema:
     def test_drift_only_post_schema(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
-        with patch("jupyter_jcli.drift._get_git_base_text", return_value=None):
+        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
             code, out = _invoke_post(
                 {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
             )
@@ -1130,7 +1130,7 @@ class TestPostToolUseSchema:
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
 
         with patch(
-            "jupyter_jcli.drift._get_git_base_text",
+            "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
             code, out = _invoke_post(
