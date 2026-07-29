@@ -42,6 +42,8 @@ packages = ["jupyter_jcli"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+# use uvx pyrefly to run pyrefly
+# and uvx ruff to run ruff
 [tool.pyrefly]
 preset = "basic"
 project-includes = [
