@@ -69,7 +69,8 @@ class TestCanonicalizePyText:
             "# %%  \nx = 1\n\n"
         )
         result = canonicalize_py_text(text)
-        assert "x = 1" in result
+        assert "# %%  \n" not in result
+        assert "# %%\nx = 1\n" in result
 
     def test_normalizes_formatter_eof_whitespace(self):
         variants = [

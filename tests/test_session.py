@@ -147,6 +147,7 @@ def test_session_list_empty(jupyter_server):
         ],
     )
     assert result.exit_code == 0
+    assert result.output.strip() == "No active sessions"
 
 
 def test_session_list_no_vars_flag(jupyter_server):
@@ -188,9 +189,11 @@ def test_session_list_no_vars_flag(jupyter_server):
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "sessions" in data
-        # With --no-vars, no session should have a vars_preview key
-        for s in data["sessions"]:
-            assert "vars_preview" not in s
+        target = next(
+            (item for item in data["sessions"] if item["session_id"] == sid), None
+        )
+        assert target is not None
+        assert "vars_preview" not in target
     finally:
         runner.invoke(
             main,

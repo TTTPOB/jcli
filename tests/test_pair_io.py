@@ -298,8 +298,7 @@ class TestEmitPyPercent:
         lines = [line for line in text.splitlines() if line.startswith("#")]
         # All markdown body lines should be prefixed with "# "
         body_lines = [line for line in lines if not line.startswith("# %%")]
-        for line in body_lines:
-            assert line.startswith("# ") or line == "#"
+        assert body_lines == ["# ## Title", "# Some text"]
 
     def test_empty_markdown_line_becomes_bare_hash(self):
         # Empty line in markdown source should emit "#" (not "# ")

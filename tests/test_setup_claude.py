@@ -430,18 +430,20 @@ class TestThreeBlocks:
 
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
         expected = {
+            "notebook-exec-guard": "j-cli _hooks notebook-exec-guard",
             "pair-drift-guard-pre": "j-cli _hooks pair-drift-guard-pre",
             "notebook-edit-guard": "j-cli _hooks notebook-edit-guard",
             "pair-drift-guard-post": "j-cli _hooks pair-drift-guard-post",
+            "python-run-guard": "j-cli _hooks python-run-guard",
         }
+        actual = {}
         for event_key in ("PreToolUse", "PostToolUse"):
             for block in settings.get("hooks", {}).get(event_key, []):
                 for entry in block.get("hooks", []):
                     tag = entry.get("_jcli_managed", "")
                     if tag in expected:
-                        assert entry["command"] == expected[tag], (
-                            f"{tag} should run {expected[tag]!r}, got {entry['command']!r}"
-                        )
+                        actual[tag] = entry["command"]
+        assert actual == expected
 
     def test_legacy_pair_drift_guard_notebook_upgraded(self, tmp_path, monkeypatch):
         """Old pair-drift-guard-notebook tag is replaced by notebook-edit-guard on upgrade."""

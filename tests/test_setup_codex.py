@@ -81,10 +81,13 @@ class TestCodexInstall:
         runner = CliRunner()
         _invoke(runner, ["--local"])
         settings = _read_json(tmp_path / ".codex" / "hooks.json")
+        commands = []
         for event_list in settings.get("hooks", {}).values():
             for block in event_list:
                 for entry in block.get("hooks", []):
-                    assert " --platform codex" in entry.get("command", "")
+                    commands.append(entry.get("command", ""))
+        assert len(commands) == 4
+        assert all(" --platform codex" in command for command in commands)
 
     def test_idempotent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -192,6 +195,12 @@ class TestCodexRemove:
         _invoke(runner, ["--local", "--remove"])
         settings = _read_json(codex_dir / "hooks.json")
         assert _count_hooks(settings) == 1
+        entry = settings["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert entry == {
+            "type": "command",
+            "command": "my-custom-hook",
+            "_custom": "keep-me",
+        }
 
 
 class TestCodexJsonOutput:

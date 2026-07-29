@@ -147,6 +147,7 @@ class TestVarsCmdSingleVar:
             ],
         )
         assert result.exit_code == 1
+        assert json.loads(result.output)["code"] == "VARS_UNSUPPORTED"
 
     def test_rich_requires_name(self, live_session, mock_kernel_connection):
         runner = CliRunner()
@@ -164,6 +165,7 @@ class TestVarsCmdSingleVar:
             ],
         )
         assert result.exit_code == 1
+        assert json.loads(result.output)["code"] == "PARSE_ERROR"
 
 
 class TestVarsCmdDeadSession:
@@ -183,6 +185,7 @@ class TestVarsCmdDeadSession:
             ],
         )
         assert result.exit_code == 1
+        assert json.loads(result.output)["code"] == "SESSION_NOT_FOUND"
 
 
 class TestEmitListDefensiveness:
@@ -232,7 +235,7 @@ class TestEmitListDefensiveness:
         assert "my_list" in r.output
         assert "CONNECTION_FAILED" not in r.output
 
-    def test_emit_list_no_connection_failed_on_bad_value(self):
+    def test_emit_list_no_connection_failed_on_bad_value(self, capsys):
         """Rendering errors must not be labelled CONNECTION_FAILED."""
         from jupyter_jcli.cli import CliContext
         from jupyter_jcli.config import AppConfig
@@ -248,6 +251,10 @@ class TestEmitListDefensiveness:
             "source": VariableSource.FALLBACK,
         }
         _emit_list(ctx, result, "fake-session-id")
+        rendered = capsys.readouterr().out
+        assert "x" in rendered
+        assert "99" in rendered
+        assert "CONNECTION_FAILED" not in rendered
 
 
 class TestVarsCmdListValuedVariable:

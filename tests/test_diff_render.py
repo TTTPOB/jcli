@@ -23,8 +23,8 @@ class TestRenderNoBaselineDiff:
         ours = _py_text("x = 1")
         theirs = _py_text("x = 99")
         diff = render_no_baseline_diff(ours, theirs)
-        assert "-" in diff
-        assert "+" in diff
+        assert "-x = 1" in diff
+        assert "+x = 99" in diff
 
     def test_includes_labels(self):
         ours = _py_text("x = 1")

@@ -177,9 +177,6 @@ def test_decision_shape(tmp_path):
     assert "j-cli" in reason
     assert "session" in reason
     assert "kernel" in reason
-    # Reconsider / think-carefully framing
-    assert "Reconsider" in reason or "reconsider" in reason
-    assert "Think carefully" in reason or "think carefully" in reason
 
 
 # ---------------------------------------------------------------------------

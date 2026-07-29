@@ -68,11 +68,8 @@ class TestListVariables:
         live_kernel.execute("_tv_field_x = 42", timeout=30)
         result = list_variables(live_kernel, timeout=15.0)
 
-        for v in result["variables"]:
-            assert "name" in v
-            assert "type" in v
-            assert "value" in v
-            assert "variables_reference" in v
+        variable = next(v for v in result["variables"] if v["name"] == "_tv_field_x")
+        assert {"name", "type", "value", "variables_reference"} <= variable.keys()
 
 
 class TestInspectVariable:
@@ -107,7 +104,11 @@ class TestListVariableValueFields:
         live_kernel.execute("_tf_lst = [1, 2, 3] * 100; _tf_x = 42", timeout=30)
         result = list_variables(live_kernel, timeout=15.0)
 
-        for v in result["variables"]:
+        variables = [
+            v for v in result["variables"] if v["name"] in {"_tf_lst", "_tf_x"}
+        ]
+        assert {v["name"] for v in variables} == {"_tf_lst", "_tf_x"}
+        for v in variables:
             assert isinstance(v["name"], str), f"name not str: {v!r}"
             assert isinstance(v["type"], str), f"type not str: {v!r}"
             assert isinstance(v["value"], str), f"value not str: {v!r}"
