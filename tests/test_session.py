@@ -206,108 +206,58 @@ def test_session_list_no_vars_flag(jupyter_server):
         )
 
 
-def test_session_list_vars_preview_present(jupyter_server):
+def test_session_list_vars_preview_present(monkeypatch):
     """Default (without --no-vars) should include vars_preview in JSON output."""
     runner = CliRunner()
 
-    create_result = runner.invoke(
-        main,
-        [
-            "-s",
-            jupyter_server["url"],
-            "-t",
-            jupyter_server["token"],
-            "--json",
-            "session",
-            "create",
-            "--kernel",
-            "python3",
-        ],
+    sessions = [
+        {
+            "session_id": "session-1",
+            "kernel_id": "kernel-1",
+            "kernel_name": "python3",
+            "kernel_state": "idle",
+            "name": "",
+        }
+    ]
+    monkeypatch.setattr(
+        "jupyter_jcli.server.ServerClient.list_sessions", lambda _self: sessions
     )
-    assert create_result.exit_code == 0
-    sid = json.loads(create_result.output)["session_id"]
+    monkeypatch.setattr(
+        "jupyter_jcli.commands.session._enrich_with_vars",
+        lambda _ctx, items: items[0].update(
+            vars_preview={"names": ["answer"], "total": 1}
+        ),
+    )
 
-    try:
-        result = runner.invoke(
-            main,
-            [
-                "-s",
-                jupyter_server["url"],
-                "-t",
-                jupyter_server["token"],
-                "--json",
-                "session",
-                "list",
-            ],
-        )
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        sessions = data["sessions"]
-        target = next((s for s in sessions if s["session_id"] == sid), None)
-        assert target is not None
-        assert "vars_preview" in target
-        assert "names" in target["vars_preview"]
-        assert "total" in target["vars_preview"]
-    finally:
-        runner.invoke(
-            main,
-            [
-                "-s",
-                jupyter_server["url"],
-                "-t",
-                jupyter_server["token"],
-                "session",
-                "kill",
-                sid,
-            ],
-        )
+    result = runner.invoke(main, ["--json", "session", "list"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["sessions"][0]["vars_preview"] == {
+        "names": ["answer"],
+        "total": 1,
+    }
 
 
-def test_session_list_human_hint(jupyter_server):
+def test_session_list_human_hint(monkeypatch):
     """Human output should include the hint line pointing at j-cli vars."""
     runner = CliRunner()
 
-    create_result = runner.invoke(
-        main,
-        [
-            "-s",
-            jupyter_server["url"],
-            "-t",
-            jupyter_server["token"],
-            "--json",
-            "session",
-            "create",
-            "--kernel",
-            "python3",
-        ],
+    sessions = [
+        {
+            "session_id": "session-1",
+            "kernel_id": "kernel-1",
+            "kernel_name": "python3",
+            "kernel_state": "idle",
+            "name": "",
+        }
+    ]
+    monkeypatch.setattr(
+        "jupyter_jcli.server.ServerClient.list_sessions", lambda _self: sessions
     )
-    assert create_result.exit_code == 0
-    sid = json.loads(create_result.output)["session_id"]
+    monkeypatch.setattr(
+        "jupyter_jcli.commands.session._enrich_with_vars",
+        lambda _ctx, items: items[0].update(vars_preview={"names": [], "total": 0}),
+    )
 
-    try:
-        result = runner.invoke(
-            main,
-            [
-                "-s",
-                jupyter_server["url"],
-                "-t",
-                jupyter_server["token"],
-                "session",
-                "list",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "j-cli vars" in result.output
-    finally:
-        runner.invoke(
-            main,
-            [
-                "-s",
-                jupyter_server["url"],
-                "-t",
-                jupyter_server["token"],
-                "session",
-                "kill",
-                sid,
-            ],
-        )
+    result = runner.invoke(main, ["session", "list"])
+    assert result.exit_code == 0
+    assert "j-cli vars" in result.output

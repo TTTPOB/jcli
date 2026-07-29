@@ -20,18 +20,6 @@ from jupyter_jcli.cli import main
 def git_repo(tmp_path):
     """Minimal git repo in tmp_path."""
     subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
     return tmp_path
 
 

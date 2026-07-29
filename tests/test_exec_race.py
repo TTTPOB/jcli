@@ -26,6 +26,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
+def _wait_for_kernel_state(jupyter_server, session_id, expected, timeout=10):
+    from jupyter_jcli.server import ServerClient
+
+    server = ServerClient(jupyter_server["url"], jupyter_server["token"])
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sessions = server.list_sessions()
+        session = next(
+            (item for item in sessions if item["session_id"] == session_id), None
+        )
+        if session is not None and session["kernel_state"] == expected:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"kernel did not reach {expected!r} within {timeout}s")
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — verify the fix is in place
 # ---------------------------------------------------------------------------
@@ -648,26 +665,25 @@ class TestFreshConnectionExec:
 
         runner = CliRunner()
 
-        for iteration in range(5):
-            result = runner.invoke(
-                main,
-                [
-                    "-s",
-                    jupyter_server["url"],
-                    "-t",
-                    jupyter_server["token"],
-                    "--json",
-                    "session",
-                    "create",
-                    "--kernel",
-                    "python3",
-                ],
-            )
-            assert result.exit_code == 0, f"session create failed at iter {iteration}"
-            data = json.loads(result.output)
-            sid = data["session_id"]
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+            ],
+        )
+        assert result.exit_code == 0, "session create failed"
+        sid = json.loads(result.output)["session_id"]
 
-            try:
+        try:
+            for iteration in range(5):
                 result = runner.invoke(
                     main,
                     [
@@ -687,19 +703,19 @@ class TestFreshConnectionExec:
                     f"exec failed at iter {iteration}: {result.output}"
                 )
                 assert f"iter-{iteration}" in result.output
-            finally:
-                runner.invoke(
-                    main,
-                    [
-                        "-s",
-                        jupyter_server["url"],
-                        "-t",
-                        jupyter_server["token"],
-                        "session",
-                        "kill",
-                        sid,
-                    ],
-                )
+        finally:
+            runner.invoke(
+                main,
+                [
+                    "-s",
+                    jupyter_server["url"],
+                    "-t",
+                    jupyter_server["token"],
+                    "session",
+                    "kill",
+                    sid,
+                ],
+            )
 
 
 class TestExecutionTimeoutIntegration:
@@ -1036,8 +1052,7 @@ class TestSigintHandlerIntegration:
                 stderr=subprocess.PIPE,
             )
 
-            # Give the kernel time to enter the busy state
-            time.sleep(3)
+            _wait_for_kernel_state(jupyter_server, sid, "busy")
 
             # Verify the process is still running (kernel is busy)
             if proc.poll() is not None:
@@ -1065,9 +1080,8 @@ class TestSigintHandlerIntegration:
                 f"expected exit code 130 or -2, got {proc.returncode}. stderr: {stderr.decode() if stderr else 'none'}"
             )
 
-            # Kernel should recover (not stuck in "busy" forever)
-            # Give it a moment to process the interrupt and for buffers to flush
-            time.sleep(2)
+            # Kernel should recover (not stuck in "busy" forever).
+            _wait_for_kernel_state(jupyter_server, sid, "idle")
             result2 = runner.invoke(
                 main,
                 [

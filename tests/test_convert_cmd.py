@@ -25,18 +25,6 @@ def _invoke(*args: str):
 @pytest.fixture
 def git_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
     return tmp_path
 
 

@@ -1,7 +1,6 @@
 """Shared test fixtures: a real jupyter-server instance."""
 
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -42,7 +41,7 @@ def _wait_for_server(url: str, token: str, timeout: float = 30) -> None:
 
 
 @pytest.fixture(scope="session")
-def jupyter_server():
+def jupyter_server(tmp_path_factory):
     """Start a real jupyter-server for the test session.
 
     Yields a dict with 'url', 'token', and 'root_dir' keys.
@@ -51,19 +50,16 @@ def jupyter_server():
     token = "test-token-jcli"
     url = f"http://127.0.0.1:{port}"
 
-    base = "/tmp/jcli-test-server"
-    # Clean slate
-    if os.path.exists(base):
-        shutil.rmtree(base)
+    base = tmp_path_factory.mktemp("jcli-test-server")
     for d in ("root", "data", "runtime", "config"):
-        os.makedirs(f"{base}/{d}", exist_ok=True)
+        (base / d).mkdir()
 
     env = {
         **os.environ,
-        "HOME": base,
-        "JUPYTER_DATA_DIR": f"{base}/data",
-        "JUPYTER_RUNTIME_DIR": f"{base}/runtime",
-        "JUPYTER_CONFIG_DIR": f"{base}/config",
+        "HOME": str(base),
+        "JUPYTER_DATA_DIR": str(base / "data"),
+        "JUPYTER_RUNTIME_DIR": str(base / "runtime"),
+        "JUPYTER_CONFIG_DIR": str(base / "config"),
         "JUPYTER_PATH": "",
         "no_proxy": "127.0.0.1,localhost",
         "NO_PROXY": "127.0.0.1,localhost",
@@ -76,7 +72,7 @@ def jupyter_server():
             "jupyter_server",
             f"--port={port}",
             f"--IdentityProvider.token={token}",
-            f"--ServerApp.root_dir={base}/root",
+            f"--ServerApp.root_dir={base / 'root'}",
             "--ip=127.0.0.1",
             "--no-browser",
             "--ServerApp.disable_check_xsrf=True",
@@ -88,7 +84,7 @@ def jupyter_server():
 
     try:
         _wait_for_server(url, token)
-        yield {"url": url, "token": token, "root_dir": f"{base}/root"}
+        yield {"url": url, "token": token, "root_dir": str(base / "root")}
     finally:
         proc.send_signal(signal.SIGTERM)
         try:
