@@ -247,6 +247,43 @@ class TestIpynbToPy:
 
 
 class TestPyToIpynbCreate:
+    def test_rejects_mixed_cell_ids_without_creating_output(self, tmp_path):
+        py = tmp_path / "script.py"
+        py.write_text(
+            '# %% id="first"\nx = 1\n\n# %%\ny = 2\n\n# %% id="third"\nz = 3\n',
+            encoding="utf-8",
+        )
+        ipynb = tmp_path / "script.ipynb"
+
+        result = _invoke("convert", "py-to-ipynb", str(py))
+
+        assert result.exit_code == 1
+        assert "Mixed cell ID state: 2 of 3" in result.output
+        assert "Cells with IDs (2): 0, 2" in result.output
+        assert "Cells without IDs (1): 1" in result.output
+        assert not ipynb.exists()
+
+    def test_allow_mixed_cell_ids_creates_output(self, tmp_path):
+        py = tmp_path / "script.py"
+        source_text = '# %% id="existing"\nx = 1\n\n# %%\ny = 2\n'
+        py.write_text(source_text, encoding="utf-8")
+        ipynb = tmp_path / "script.ipynb"
+
+        result = _invoke(
+            "convert",
+            "py-to-ipynb",
+            "--allow-mixed-cell-ids",
+            str(py),
+        )
+
+        assert result.exit_code == 0
+        notebook = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in notebook.cells] == ["x = 1", "y = 2"]
+        assert notebook.cells[0].id == "existing"
+        assert notebook.cells[1].id
+        assert notebook.cells[1].id != "existing"
+        assert py.read_text(encoding="utf-8") == source_text
+
     def test_creates_new_ipynb(self, tmp_path):
         py = tmp_path / "script.py"
         py.write_text(
@@ -323,6 +360,47 @@ class TestPyToIpynbCreate:
 
 
 class TestPyToIpynbUpdate:
+    def test_rejects_mixed_cell_ids_without_modifying_notebook(self, tmp_path):
+        notebook = _make_ipynb([("code", "original", ["output\n"])])
+        ipynb = tmp_path / "script.ipynb"
+        nbformat.write(notebook, str(ipynb))
+        original_bytes = ipynb.read_bytes()
+        py = tmp_path / "script.py"
+        py.write_text('# %% id="existing"\nx = 1\n\n# %%\ny = 2\n', encoding="utf-8")
+
+        result = _invoke("convert", "py-to-ipynb", str(py), str(ipynb))
+
+        assert result.exit_code == 1
+        assert "Mixed cell ID state: 1 of 2" in result.output
+        assert "Cells with IDs (1): 0" in result.output
+        assert "Cells without IDs (1): 1" in result.output
+        assert ipynb.read_bytes() == original_bytes
+
+    def test_allow_mixed_cell_ids_updates_and_preserves_outputs(self, tmp_path):
+        notebook = _make_ipynb([("code", "x = 1", ["x\n"]), ("code", "y = 2", ["y\n"])])
+        first_id, second_id = (cell.id for cell in notebook.cells)
+        ipynb = tmp_path / "script.ipynb"
+        nbformat.write(notebook, str(ipynb))
+        py = tmp_path / "script.py"
+        py.write_text(
+            f'# %% id="{first_id}"\nx = 10\n\n# %%\ny = 20\n',
+            encoding="utf-8",
+        )
+
+        result = _invoke(
+            "convert",
+            "py-to-ipynb",
+            "--allow-mixed-cell-ids",
+            str(py),
+            str(ipynb),
+        )
+
+        assert result.exit_code == 0
+        updated = nbformat.read(str(ipynb), as_version=4)
+        assert [cell.source for cell in updated.cells] == ["x = 10", "y = 20"]
+        assert [cell.id for cell in updated.cells] == [first_id, second_id]
+        assert [cell.outputs[0]["text"] for cell in updated.cells] == ["x\n", "y\n"]
+
     def test_update_preserves_outputs_by_default(self, tmp_path):
         nb = _make_ipynb(
             [

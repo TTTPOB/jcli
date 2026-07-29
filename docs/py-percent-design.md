@@ -158,6 +158,9 @@ parsed cells. It writes kernelspec metadata when a kernel name is available;
 missing display name and language values default to the kernel name and
 `python`.
 
+`py-to-ipynb` accepts files where all cells have persistent IDs or where no
+cells have persistent IDs.
+
 When the target exists, j-cli replaces its cell list from the parsed cells.
 Notebook-level metadata remains in place. Aligned cells reuse old notebook cell
 objects, preserving their IDs, metadata, outputs, and execution counts according

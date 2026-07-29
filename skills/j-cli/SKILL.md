@@ -474,9 +474,8 @@ fig
 ```
 
 Cell markers may carry a stable nbformat ID as `id="..."`. Preserve the ID when
-editing or moving an existing cell. Leave the option off a newly inserted cell;
-j-cli assigns one during synchronization. Legacy files without IDs remain
-supported through content alignment.
+editing or moving an existing cell. Hook synchronization will assign an ID to a
+newly inserted cell, so you don't have to assign it manually.
 
 j-cli comments IPython magic commands in py:percent files so Python tools can
 parse them, then restores the commands when syncing to `.ipynb`. Python-body

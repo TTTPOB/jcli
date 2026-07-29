@@ -7,6 +7,7 @@ import click
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import OutputPolicy
 from jupyter_jcli.formats import ipynb, percent
+from jupyter_jcli.formats.model import ParsedFile
 from jupyter_jcli.pairing import update_ipynb_sources
 from jupyter_jcli.parser import ipynb_path_for_py
 
@@ -30,6 +31,21 @@ def _refresh_pair_baseline(py_path: Path) -> None:
     except (OSError, UnicodeDecodeError):
         return
     pair_baseline.write_baseline(py_path, canonical_text)
+
+
+def _reject_mixed_cell_ids(parsed: ParsedFile) -> None:
+    with_ids = [cell.index for cell in parsed.cells if cell.cell_id is not None]
+    without_ids = [cell.index for cell in parsed.cells if cell.cell_id is None]
+    if with_ids and without_ids:
+        raise click.ClickException(
+            "Mixed cell ID state: "
+            f"{len(with_ids)} of {len(parsed.cells)} cells have persistent IDs.\n"
+            f"Cells with IDs ({len(with_ids)}): "
+            f"{', '.join(map(str, with_ids))}\n"
+            f"Cells without IDs ({len(without_ids)}): "
+            f"{', '.join(map(str, without_ids))}\n"
+            "Add IDs to all cells or remove them from all cells before py-to-ipynb."
+        )
 
 
 @convert.command("ipynb-to-py")
@@ -68,13 +84,23 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     show_default=True,
     help="How to handle existing code cell outputs.",
 )
-def py_to_ipynb(in_py: str, out_ipynb: str | None, output_policy: str) -> None:
+@click.option(
+    "--allow-mixed-cell-ids",
+    is_flag=True,
+    default=False,
+    help="Allow mixed cell ID states (i.e., some cells have IDs, others don't).",
+)
+def py_to_ipynb(
+    in_py: str, out_ipynb: str | None, output_policy: str, allow_mixed_cell_ids: bool
+) -> None:
     """Convert a py:percent file to .ipynb format.
 
     If out.ipynb already exists, only cell sources are updated. Outputs are
     handled according to --outputs. Otherwise a new notebook is created.
     """
     parsed = percent.load(in_py)
+    if not allow_mixed_cell_ids:
+        _reject_mixed_cell_ids(parsed)
     in_py_path = Path(in_py)
 
     # Determine output path
