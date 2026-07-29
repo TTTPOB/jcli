@@ -2,6 +2,7 @@
 
 import queue
 import signal
+import socket
 import sys
 import threading
 import time
@@ -11,15 +12,73 @@ from uuid import uuid4
 
 from jupyter_kernel_client import KernelClient
 from jupyter_kernel_client.client import output_hook
+from jupyter_kernel_client.wsclient import KernelWebSocketClient
 
 _KERNEL_READY_TIMEOUT = 30
 # A failed attach attempt should be abandoned quickly.  The total budget below
 # is still the user-visible connection timeout; this per-attempt budget prevents
 # one unlucky WebSocket from consuming the entire exec attempt.
-_KERNEL_READY_ATTEMPT_TIMEOUT = 10
+_KERNEL_READY_ATTEMPT_TIMEOUT = 2
 _KERNEL_READY_MAX_ATTEMPTS = 3
 _KERNEL_MESSAGE_POLL_INTERVAL = 0.1
 _KERNEL_INTERRUPT_RECOVERY_TIMEOUT = 5
+_WEBSOCKET_DISPATCH_TIMEOUT = 2
+_WEBSOCKET_THREAD_JOIN_TIMEOUT = 3
+
+
+class _JCLIKernelWebSocketClient(KernelWebSocketClient):
+    """Keep websocket-client's dispatcher responsive to cross-thread close()."""
+
+    def _run_websocket(self) -> None:
+        kernel_socket = self.kernel_socket
+        if kernel_socket is None:
+            self.log.error("No websocket defined.")
+            return
+        try:
+            self.log.debug("kernel socket: %s", kernel_socket.url)
+            kernel_socket.run_forever(
+                ping_interval=self.ping_interval,
+                ping_timeout=_WEBSOCKET_DISPATCH_TIMEOUT,
+                reconnect=self.reconnect_interval,
+            )
+        except ValueError as exc:
+            self.log.error(
+                "Unable to open websocket connection with %s",
+                kernel_socket.url,
+                exc_info=exc,
+            )
+        except BaseException as exc:
+            self.log.error("Websocket listener thread stopped.", exc_info=exc)
+
+    def stop_channels(self) -> None:
+        if self.shutting_down:
+            return
+        self.shutting_down = True
+
+        kernel_socket = self.kernel_socket
+        self.kernel_socket = None
+        if kernel_socket is not None:
+            kernel_socket.keep_running = False
+            websocket = kernel_socket.sock
+            raw_socket = websocket.sock if websocket is not None else None
+            if raw_socket is not None:
+                with suppress(OSError):
+                    raw_socket.shutdown(socket.SHUT_RDWR)
+            if websocket is not None:
+                # WebSocket.close() reads the close reply while run_forever()
+                # may already be reading it. Close the transport without that
+                # competing read, then let run_forever() call on_close.
+                with suppress(OSError):
+                    websocket.shutdown()
+                kernel_socket.sock = None
+
+        connection_thread = self.connection_thread
+        if connection_thread is not None and connection_thread.is_alive():
+            connection_thread.join(_WEBSOCKET_THREAD_JOIN_TIMEOUT)
+            if connection_thread.is_alive():
+                self.log.warning("Failed to stop websocket connection thread.")
+        self.connection_thread = None
+        self.connection_ready.clear()
 
 
 class ExecutionTimeout(TimeoutError):
@@ -67,39 +126,23 @@ def _format_timeout(timeout: float | None) -> str:
     return f"in {timeout:g} seconds"
 
 
-def _drain_iopub(client) -> None:
-    """Best-effort drain of startup/status messages left by the ready probe.
-
-    The probe only proves shell forwarding.  IOPub startup/status messages may
-    already be queued by then, and leaving them in the queue can confuse the
-    first real execute_interactive() call because it flushes pre-existing IOPub
-    messages.  Draining here is intentionally best-effort: IOPub is not part of
-    the readiness proof, so absence of an IOPub message must not fail attach.
-    """
-    while True:
-        try:
-            client.iopub_channel.get_msg(timeout=0)
-        except (queue.Empty, TimeoutError):
-            return
-
-
 def _wait_for_kernel_websocket_ready(
     kernel: KernelClient, timeout: float | None = 30
 ) -> None:
-    """Wait until this WebSocket can round-trip shell messages.
+    """Wait until this WebSocket can round-trip shell and IOPub messages.
 
     Jupyter Server finishes a server-side nudge before subscribing ZMQ
     channels to the WebSocket.  If execute_request is sent before that
     subscription is installed, the kernel can reply on ZMQ with no forwarding
-    callback and the client will hang.  The upstream wait_for_ready() also
-    waits for an IOPub message, which can false-timeout on fresh WebSockets.
-    For j-cli, the required invariant is a successful shell round-trip on this
-    WebSocket; once shell replies are forwarded, subsequent execute requests
-    are safe to send.
+    callback and the client will hang.  A matching kernel_info_reply proves the
+    shell path, while its matching IOPub idle status proves the path that every
+    subsequent execution needs in order to complete.
     """
     client = kernel._manager.client
     deadline = None if timeout is None else time.monotonic() + timeout
     sent_msg_ids: set[str] = set()
+    shell_replies: dict[str, dict] = {}
+    iopub_idle_msg_ids: set[str] = set()
     next_probe_at = 0.0
 
     while True:
@@ -121,22 +164,40 @@ def _wait_for_kernel_websocket_ready(
             wait_timeout = min(wait_timeout, max(0.0, deadline - time.monotonic()))
 
         try:
-            msg = client.shell_channel.get_msg(timeout=wait_timeout)
+            shell_msg = client.shell_channel.get_msg(timeout=wait_timeout)
         except (queue.Empty, TimeoutError):
-            continue
+            shell_msg = None
 
-        # Ignore old shell traffic from previous requests.  The safety proof is
-        # tied to a reply for one of this probe's msg_ids on this WebSocket.
-        if msg.get("msg_type") != "kernel_info_reply":
-            continue
-        if msg.get("parent_header", {}).get("msg_id") not in sent_msg_ids:
-            continue
+        if shell_msg is not None and shell_msg.get("msg_type") == "kernel_info_reply":
+            parent_id = shell_msg.get("parent_header", {}).get("msg_id")
+            if parent_id in sent_msg_ids:
+                shell_replies[parent_id] = shell_msg
 
-        handle_reply = getattr(client, "_handle_kernel_info_reply", None)
-        if handle_reply is not None:
-            handle_reply(msg)
-        _drain_iopub(client)
-        return
+        while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"Kernel didn't respond {_format_timeout(timeout)}")
+            try:
+                iopub_msg = client.iopub_channel.get_msg(timeout=0)
+            except (queue.Empty, TimeoutError):
+                break
+            msg_type = iopub_msg.get("msg_type") or iopub_msg.get("header", {}).get(
+                "msg_type"
+            )
+            parent_id = iopub_msg.get("parent_header", {}).get("msg_id")
+            if (
+                msg_type == "status"
+                and parent_id in sent_msg_ids
+                and iopub_msg.get("content", {}).get("execution_state") == "idle"
+            ):
+                iopub_idle_msg_ids.add(parent_id)
+
+        ready_msg_ids = shell_replies.keys() & iopub_idle_msg_ids
+        if ready_msg_ids:
+            ready_reply = shell_replies[next(iter(ready_msg_ids))]
+            handle_reply = getattr(client, "_handle_kernel_info_reply", None)
+            if handle_reply is not None:
+                handle_reply(ready_reply)
+            return
 
 
 def _start_ready_kernel_connection(
@@ -166,6 +227,8 @@ def _start_ready_kernel_connection(
             server_url=server_url,
             token=token,
             kernel_id=kernel_id,
+            client_factory=_JCLIKernelWebSocketClient,
+            client_kwargs={"timeout": attempt_timeout},
         )
         try:
             # KernelClient.start() opens the WebSocket.  A successful open only
@@ -195,20 +258,21 @@ def _start_ready_kernel_connection(
 @contextmanager
 def kernel_connection(server_url: str, token: str | None, kernel_id: str):
     """Context manager that yields a started KernelClient."""
-    kernel = _start_ready_kernel_connection(server_url, token, kernel_id)
-
     is_main = threading.current_thread() is threading.main_thread()
     if is_main:
         handler = _make_interrupt_handler(server_url, token, kernel_id)
         old_sigint = signal.signal(signal.SIGINT, handler)
         old_sigterm = signal.signal(signal.SIGTERM, handler)
     try:
-        yield kernel
+        kernel = _start_ready_kernel_connection(server_url, token, kernel_id)
+        try:
+            yield kernel
+        finally:
+            kernel.stop()
     finally:
         if is_main:
             signal.signal(signal.SIGINT, old_sigint)
             signal.signal(signal.SIGTERM, old_sigterm)
-        kernel.stop()
 
 
 @contextmanager

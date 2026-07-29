@@ -7,16 +7,17 @@ kernel's reply arrives on the main shell ZMQ channel which has no
 forwarding callback yet - the reply is silently dropped and the client
 hangs in ``_message_received.wait()`` / ``_recv_reply()`` forever.
 
-Fix: ``kernel_connection()`` now performs its own shell-channel round-trip
-probe on the current WebSocket after ``kernel.start()``.  A matching
-``kernel_info_reply`` proves the server pipeline is forwarding replies before
-the client sends ``execute_request``.  If a specific WebSocket wedges during
+Fix: ``kernel_connection()`` now performs shell and IOPub round-trip probes on
+the current WebSocket after ``kernel.start()``.  Matching shell reply and IOPub
+idle messages prove the server pipeline is forwarding both channels before the
+client sends ``execute_request``.  If a specific WebSocket wedges during
 server-side nudge setup, j-cli closes it and retries with a fresh WebSocket.
 The retry is safe because no user code is sent until the probe succeeds.
 """
 
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -57,11 +58,14 @@ class _FakeClient:
 
 
 class TestKernelWebsocketReadyProbe:
-    """Verify kernel_connection waits for a current-WebSocket shell round-trip."""
+    """Verify kernel_connection waits for shell and IOPub round-trips."""
 
     def test_kernel_connection_calls_ready_probe(self):
         """kernel_connection uses j-cli's ready probe after start."""
-        from jupyter_jcli.kernel import kernel_connection
+        from jupyter_jcli.kernel import (
+            _JCLIKernelWebSocketClient,
+            kernel_connection,
+        )
 
         with (
             patch("jupyter_jcli.kernel.KernelClient") as MockClient,
@@ -72,8 +76,48 @@ class TestKernelWebsocketReadyProbe:
             with kernel_connection("http://x", "tok", "kid") as k:
                 assert k is mock_instance
 
-            mock_instance.start.assert_called_once_with(timeout=10)
-            mock_ready.assert_called_once_with(mock_instance, timeout=10)
+            MockClient.assert_called_once_with(
+                server_url="http://x",
+                token="tok",
+                kernel_id="kid",
+                client_factory=_JCLIKernelWebSocketClient,
+                client_kwargs={"timeout": 2},
+            )
+            mock_instance.start.assert_called_once_with(timeout=2)
+            mock_ready.assert_called_once_with(mock_instance, timeout=2)
+
+    def test_websocket_shutdown_wakes_connection_thread(self):
+        """Socket shutdown wakes the reader before stop_channels joins it."""
+        from jupyter_jcli.kernel import _JCLIKernelWebSocketClient
+
+        client = _JCLIKernelWebSocketClient(endpoint="ws://example.test/channels")
+        kernel_socket = MagicMock()
+        websocket = kernel_socket.sock
+        raw_socket = websocket.sock
+        client.kernel_socket = kernel_socket
+
+        client.stop_channels()
+
+        raw_socket.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+        websocket.shutdown.assert_called_once()
+        kernel_socket.close.assert_not_called()
+        assert kernel_socket.sock is None
+        assert client.kernel_socket is None
+
+    def test_websocket_dispatcher_poll_is_bounded(self):
+        """The listener checks for cross-thread shutdown before join expires."""
+        from jupyter_jcli.kernel import _JCLIKernelWebSocketClient
+
+        client = _JCLIKernelWebSocketClient(endpoint="ws://example.test/channels")
+        client.kernel_socket = MagicMock()
+
+        client._run_websocket()
+
+        client.kernel_socket.run_forever.assert_called_once_with(
+            ping_interval=client.ping_interval,
+            ping_timeout=2,
+            reconnect=client.reconnect_interval,
+        )
 
     def test_kernel_stopped_when_ready_probe_fails(self):
         """kernel.stop() must be called even if the ready probe raises."""
@@ -116,13 +160,13 @@ class TestKernelWebsocketReadyProbe:
             with kernel_connection("http://x", "tok", "kid") as kernel:
                 assert kernel is second_kernel
 
-            first_kernel.start.assert_called_once_with(timeout=10)
-            second_kernel.start.assert_called_once_with(timeout=10)
+            first_kernel.start.assert_called_once_with(timeout=2)
+            second_kernel.start.assert_called_once_with(timeout=2)
             first_kernel.stop.assert_called_once()
             second_kernel.stop.assert_called_once()
 
-    def test_ready_probe_accepts_only_matching_kernel_info_reply(self):
-        """The probe ignores stale/unrelated shell messages before succeeding."""
+    def test_ready_probe_accepts_matching_shell_reply_and_iopub_idle(self):
+        """The probe ignores unrelated messages before both channels succeed."""
         from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
 
         matching_reply = {
@@ -136,7 +180,23 @@ class TestKernelWebsocketReadyProbe:
                 {"msg_type": "kernel_info_reply", "parent_header": {"msg_id": "stale"}},
                 matching_reply,
             ],
-            iopub_messages=[{"msg_type": "status"}],
+            iopub_messages=[
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": "stale"},
+                    "content": {"execution_state": "idle"},
+                },
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"execution_state": "busy"},
+                },
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"execution_state": "idle"},
+                },
+            ],
         )
         kernel = MagicMock()
         kernel._manager.client = client
@@ -147,7 +207,7 @@ class TestKernelWebsocketReadyProbe:
         assert client.handled_kernel_info_reply is matching_reply
         assert client.iopub_channel.messages.empty()
 
-    def test_ready_probe_times_out_without_matching_reply(self):
+    def test_ready_probe_times_out_without_matching_shell_reply(self):
         """The probe fails clearly if shell forwarding never becomes ready."""
         from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
 
@@ -159,6 +219,118 @@ class TestKernelWebsocketReadyProbe:
             _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
 
         assert client.sent_msg_ids == ["probe-0"]
+
+    def test_ready_probe_drains_iopub_backlog_before_timeout(self):
+        """Queued unrelated traffic cannot hide the matching idle status."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        client = _FakeClient(
+            shell_messages=[
+                {
+                    "msg_type": "kernel_info_reply",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"protocol_version": "5.3"},
+                }
+            ],
+            iopub_messages=[
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": f"stale-{index}"},
+                    "content": {"execution_state": "idle"},
+                }
+                for index in range(20)
+            ]
+            + [
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"execution_state": "idle"},
+                }
+            ],
+        )
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+
+        assert client.handled_kernel_info_reply is not None
+        assert client.iopub_channel.messages.empty()
+
+    def test_ready_probe_honors_timeout_while_iopub_remains_busy(self):
+        """Continuous unrelated IOPub traffic cannot bypass the deadline."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        client = _FakeClient(
+            shell_messages=[
+                {
+                    "msg_type": "kernel_info_reply",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"protocol_version": "5.3"},
+                }
+            ]
+        )
+        client.iopub_channel = MagicMock()
+        client.iopub_channel.get_msg.return_value = {
+            "msg_type": "status",
+            "parent_header": {"msg_id": "unrelated"},
+            "content": {"execution_state": "idle"},
+        }
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
+            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+
+        assert client.iopub_channel.get_msg.call_count > 1
+
+    def test_ready_probe_times_out_without_iopub_idle(self):
+        """A shell round-trip alone does not prove execution can complete."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        client = _FakeClient(
+            shell_messages=[
+                {
+                    "msg_type": "kernel_info_reply",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"protocol_version": "5.3"},
+                }
+            ]
+        )
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
+            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+
+        assert client.handled_kernel_info_reply is None
+
+    def test_ready_probe_requires_both_channels_for_same_request(self):
+        """Replies from different requests cannot jointly satisfy readiness."""
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        client = _FakeClient(
+            shell_messages=[
+                {
+                    "msg_type": "kernel_info_reply",
+                    "parent_header": {"msg_id": "probe-0"},
+                    "content": {"protocol_version": "5.3"},
+                }
+            ],
+            iopub_messages=[
+                {
+                    "msg_type": "status",
+                    "parent_header": {"msg_id": "other-request"},
+                    "content": {"execution_state": "idle"},
+                }
+            ],
+        )
+        kernel = MagicMock()
+        kernel._manager.client = client
+
+        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
+            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+
+        assert client.handled_kernel_info_reply is None
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +703,9 @@ class TestFreshConnectionExec:
 
 
 class TestExecutionTimeoutIntegration:
-    def test_timeout_interrupts_kernel_and_preserves_session(self, jupyter_server):
+    def test_timeout_interrupts_kernel_and_preserves_session(
+        self, jupyter_server, caplog
+    ):
         import json
 
         from click.testing import CliRunner
@@ -599,6 +773,7 @@ class TestExecutionTimeoutIntegration:
             )
             assert recovered.exit_code == 0, recovered.output
             assert "recovered False" in recovered.output
+            assert "Failed to stop websocket connection thread" not in caplog.text
         finally:
             runner.invoke(
                 main,
@@ -773,15 +948,22 @@ class TestSigintHandlerUnit:
             mock_exit.assert_called_once()
 
     def test_signal_handler_set_and_restored(self):
-        """kernel_connection sets and restores signal handlers."""
+        """kernel_connection covers the ready probe and restores handlers."""
         from jupyter_jcli.kernel import kernel_connection
 
         with (
             patch("jupyter_jcli.kernel.KernelClient"),
-            patch("jupyter_jcli.kernel._wait_for_kernel_websocket_ready"),
             patch("jupyter_jcli.kernel.signal.signal") as mock_signal_fn,
+            patch("jupyter_jcli.kernel._wait_for_kernel_websocket_ready") as mock_ready,
         ):
             mock_signal_fn.return_value = "OLD_HANDLER"
+
+            def assert_handlers_installed(*_args, **_kwargs):
+                assert mock_signal_fn.call_count == 2
+                assert mock_signal_fn.call_args_list[0].args[0] == signal.SIGINT
+                assert mock_signal_fn.call_args_list[1].args[0] == signal.SIGTERM
+
+            mock_ready.side_effect = assert_handlers_installed
             with kernel_connection("http://x", "tok", "kid"):
                 pass
 
