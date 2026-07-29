@@ -18,8 +18,8 @@ _KERNEL_READY_TIMEOUT = 30
 # A failed attach attempt should be abandoned quickly.  The total budget below
 # is still the user-visible connection timeout; this per-attempt budget prevents
 # one unlucky WebSocket from consuming the entire exec attempt.
-_KERNEL_READY_ATTEMPT_TIMEOUT = 2
-_KERNEL_READY_MAX_ATTEMPTS = 3
+_KERNEL_READY_ATTEMPT_TIMEOUT = 3
+_KERNEL_READY_MAX_ATTEMPTS = 5
 _KERNEL_MESSAGE_POLL_INTERVAL = 0.1
 _KERNEL_INTERRUPT_RECOVERY_TIMEOUT = 5
 _WEBSOCKET_DISPATCH_TIMEOUT = 2
