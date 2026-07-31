@@ -28,6 +28,7 @@ dependencies = [
 test = [
     "pytest>=8",
     "pytest-asyncio",
+    "pytest-xdist",
     "ipython>=8",
     "jupyter-server>=2,<3",
     "ipykernel",

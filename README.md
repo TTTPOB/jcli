@@ -432,7 +432,7 @@ other cell magics are commented through the end of the cell.
 uv sync --extra test
 
 # run tests (requires a real Jupyter server, started automatically by fixtures)
-uv run pytest -v
+uv run pytest -n 2 --dist loadfile -v
 ```
 
 ## License
