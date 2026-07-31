@@ -24,5 +24,5 @@ jobs:
         run: uv sync --extra test
 
       - name: Run tests
-        run: uv run pytest -n 2 --dist loadfile -v
+        run: uv run pytest -n 4 --dist loadscope -v
         timeout-minutes: 10
