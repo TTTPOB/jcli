@@ -232,12 +232,16 @@ def _format_vars_preview(preview: dict) -> str:
 
 
 @session.command("kill")
-@click.argument("session_selector", metavar="SESSION_SELECTOR")
+@click.argument(
+    "session_selectors", metavar="SESSION_SELECTOR...", nargs=-1, required=True
+)
 @pass_ctx
-def kill(ctx: CliContext, session_selector: str):
-    """Kill a session selected by ID, short ID, or name."""
+def kill(ctx: CliContext, session_selectors: tuple[str, ...]):
+    """Kill sessions selected by ID, short ID, or name."""
     try:
-        session_id = ctx.server.resolve_session(session_selector)
+        session_ids = [
+            ctx.server.resolve_session(selector) for selector in session_selectors
+        ]
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -246,9 +250,15 @@ def kill(ctx: CliContext, session_selector: str):
         return
 
     try:
-        ctx.server.delete_session(session_id)
+        for session_id in session_ids:
+            ctx.server.delete_session(session_id)
+        noun = "session" if len(session_ids) == 1 else "sessions"
         emit(
-            {"status": ResponseStatus.OK, "_human": f"Killed session {session_id}"},
+            {
+                "status": ResponseStatus.OK,
+                "session_ids": session_ids,
+                "_human": f"Killed {noun} {', '.join(session_ids)}",
+            },
             use_json=ctx.use_json,
         )
     except Exception as e:  # noqa: BLE001 - normalize server failures for CLI output

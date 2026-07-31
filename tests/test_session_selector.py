@@ -236,6 +236,43 @@ def test_session_kill_resolves_name_to_full_id(monkeypatch):
     assert deleted == ["abc1-session-id"]
 
 
+def test_session_kill_accepts_multiple_selectors(monkeypatch):
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
+    deleted = []
+    monkeypatch.setattr(
+        ServerClient,
+        "delete_session",
+        lambda self, session_id: deleted.append(session_id),
+    )
+
+    result = CliRunner().invoke(main, ["--json", "session", "kill", "analysis", "xyz"])
+
+    assert result.exit_code == 0, result.output
+    assert deleted == ["abc1-session-id", "xyz3-session-id"]
+    assert json.loads(result.output) == {
+        "status": "ok",
+        "session_ids": ["abc1-session-id", "xyz3-session-id"],
+        "_human": "Killed sessions abc1-session-id, xyz3-session-id",
+    }
+
+
+def test_session_kill_resolves_all_selectors_before_deleting(monkeypatch):
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
+
+    def operation_must_not_run(*args, **kwargs):
+        raise AssertionError("command deleted a session before resolving all selectors")
+
+    monkeypatch.setattr(ServerClient, "delete_session", operation_must_not_run)
+
+    result = CliRunner().invoke(
+        main, ["--json", "session", "kill", "analysis", "missing"]
+    )
+
+    assert result.exit_code == 1
+    error = json.loads(result.output)
+    assert error["code"] == "SESSION_NOT_FOUND"
+
+
 @pytest.mark.parametrize("command", ["interrupt", "restart"])
 def test_kernel_commands_resolve_short_id_to_full_id(monkeypatch, command):
     monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
