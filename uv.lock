@@ -998,7 +998,7 @@ requires-dist = [
     { name = "click", specifier = ">=8" },
     { name = "ipykernel", marker = "extra == 'test'" },
     { name = "ipython", marker = "extra == 'test'", specifier = ">=8" },
-    { name = "jupyter-kernel-client", specifier = ">=0.7.3" },
+    { name = "jupyter-kernel-client", specifier = ">=0.7.3,<1" },
     { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
     { name = "jupyter-server-client" },
     { name = "matplotlib", marker = "extra == 'test'" },
@@ -1014,7 +1014,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "jupyter-kernel-client"
-version = "0.9.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jupyter-client" },
@@ -1026,7 +1026,7 @@ dependencies = [
     { name = "websocket-client" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/68/287315ba355aa93bda2e344de5febc45e6de1b47d8f4a5b69400b24cfdfd/jupyter_kernel_client-0.9.0-py3-none-any.whl", hash = "sha256:77acb8f2f738d97625d6bd01ee8cf21c4d59790b7ba464108712db3870416f20", size = 40097, upload-time = "2026-02-11T06:42:05.133Z" },
+    { url = "https://files.pythonhosted.org/packages/df/38/67bec99e9cb66bed57cbf409840d59e9517dcb0c6c63e497c2dcc4a49a62/jupyter_kernel_client-0.15.0-py3-none-any.whl", hash = "sha256:6e59523e6ef8a650a79275f9f10b5502e2b5e1533b58ad6f0bab5e6b44b32ae1", size = 61912, upload-time = "2026-07-24T12:10:49.191Z" },
 ]
 
 [[package]]
