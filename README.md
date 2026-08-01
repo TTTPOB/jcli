@@ -133,6 +133,10 @@ j-cli session list
 j-cli session kill <session_selector>
 ```
 
+JSON output from `session create` and `session list` includes both the stable full
+`session_id` and the shortest unique `session_selector` accepted by subsequent
+commands. Human output uses the same short selector.
+
 ### `kernel`
 
 ```bash
@@ -309,9 +313,10 @@ j-cli session list --vars     # force fetch even when >10 sessions
 
 Human output shows the shortest unique session ID prefix, with at least three characters. Commands accept a session selector: a full ID, the displayed short ID, or an exact unique session name. If a selector matches multiple sessions, the command exits without choosing one. A hint line at the bottom points at `j-cli vars <SESSION_SELECTOR>` for the full variable list.
 
-In JSON mode (`-j`), each session object gains a `vars_preview` key:
+In JSON mode (`-j`), each session object includes the shortest unique
+`session_selector` and gains a `vars_preview` key:
 ```json
-{"session_id": "...", "vars_preview": {"names": ["x", "df"], "total": 2}}
+{"session_id": "...", "session_selector": "abc", "vars_preview": {"names": ["x", "df"], "total": 2}}
 ```
 
 ### `exec`

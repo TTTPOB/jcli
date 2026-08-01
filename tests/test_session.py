@@ -62,6 +62,8 @@ def test_session_create_and_list(jupyter_server):
     data = json.loads(result.output)
     assert data["kernel_name"] == "python3"
     session_id = data["session_id"]
+    assert session_id.startswith(data["session_selector"])
+    assert len(data["session_selector"]) >= 3
 
     # List
     result = runner.invoke(
@@ -80,6 +82,8 @@ def test_session_create_and_list(jupyter_server):
     sessions = json.loads(result.output)["sessions"]
     ids = [s["session_id"] for s in sessions]
     assert session_id in ids
+    created_session = next(s for s in sessions if s["session_id"] == session_id)
+    assert created_session["session_selector"] == data["session_selector"]
 
     # Kill
     result = runner.invoke(
@@ -116,8 +120,8 @@ def test_session_create_human(jupyter_server):
     assert result.exit_code == 0
     assert "Created session" in result.output
 
-    # Extract session_id from human output and clean up
-    # Format: "Created session <id> (kernel: <kid>, spec: python3)"
+    # Extract the session selector from human output and clean up
+    # Format: "Created session <selector> (kernel: <kid>, spec: python3)"
     sid = result.output.split("Created session ")[1].split(" ")[0]
     runner.invoke(
         main,

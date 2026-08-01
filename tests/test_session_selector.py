@@ -15,6 +15,7 @@ from jupyter_jcli.session_selector import (
     SessionSelectorNotFound,
     resolve_session_selector,
     short_session_ids,
+    with_session_selectors,
 )
 from jupyter_jcli.variables import VariableSource
 
@@ -55,6 +56,22 @@ def test_short_session_ids_start_at_three_and_expand_for_collisions():
     }
 
 
+def test_with_session_selectors_preserves_full_ids_without_mutating_input():
+    sessions = with_session_selectors(SESSIONS)
+
+    assert [session["session_selector"] for session in sessions] == [
+        "abc1",
+        "abc2",
+        "xyz",
+    ]
+    assert [session["session_id"] for session in sessions] == [
+        "abc1-session-id",
+        "abc2-session-id",
+        "xyz3-session-id",
+    ]
+    assert all("session_selector" not in session for session in SESSIONS)
+
+
 @pytest.mark.parametrize(
     "args", [["session", "list"], ["session", "list", "--no-vars"]]
 )
@@ -82,6 +99,10 @@ def test_session_list_human_uses_short_ids_and_json_keeps_full_ids(monkeypatch, 
         "abc2-session-id",
         "xyz3-session-id",
     ]
+    assert [
+        session["session_selector"]
+        for session in json.loads(json_result.output)["sessions"]
+    ] == ["abc1", "abc2", "xyz"]
 
 
 def test_resolve_session_selector_accepts_full_id_short_id_and_name():
@@ -234,6 +255,34 @@ def test_session_kill_resolves_name_to_full_id(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert deleted == ["abc1-session-id"]
+    assert result.output.strip() == "Killed session abc1"
+
+
+@pytest.mark.parametrize("use_json", [False, True])
+def test_session_create_returns_shortest_unique_selector(monkeypatch, use_json):
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
+    monkeypatch.setattr(
+        ServerClient,
+        "create_session",
+        lambda self, kernel, name: {
+            "session_id": "abc3-session-id",
+            "kernel_id": "kernel-four",
+            "kernel_name": kernel,
+        },
+    )
+    args = ["--json"] if use_json else []
+
+    result = CliRunner().invoke(
+        main, [*args, "session", "create", "--kernel", "python3"]
+    )
+
+    assert result.exit_code == 0, result.output
+    if use_json:
+        data = json.loads(result.output)
+        assert data["session_id"] == "abc3-session-id"
+        assert data["session_selector"] == "abc3"
+    else:
+        assert result.output.startswith("Created session abc3 ")
 
 
 def test_session_kill_accepts_multiple_selectors(monkeypatch):
@@ -252,7 +301,8 @@ def test_session_kill_accepts_multiple_selectors(monkeypatch):
     assert json.loads(result.output) == {
         "status": "ok",
         "session_ids": ["abc1-session-id", "xyz3-session-id"],
-        "_human": "Killed sessions abc1-session-id, xyz3-session-id",
+        "session_selectors": ["abc1", "xyz"],
+        "_human": "Killed sessions abc1, xyz",
     }
 
 
@@ -292,6 +342,26 @@ def test_kernel_commands_resolve_short_id_to_full_id(monkeypatch, command):
 
     assert result.exit_code == 0, result.output
     assert resolved == ["abc1-session-id"]
+    assert "session abc1" in result.output
+
+
+@pytest.mark.parametrize("command", ["interrupt", "restart"])
+def test_kernel_commands_json_include_session_selector(monkeypatch, command):
+    monkeypatch.setattr(ServerClient, "list_sessions", _list_sessions)
+    monkeypatch.setattr(
+        ServerClient,
+        "get_kernel_id_for_session",
+        lambda self, session_id: "kernel-one",
+    )
+    monkeypatch.setattr(ServerClient, f"{command}_kernel", lambda self, kernel_id: None)
+
+    result = CliRunner().invoke(main, ["--json", "kernel", command, "analysis"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["session_id"] == "abc1-session-id"
+    assert data["session_selector"] == "abc1"
+    assert data["kernel_id"] == "kernel-one"
 
 
 def test_exec_and_vars_resolve_name_to_full_id(monkeypatch):
@@ -320,4 +390,5 @@ def test_exec_and_vars_resolve_name_to_full_id(monkeypatch):
     assert exec_result.exit_code == 0, exec_result.output
     assert vars_result.exit_code == 0, vars_result.output
     assert json.loads(vars_result.output)["session_id"] == "abc1-session-id"
+    assert json.loads(vars_result.output)["session_selector"] == "abc1"
     assert resolved == ["abc1-session-id", "abc1-session-id"]

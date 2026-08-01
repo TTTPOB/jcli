@@ -36,6 +36,18 @@ def short_session_ids(sessions: list[dict]) -> dict[str, str]:
     return short_ids
 
 
+def with_session_selectors(sessions: list[dict]) -> list[dict]:
+    """Return session dictionaries with their shortest unique selectors."""
+    short_ids = short_session_ids(sessions)
+    return [
+        {
+            **session,
+            "session_selector": short_ids[str(session["session_id"])],
+        }
+        for session in sessions
+    ]
+
+
 def resolve_session_selector(sessions: list[dict], selector: str) -> str:
     """Resolve an ID prefix or exact session name to a full active session ID."""
     exact_id_matches = [

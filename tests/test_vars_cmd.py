@@ -51,6 +51,8 @@ class TestVarsCmdList:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
+        assert data["session_id"] == live_session["session_id"]
+        assert live_session["session_id"].startswith(data["session_selector"])
         assert "variables" in data
         assert "source" in data
         assert data["source"] in (
@@ -122,6 +124,8 @@ class TestVarsCmdSingleVar:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["name"] == "_vs_x"
+        assert data["session_id"] == live_session["session_id"]
+        assert live_session["session_id"].startswith(data["session_selector"])
         assert "42" in data["value"]
         assert data["source"] in (
             VariableSource.DAP.value,
@@ -212,7 +216,7 @@ class TestEmitListDefensiveness:
 
             @_click.command()
             def _cmd():
-                _emit_list(ctx, result, "fake-session-id")
+                _emit_list(ctx, result, "fake-session-id", "fak")
 
             r = runner.invoke(_cmd)
         assert r.exit_code == 0
@@ -234,7 +238,7 @@ class TestEmitListDefensiveness:
             "variables": [{"name": "x", "type": "int", "value": 99}],
             "source": VariableSource.FALLBACK,
         }
-        _emit_list(ctx, result, "fake-session-id")
+        _emit_list(ctx, result, "fake-session-id", "fak")
         rendered = capsys.readouterr().out
         assert "x" in rendered
         assert "99" in rendered

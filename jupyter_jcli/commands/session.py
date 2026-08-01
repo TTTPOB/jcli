@@ -10,7 +10,11 @@ import click
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
-from jupyter_jcli.session_selector import SessionSelectorError, short_session_ids
+from jupyter_jcli.session_selector import (
+    SessionSelectorError,
+    short_session_ids,
+    with_session_selectors,
+)
 
 
 class KernelState(str, Enum):
@@ -58,11 +62,13 @@ def session():
 def create(ctx: CliContext, kernel: str, name: str | None):
     """Create a new session with the given kernel."""
     try:
+        active_sessions = ctx.server.list_sessions()
         info = ctx.server.create_session(kernel, name)
+        info = with_session_selectors([*active_sessions, info])[-1]
         emit(
             {
                 **info,
-                "_human": f"Created session {info['session_id']} (kernel: {info['kernel_id']}, spec: {info['kernel_name']})",
+                "_human": f"Created session {info['session_selector']} (kernel: {info['kernel_id']}, spec: {info['kernel_name']})",
             },
             use_json=ctx.use_json,
         )
@@ -96,7 +102,7 @@ def list_sessions(ctx: CliContext, skip_vars: bool, force_vars: bool):
     Run 'j-cli vars <SESSION_SELECTOR>' for the full variable list.
     """
     try:
-        sessions = ctx.server.list_sessions()
+        sessions = with_session_selectors(ctx.server.list_sessions())
 
         # Decide whether to fetch vars
         fetch_vars = not skip_vars
@@ -130,12 +136,11 @@ def list_sessions(ctx: CliContext, skip_vars: bool, force_vars: bool):
                     f"{'NAME':<20} {'VARS'}"
                 )
                 lines = [header]
-                short_ids = short_session_ids(sessions)
                 for s in sessions:
                     preview = s.get("vars_preview", {})
                     vars_col = _format_vars_preview(preview)
                     lines.append(
-                        f"{short_ids[s['session_id']]:<12} {s['kernel_name']:<20} "
+                        f"{s['session_selector']:<12} {s['kernel_name']:<20} "
                         f"{s['kernel_state']:<10} {s['name']:<20} {vars_col}"
                     )
                 lines.append("")
@@ -153,10 +158,9 @@ def list_sessions(ctx: CliContext, skip_vars: bool, force_vars: bool):
                     f"{'KERNEL':<20} {'STATE':<10} {'NAME':<20}"
                 )
                 lines = [header]
-                short_ids = short_session_ids(sessions)
                 for s in sessions:
                     lines.append(
-                        f"{short_ids[s['session_id']]:<12} {s['kernel_id']:<40} "
+                        f"{s['session_selector']:<12} {s['kernel_id']:<40} "
                         f"{s['kernel_name']:<20} {s['kernel_state']:<10} {s['name']:<20}"
                     )
 
@@ -250,6 +254,10 @@ def kill(ctx: CliContext, session_selectors: tuple[str, ...]):
         return
 
     try:
+        selectors = short_session_ids(ctx.server.list_sessions())
+        session_selectors = [
+            selectors.get(session_id, session_id) for session_id in session_ids
+        ]
         for session_id in session_ids:
             ctx.server.delete_session(session_id)
         noun = "session" if len(session_ids) == 1 else "sessions"
@@ -257,7 +265,8 @@ def kill(ctx: CliContext, session_selectors: tuple[str, ...]):
             {
                 "status": ResponseStatus.OK,
                 "session_ids": session_ids,
-                "_human": f"Killed {noun} {', '.join(session_ids)}",
+                "session_selectors": session_selectors,
+                "_human": f"Killed {noun} {', '.join(session_selectors)}",
             },
             use_json=ctx.use_json,
         )

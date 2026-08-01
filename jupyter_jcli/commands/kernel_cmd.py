@@ -20,6 +20,7 @@ def interrupt(ctx: CliContext, session_selector: str):
     """Interrupt a kernel selected by ID, short ID, or name."""
     try:
         session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
+        resolved_selector = ctx.server.get_session_selector(session_id)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -32,7 +33,10 @@ def interrupt(ctx: CliContext, session_selector: str):
         emit(
             {
                 "status": ResponseStatus.OK,
-                "_human": f"Interrupted kernel {kernel_id} (session {session_id})",
+                "session_id": session_id,
+                "session_selector": resolved_selector,
+                "kernel_id": kernel_id,
+                "_human": f"Interrupted kernel {kernel_id} (session {resolved_selector})",
             },
             use_json=ctx.use_json,
         )
@@ -47,6 +51,7 @@ def restart(ctx: CliContext, session_selector: str):
     """Restart a kernel selected by ID, short ID, or name."""
     try:
         session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
+        resolved_selector = ctx.server.get_session_selector(session_id)
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -59,7 +64,10 @@ def restart(ctx: CliContext, session_selector: str):
         emit(
             {
                 "status": ResponseStatus.OK,
-                "_human": f"Restarted kernel {kernel_id} (session {session_id})",
+                "session_id": session_id,
+                "session_selector": resolved_selector,
+                "kernel_id": kernel_id,
+                "_human": f"Restarted kernel {kernel_id} (session {resolved_selector})",
             },
             use_json=ctx.use_json,
         )

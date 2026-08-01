@@ -211,7 +211,7 @@ j-cli kernelspec inspect-file analysis.py
 # 3. Create a session with the detected kernel
 j-cli session create --kernel ir --name analysis
 
-# 4. Execute inline code (use the session_id from step 3)
+# 4. Execute inline code (use the session_selector from step 3)
 j-cli exec abc-123 --code "print(1 + 1)"
 
 # 5. Execute cells from a notebook
@@ -245,7 +245,7 @@ j-cli -j kernelspec list
 
 ### `session create`
 
-Create a new session. Returns the full session_id for machine-readable output. Human commands also accept a selector: full ID, displayed short ID, or exact unique session name.
+Create a new session. JSON output returns both the full `session_id` and the shortest unique `session_selector`. Commands accept the full ID, short selector, or exact unique session name.
 
 ```bash
 j-cli session create --kernel python3
@@ -263,7 +263,7 @@ j-cli session list --no-vars  # faster, skips variable fetch
 j-cli session list --vars     # force fetch even when >10 sessions
 
 j-cli -j session list
-# JSON: {"sessions": [{"session_id": "...", "kernel_id": "...", "kernel_name": "python3",
+# JSON: {"sessions": [{"session_id": "...", "session_selector": "abc", "kernel_id": "...", "kernel_name": "python3",
 #   "kernel_state": "idle", "name": "...",
 #   "vars_preview": {"names": ["x", "df"], "total": 2}}]}
 ```
@@ -293,6 +293,10 @@ Restart a kernel (clears all state).
 ```bash
 j-cli kernel restart <session_selector>
 ```
+
+JSON success responses from `kernel interrupt` and `kernel restart` include
+`session_id`, `session_selector`, and `kernel_id`. Human output identifies the
+session with the same short selector.
 
 ### `notebook summary` and `notebook show`
 
@@ -326,7 +330,7 @@ Inspect kernel variables. Use after `exec` to check what's defined and what valu
 # List all global variables (NAME / TYPE / VALUE table)
 j-cli vars <session_selector>
 # j-cli -j vars <session_selector>
-# JSON: {"session_id": "...", "source": "dap", "variables": [{"name": "x", "type": "int", "value": "42", "variables_reference": 0}]}
+# JSON: {"session_id": "...", "session_selector": "abc", "source": "dap", "variables": [{"name": "x", "type": "int", "value": "42", "variables_reference": 0}]}
 
 # Inspect a single variable
 j-cli vars <session_selector> --name x
@@ -554,7 +558,7 @@ All errors exit with code 1.
 ## Tips for Agents
 
 - Always use `-j` (JSON mode) when you need to parse output — it gives structured, machine-readable results.
-- Save the `session_id` from `session create` — you need it for every subsequent command.
+- Save the `session_selector` from `session create` for subsequent commands; keep `session_id` when you need the stable full identifier.
 - Use `--cell` to run specific cells instead of entire notebooks when debugging.
 - If execution hangs, use `kernel interrupt` followed by retry.
 - If kernel state is corrupted, use `kernel restart` (this clears all variables).

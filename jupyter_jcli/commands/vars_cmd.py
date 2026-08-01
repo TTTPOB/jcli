@@ -77,6 +77,11 @@ def vars_cmd(
     # Resolve kernel
     try:
         session_id, kernel_id = ctx.server.resolve_kernel(session_selector)
+        resolved_selector = (
+            ctx.server.get_session_selector(session_id)
+            if ctx.use_json
+            else session_selector
+        )
     except SessionSelectorError as e:
         emit_error(e.code, str(e), ctx.use_json)
         return
@@ -110,14 +115,16 @@ def vars_cmd(
 
     try:
         if name:
-            _emit_single(ctx, result, session_id)
+            _emit_single(ctx, result, session_id, resolved_selector)
         else:
-            _emit_list(ctx, result, session_id)
+            _emit_list(ctx, result, session_id, resolved_selector)
     except Exception as e:  # noqa: BLE001 - normalize rendering failures for CLI output
         emit_error("INTERNAL_ERROR", str(e), ctx.use_json)
 
 
-def _emit_list(ctx: CliContext, result: dict, session_id: str) -> None:
+def _emit_list(
+    ctx: CliContext, result: dict, session_id: str, session_selector: str
+) -> None:
     variables = result["variables"]
     source = result["source"]
 
@@ -125,6 +132,7 @@ def _emit_list(ctx: CliContext, result: dict, session_id: str) -> None:
         emit(
             {
                 "session_id": session_id,
+                "session_selector": session_selector,
                 "source": source,
                 "variables": variables,
             },
@@ -153,9 +161,18 @@ def _emit_list(ctx: CliContext, result: dict, session_id: str) -> None:
     emit({"_human": "\n".join(lines)}, use_json=False)
 
 
-def _emit_single(ctx: CliContext, result: dict, session_id: str) -> None:
+def _emit_single(
+    ctx: CliContext, result: dict, session_id: str, session_selector: str
+) -> None:
     if ctx.use_json:
-        emit(result, use_json=True)
+        emit(
+            {
+                **result,
+                "session_id": session_id,
+                "session_selector": session_selector,
+            },
+            use_json=True,
+        )
         return
 
     lines = [

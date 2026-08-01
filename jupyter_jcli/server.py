@@ -2,7 +2,7 @@
 
 from jupyter_server_client import JupyterServerClient
 
-from jupyter_jcli.session_selector import resolve_session_selector
+from jupyter_jcli.session_selector import resolve_session_selector, short_session_ids
 
 
 class ServerClient:
@@ -93,6 +93,10 @@ class ServerClient:
         session_id = self.resolve_session(selector)
         kernel_id = self.get_kernel_id_for_session(session_id)
         return session_id, kernel_id
+
+    def get_session_selector(self, session_id: str) -> str:
+        """Return the shortest unique selector for an active session ID."""
+        return short_session_ids(self.list_sessions())[session_id]
 
     def interrupt_kernel(self, kernel_id: str) -> None:
         """Interrupt a running kernel via REST API."""
