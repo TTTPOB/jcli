@@ -7,8 +7,9 @@ import click
 
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
-from jupyter_jcli.commands.setup_common import Scope
 from jupyter_jcli.output import emit, emit_error
+
+from .common import Scope
 
 _OPENCODE_MANAGED_MARKER = "// Managed by j-cli setup opencode."
 _OPENCODE_PLUGIN_NAME = "jcli.js"

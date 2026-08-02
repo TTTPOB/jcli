@@ -61,7 +61,7 @@ _LAZY_COMMANDS = {
         False,
     ),
     "setup": (
-        "jupyter_jcli.commands.setup_cmd:setup",
+        "jupyter_jcli.commands.setup:setup",
         "Install integrations for external tools.",
         False,
     ),

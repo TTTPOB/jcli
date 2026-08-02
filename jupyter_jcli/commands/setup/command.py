@@ -2,9 +2,9 @@
 
 import click
 
-from jupyter_jcli.commands.setup_git import git_setup
-from jupyter_jcli.commands.setup_hooks import claude, codex
-from jupyter_jcli.commands.setup_opencode import opencode
+from .git import git_setup
+from .hooks import claude, codex
+from .opencode import opencode
 
 
 @click.group()
