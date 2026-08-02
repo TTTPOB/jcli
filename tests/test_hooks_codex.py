@@ -8,6 +8,8 @@ from jupyter_jcli.cli import main
 from jupyter_jcli.commands.hooks_cmd import (
     _extract_bash_command_codex,
     _extract_file_paths_codex,
+)
+from jupyter_jcli.commands.hooks_payload import (
     _parse_codex_apply_patch_file_paths,
 )
 
