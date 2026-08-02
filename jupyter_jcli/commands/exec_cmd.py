@@ -1,7 +1,9 @@
 """jcli exec — execute code or cells from files."""
 
+from __future__ import annotations
+
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -11,6 +13,9 @@ from jupyter_jcli.executor import format_outputs_human, process_outputs
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.session_selector import SessionSelectorError
+
+if TYPE_CHECKING:
+    from jupyter_jcli.file_execution import FileCellEvent
 
 
 @click.command("exec")
@@ -119,117 +124,24 @@ def _exec_file(
     shared across all cells.
     """
     try:
-        import time as _time
+        from jupyter_jcli.file_execution import execute_file
 
-        from jupyter_jcli.kernel import (
-            execute_with_timeout,
-            expression_display_mode,
-            kernel_connection,
+        summary = execute_file(
+            ctx.config.server_url,
+            ctx.config.token,
+            kernel_id,
+            file_path,
+            cell_spec,
+            display_mode,
+            timeout,
+            on_cell=lambda event: _emit_file_cell_result(ctx, event),
+            writeback=write_outputs_to_notebook,
         )
-        from jupyter_jcli.parser import parse_cell_spec, parse_file
-
-        parsed = parse_file(file_path)
-
-        from jupyter_jcli._enums import CellType
-
-        # Determine which cells to execute
-        code_cells = [c for c in parsed.cells if c.cell_type == CellType.CODE]
-        if cell_spec:
-            indices = parse_cell_spec(cell_spec, len(parsed.cells))
-            selected = [
-                c
-                for c in parsed.cells
-                if c.index in indices and c.cell_type == CellType.CODE
-            ]
-        else:
-            selected = code_cells
-
-        if not selected:
-            emit_error("PARSE_ERROR", "No code cells found to execute", ctx.use_json)
-
-        notebook_created = None
-        ipynb_path = parsed.paired_ipynb
-        if ipynb_path is None and parsed.is_py_percent and file_path.endswith(".py"):
-            from jupyter_jcli.formats import ipynb
-            from jupyter_jcli.parser import ipynb_path_for_py
-
-            target = ipynb_path_for_py(Path(file_path))
-            ipynb.dump(parsed, target)
-            parsed.paired_ipynb = str(target)
-            ipynb_path = str(target)
-            notebook_created = str(target)
-
-        cells_executed = 0
-        last_notebook_updated = None
-
-        with (
-            kernel_connection(
-                ctx.config.server_url, ctx.config.token, kernel_id
-            ) as kernel,
-            expression_display_mode(kernel, display_mode, timeout=10),
-        ):
-            deadline = _time.monotonic() + timeout if timeout is not None else None
-            for cell in selected:
-                if deadline is not None:
-                    remaining = deadline - _time.monotonic()
-                    if remaining <= 0:
-                        emit_error(
-                            "TIMEOUT",
-                            f"Total timeout {timeout}s exceeded at cell {cell.index}",
-                            ctx.use_json,
-                        )
-                        break
-                else:
-                    remaining = 10
-
-                result = execute_with_timeout(kernel, cell.source, timeout=remaining)
-                execution_status = (
-                    ResponseStatus.OK
-                    if result.get("status") == "ok"
-                    else ResponseStatus.ERROR
-                )
-                raw_outputs = result.get("outputs", [])
-                outputs = process_outputs(raw_outputs)
-
-                cell_result = {
-                    "cell_index": cell.index,
-                    "source_preview": cell.source[:80].replace("\n", " "),
-                    "outputs": outputs,
-                    "raw_outputs": raw_outputs,
-                    "execution_count": result.get("execution_count"),
-                }
-
-                notebook_updated = None
-                if ipynb_path:
-                    notebook_updated = write_outputs_to_notebook(
-                        ipynb_path, [cell_result]
-                    )
-                    if notebook_updated is None:
-                        raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
-                    last_notebook_updated = notebook_updated
-
-                cells_executed += 1
-                _emit_file_cell_result(
-                    ctx,
-                    cell_result,
-                    notebook_created,
-                    notebook_updated,
-                    execution_status,
-                )
-                notebook_created = None
-
-                if execution_status != ResponseStatus.OK:
-                    emit_error(
-                        "EXECUTION_ERROR",
-                        f"Cell {cell.index} execution failed",
-                        ctx.use_json,
-                    )
-
         if ctx.use_json:
-            summary = {"cells_executed": cells_executed}
-            if last_notebook_updated:
-                summary["notebook_updated"] = last_notebook_updated
-            _emit_jsonl({"status": ResponseStatus.OK, "summary": summary})
+            summary_data = {"cells_executed": summary.cells_executed}
+            if summary.notebook_updated:
+                summary_data["notebook_updated"] = summary.notebook_updated
+            _emit_jsonl({"status": ResponseStatus.OK, "summary": summary_data})
 
     except SystemExit:
         raise
@@ -238,42 +150,50 @@ def _exec_file(
 
 
 def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
+    from jupyter_jcli.file_execution import (
+        CellExecutionFailed,
+        NoCodeCellsError,
+        TotalExecutionTimeout,
+    )
     from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
 
+    if isinstance(error, NoCodeCellsError):
+        emit_error("PARSE_ERROR", str(error), ctx.use_json)
     if isinstance(error, ExecutionTimeout):
+        emit_error("TIMEOUT", str(error), ctx.use_json)
+    if isinstance(error, TotalExecutionTimeout):
         emit_error("TIMEOUT", str(error), ctx.use_json)
     if isinstance(error, KernelInterruptFailed):
         emit_error("INTERRUPT_FAILED", str(error), ctx.use_json)
+    if isinstance(error, CellExecutionFailed):
+        emit_error("EXECUTION_ERROR", str(error), ctx.use_json)
     emit_error("EXECUTION_ERROR", str(error), ctx.use_json)
 
 
-def _emit_file_cell_result(
-    ctx: CliContext,
-    cell_result: dict,
-    notebook_created: str | None,
-    notebook_updated: str | None,
-    status: ResponseStatus,
-) -> None:
+def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
     if ctx.use_json:
         cell_payload = {
-            key: value for key, value in cell_result.items() if key != "raw_outputs"
+            "cell_index": event.cell_index,
+            "source_preview": event.source_preview,
+            "outputs": event.outputs,
+            "execution_count": event.execution_count,
         }
-        data = {"status": status, "cell": cell_payload}
-        if notebook_created:
-            data["notebook_created"] = notebook_created
-        if notebook_updated:
-            data["notebook_updated"] = notebook_updated
+        data = {"status": event.status, "cell": cell_payload}
+        if event.notebook_created:
+            data["notebook_created"] = event.notebook_created
+        if event.notebook_updated:
+            data["notebook_updated"] = event.notebook_updated
         _emit_jsonl(data)
         return
 
-    parts = [f"--- cell {cell_result['cell_index']} ---"]
-    text = format_outputs_human(cell_result["outputs"])
+    parts = [f"--- cell {event.cell_index} ---"]
+    text = format_outputs_human(event.outputs)
     if text:
         parts.append(text)
-    if notebook_created:
-        parts.append(f"Notebook created: {notebook_created}")
-    if notebook_updated:
-        parts.append(f"Notebook updated: {notebook_updated}")
+    if event.notebook_created:
+        parts.append(f"Notebook created: {event.notebook_created}")
+    if event.notebook_updated:
+        parts.append(f"Notebook updated: {event.notebook_updated}")
     emit({"_human": "\n".join(parts)}, use_json=False)
 
 

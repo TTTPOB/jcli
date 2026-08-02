@@ -302,6 +302,48 @@ class TestPyPercentWriteback:
         assert result.exit_code == 1
         assert "Notebook writeback failed" in result.output
 
+    def test_output_processing_failure_prevents_writeback(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
+        runner = CliRunner()
+        py_file = tmp_path / "invalid_output.py"
+        py_file.write_text('# %%\nprint("invalid output")\n')
+
+        nb = nbformat.v4.new_notebook()
+        nb.metadata["kernelspec"] = {"name": "python3"}
+        nb.cells = [nbformat.v4.new_code_cell('print("invalid output")')]
+        nb_path = tmp_path / "invalid_output.ipynb"
+        nbformat.write(nb, nb_path)
+
+        with (
+            patch(
+                "jupyter_jcli.file_execution.process_outputs",
+                side_effect=ValueError("invalid output"),
+            ),
+            patch(
+                "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook"
+            ) as writeback,
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "invalid output" in result.output
+        writeback.assert_not_called()
+        updated_nb = nbformat.read(nb_path, as_version=4)
+        assert updated_nb.cells[0].outputs == []
+
     def test_no_writeback_for_plain_script(
         self, live_session, mock_kernel_connection, tmp_path
     ):
