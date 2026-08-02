@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from jupyter_jcli._enums import DriftStatus
-from jupyter_jcli.commands.hooks_pair_drift import (
+
+from .pair_drift import (
     _diff_section,
     _prepare_merged_py,
 )

@@ -1,8 +1,8 @@
-"""Unit tests for jupyter_jcli.hook_decision typed decision classes."""
+"""Unit tests for jupyter_jcli.commands.hooks.decision typed decision classes."""
 
 import pytest
 
-from jupyter_jcli.hook_decision import (
+from jupyter_jcli.commands.hooks.decision import (
     HookEvent,
     PostToolUseContext,
     PreToolUseDecision,

@@ -1,6 +1,6 @@
-"""Tests for jupyter_jcli.hooks_parser — AST-based shell command parser."""
+"""Tests for jupyter_jcli.commands.hooks.parser — AST-based shell command parser."""
 
-from jupyter_jcli.hooks_parser import (
+from jupyter_jcli.commands.hooks.parser import (
     SimpleCommand,
     extract_script_target,
     iter_simple_commands,

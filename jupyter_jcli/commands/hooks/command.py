@@ -14,28 +14,29 @@ from pathlib import Path
 import click
 
 from jupyter_jcli.cli import CliContext, pass_ctx
-from jupyter_jcli.commands.hooks_pair_drift import (
-    _HOOK_CONTEXT_MAX_CHARS,
-    _run_post_drift_check,
-    _run_pre_drift_check,
-)
-from jupyter_jcli.commands.hooks_pair_drift import (
-    _merge_post_contexts as _merge_post_contexts_impl,
-)
-from jupyter_jcli.commands.hooks_payload import (
-    _extract_bash_command_claude,
-    _extract_bash_command_codex,
-    _extract_file_path_claude,
-    _extract_file_paths_codex,
-)
-from jupyter_jcli.commands.hooks_pre_commit import _run_pre_commit_pair_sync
-from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
-from jupyter_jcli.hook_decision import (
+
+from .debug import HookDebugLogger, read_hook_stdin
+from .decision import (
     HookDecision,
     PostToolUseContext,
     PreToolUseDecision,
     PreToolUseOutcome,
 )
+from .pair_drift import (
+    _HOOK_CONTEXT_MAX_CHARS,
+    _run_post_drift_check,
+    _run_pre_drift_check,
+)
+from .pair_drift import (
+    _merge_post_contexts as _merge_post_contexts_impl,
+)
+from .payload import (
+    _extract_bash_command_claude,
+    _extract_bash_command_codex,
+    _extract_file_path_claude,
+    _extract_file_paths_codex,
+)
+from .pre_commit import _run_pre_commit_pair_sync
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -79,7 +80,7 @@ def _check_exec_guard(sc) -> str | None:
     if re.fullmatch(r"python\d*(?:\.\d+)?", name) and args and args[0] == "-m":
         rest = args[1:]
         if rest and rest[0] == "jupyter":
-            from jupyter_jcli.hooks_parser import SimpleCommand
+            from .parser import SimpleCommand
 
             inner = SimpleCommand(name="jupyter", args=rest[1:], assigns={}, raw=sc.raw)
             return _check_exec_guard(inner)
@@ -130,7 +131,7 @@ def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
             log.record_exception(exc)
             sys.exit(0)
 
-        from jupyter_jcli.hooks_parser import iter_simple_commands, unwrap_runner
+        from .parser import iter_simple_commands, unwrap_runner
 
         try:
             simple_commands = iter_simple_commands(command)
@@ -207,12 +208,13 @@ def python_run_guard(ctx: CliContext, platform: str, debug: bool):
 
         cwd_path = Path(cwd) if cwd else Path.cwd()
 
-        from jupyter_jcli.hooks_parser import (
+        from jupyter_jcli.parser import find_paired_ipynb
+
+        from .parser import (
             extract_script_target,
             iter_simple_commands,
             unwrap_runner,
         )
-        from jupyter_jcli.parser import find_paired_ipynb
 
         try:
             simple_commands = iter_simple_commands(command)

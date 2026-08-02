@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 # Keep heavyweight command dependencies out of root CLI startup. Click normally
 # resolves every command while formatting help, so descriptions live here too.
 _LAZY_COMMANDS = {
-    "_hooks": ("jupyter_jcli.commands.hooks_cmd:hooks", "", True),
+    "_hooks": ("jupyter_jcli.commands.hooks:hooks", "", True),
     "convert": (
         "jupyter_jcli.commands.convert_cmd:convert",
         "Convert between .ipynb and py:percent (.py) formats.",

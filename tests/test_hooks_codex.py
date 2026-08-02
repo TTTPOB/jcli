@@ -5,11 +5,11 @@ import json
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from jupyter_jcli.commands.hooks_cmd import (
+from jupyter_jcli.commands.hooks.command import (
     _extract_bash_command_codex,
     _extract_file_paths_codex,
 )
-from jupyter_jcli.commands.hooks_payload import (
+from jupyter_jcli.commands.hooks.payload import (
     _parse_codex_apply_patch_file_paths,
 )
 
@@ -302,7 +302,7 @@ class TestCodexMultiFilePreMerge:
             return "Pre-existing drift detected for `foo.py` — resolve before editing."
 
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_pre_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_pre_drift_check",
             fake_pre_drift_check,
         )
 
@@ -398,7 +398,7 @@ class TestCodexMultiFilePreMerge:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_pre_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_pre_drift_check",
             fake_pre_drift_check,
         )
 
@@ -469,7 +469,7 @@ class TestCodexMultiFilePostMerge:
             return None
 
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             fake_post_drift_check,
         )
 
@@ -520,11 +520,11 @@ class TestCodexMultiFilePostMerge:
         (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
         (tmp_path / "b.py").write_text("b = 1\n", encoding="utf-8")
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             lambda path, logger=None: f"{path.name}:" + "x" * 80,
         )
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._HOOK_CONTEXT_MAX_CHARS", 120
+            "jupyter_jcli.commands.hooks.command._HOOK_CONTEXT_MAX_CHARS", 120
         )
         payload = json.dumps(
             {
@@ -561,7 +561,7 @@ class TestCodexMultiFilePostMerge:
             return "Auto-synced your edit in `only.py` to `only.ipynb`. Pair is now in sync."
 
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             fake_post_drift_check,
         )
 
@@ -608,7 +608,7 @@ class TestCodexMultiFilePostMerge:
             return None
 
         monkeypatch.setattr(
-            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             fake_post_drift_check,
         )
 

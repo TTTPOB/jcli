@@ -1,4 +1,4 @@
-"""Tests for jupyter_jcli.hook_debug — HookDebugLogger structure and edge cases."""
+"""Tests for jupyter_jcli.commands.hooks.debug — HookDebugLogger structure and edge cases."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jupyter_jcli.hook_debug import HookDebugLogger, read_hook_stdin
+from jupyter_jcli.commands.hooks.debug import HookDebugLogger, read_hook_stdin
 
 # ---------------------------------------------------------------------------
 # Helpers

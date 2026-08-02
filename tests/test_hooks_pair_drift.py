@@ -404,7 +404,7 @@ class TestFailOpen:
     def test_drift_exception_allows(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
-            "jupyter_jcli.commands.hooks_cmd._run_pre_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_pre_drift_check",
             side_effect=RuntimeError("boom"),
         ):
             code, out = _invoke(
@@ -667,7 +667,7 @@ class TestPairDriftGuardPost:
     def test_post_exception_allows(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
-            "jupyter_jcli.commands.hooks_cmd._run_post_drift_check",
+            "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             side_effect=RuntimeError("boom"),
         ):
             code, out = _invoke_post(
