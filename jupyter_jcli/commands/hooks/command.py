@@ -9,7 +9,9 @@ Codex hook schema sources:
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 import click
 
@@ -23,12 +25,9 @@ from .decision import (
     PreToolUseOutcome,
 )
 from .pair_drift import (
-    _HOOK_CONTEXT_MAX_CHARS,
+    _merge_post_contexts,
     _run_post_drift_check,
     _run_pre_drift_check,
-)
-from .pair_drift import (
-    _merge_post_contexts as _merge_post_contexts_impl,
 )
 from .payload import (
     _extract_bash_command_claude,
@@ -37,6 +36,8 @@ from .payload import (
     _extract_file_paths_codex,
 )
 from .pre_commit import _run_pre_commit_pair_sync
+
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -56,6 +57,37 @@ _HINT = (
 @click.group(hidden=True)
 def hooks():
     """Internal hook handlers (not intended for direct use)."""
+
+
+def _run_guard(
+    hook_name: str,
+    debug: bool,
+    log_dir: Path,
+    *,
+    extract: Callable[[dict], _T],
+    handle: Callable[[_T, HookDebugLogger], None],
+) -> None:
+    """Run one hook handler with shared stdin/logging/exit plumbing.
+
+    Reads the hook payload from stdin, extracts the interesting value, and
+    hands it to *handle*.  Malformed input or an unexpected payload shape
+    exits silently with 0 — a hook must never break the agent harness.
+    """
+    with HookDebugLogger(hook_name, enabled=debug, log_dir=log_dir) as log:
+        try:
+            payload = read_hook_stdin(log)
+        except (json.JSONDecodeError, ValueError):
+            sys.exit(0)
+
+        try:
+            value = extract(payload)
+        except (AttributeError, TypeError) as exc:
+            log.record_exception(exc)
+            sys.exit(0)
+
+        handle(value, log)
+
+    sys.exit(0)
 
 
 def _check_exec_guard(sc) -> str | None:
@@ -114,44 +146,39 @@ def _check_exec_guard(sc) -> str | None:
 @pass_ctx
 def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
-    with HookDebugLogger(
-        "notebook-exec-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
-    ) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
+    extract = (
+        _extract_bash_command_codex
+        if platform == "codex"
+        else _extract_bash_command_claude
+    )
+    _run_guard(
+        "notebook-exec-guard",
+        debug,
+        ctx.config.debug_log_dir,
+        extract=extract,
+        handle=_deny_bypass_commands,
+    )
 
-        try:
-            if platform == "codex":
-                command = _extract_bash_command_codex(payload)
-            else:
-                command = _extract_bash_command_claude(payload)
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
 
-        from .parser import iter_simple_commands, unwrap_runner
+def _deny_bypass_commands(command: str, log: HookDebugLogger) -> None:
+    """Deny notebook-execution bypass commands parsed from *command*."""
+    from .parser import iter_simple_commands, unwrap_runner
 
-        try:
-            simple_commands = iter_simple_commands(command)
-        except Exception as exc:  # noqa: BLE001
-            log.record_exception(exc)
-            sys.exit(0)
-
-        for sc in simple_commands:
-            inner = unwrap_runner(sc)
-            label = _check_exec_guard(inner)
-            if label is not None:
-                _emit_decision(
-                    PreToolUseDecision(
-                        PreToolUseOutcome.DENY, _HINT.format(label=label)
-                    ),
-                    logger=log,
-                )
-                sys.exit(0)
-
+    try:
+        simple_commands = iter_simple_commands(command)
+    except Exception as exc:  # noqa: BLE001
+        log.record_exception(exc)
         sys.exit(0)
+
+    for sc in simple_commands:
+        inner = unwrap_runner(sc)
+        label = _check_exec_guard(inner)
+        if label is not None:
+            _emit_decision(
+                PreToolUseDecision(PreToolUseOutcome.DENY, _HINT.format(label=label)),
+                logger=log,
+            )
+            sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -187,74 +214,93 @@ _PYTHON_HINT = (
 @pass_ctx
 def python_run_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
-    with HookDebugLogger(
-        "python-run-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
-    ) as log:
+    extract_command = (
+        _extract_bash_command_codex
+        if platform == "codex"
+        else _extract_bash_command_claude
+    )
+
+    def extract(payload: dict) -> tuple[str, str]:
+        return (extract_command(payload), payload.get("cwd", "") or "")
+
+    _run_guard(
+        "python-run-guard",
+        debug,
+        ctx.config.debug_log_dir,
+        extract=extract,
+        handle=_deny_python_run,
+    )
+
+
+def _deny_python_run(command_and_cwd: tuple[str, str], log: HookDebugLogger) -> None:
+    """Deny running a py:percent file that has a paired notebook."""
+    command, cwd = command_and_cwd
+    cwd_path = Path(cwd) if cwd else Path.cwd()
+
+    from jupyter_jcli.parser import find_paired_ipynb
+
+    from .parser import (
+        extract_script_target,
+        iter_simple_commands,
+        unwrap_runner,
+    )
+
+    try:
+        simple_commands = iter_simple_commands(command)
+    except Exception as exc:  # noqa: BLE001
+        log.record_exception(exc)
+        sys.exit(0)
+
+    for sc in simple_commands:
+        inner = unwrap_runner(sc)
+        file_str = extract_script_target(inner)
+        if file_str is None:
+            continue
         try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
-
-        cwd: str = ""
-        try:
-            if platform == "codex":
-                command = _extract_bash_command_codex(payload)
-            else:
-                command = _extract_bash_command_claude(payload)
-            cwd = payload.get("cwd", "") or ""
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
-
-        cwd_path = Path(cwd) if cwd else Path.cwd()
-
-        from jupyter_jcli.parser import find_paired_ipynb
-
-        from .parser import (
-            extract_script_target,
-            iter_simple_commands,
-            unwrap_runner,
-        )
-
-        try:
-            simple_commands = iter_simple_commands(command)
+            file_path = Path(file_str)
+            if not file_path.is_absolute():
+                file_path = cwd_path / file_path
+            ipynb = find_paired_ipynb(file_path)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
             sys.exit(0)
-
-        for sc in simple_commands:
-            inner = unwrap_runner(sc)
-            file_str = extract_script_target(inner)
-            if file_str is None:
-                continue
-            try:
-                file_path = Path(file_str)
-                if not file_path.is_absolute():
-                    file_path = cwd_path / file_path
-                ipynb = find_paired_ipynb(file_path)
-            except Exception as exc:  # noqa: BLE001
-                log.record_exception(exc)
-                sys.exit(0)
-            if ipynb is not None:
-                _emit_decision(
-                    PreToolUseDecision(
-                        PreToolUseOutcome.DENY,
-                        _PYTHON_HINT.format(
-                            label="python script",
-                            file=file_str,
-                            ipynb=ipynb.name,
-                        ),
+        if ipynb is not None:
+            _emit_decision(
+                PreToolUseDecision(
+                    PreToolUseOutcome.DENY,
+                    _PYTHON_HINT.format(
+                        label="python script",
+                        file=file_str,
+                        ipynb=ipynb.name,
                     ),
-                    logger=log,
-                )
-                sys.exit(0)
-
-        sys.exit(0)
+                ),
+                logger=log,
+            )
+            sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
 # pair-drift-guard-pre  (PreToolUse — detects drift that existed before agent's edit)
 # ---------------------------------------------------------------------------
+
+
+_IPYNB_EDIT_DENY_TEMPLATE = (
+    "{verb} of `{name}` is not supported — edit notebooks "
+    "via the py:percent round-trip instead:\n"
+    "  1. j-cli convert ipynb-to-py {name} {stem}.py\n"
+    "  2. Edit {stem}.py{edit_suffix}\n"
+    "  3. j-cli convert py-to-ipynb {stem}.py {name}\n"
+    "(Outputs in the `.ipynb` are preserved through the round-trip.)"
+)
+
+
+def _ipynb_edit_deny_message(path: Path, *, with_edit_tool: bool) -> str:
+    return _IPYNB_EDIT_DENY_TEMPLATE.format(
+        verb="Direct Edit/Write" if with_edit_tool else "apply_patch",
+        name=path.name,
+        stem=path.stem,
+        edit_suffix=" with Edit/Write" if with_edit_tool else "",
+    )
 
 
 @hooks.command("pair-drift-guard-pre")
@@ -270,114 +316,90 @@ def python_run_guard(ctx: CliContext, platform: str, debug: bool):
 def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
     if platform == "codex":
-        return _pair_drift_guard_pre_codex(debug, ctx.config.debug_log_dir)
+        _run_guard(
+            "pair-drift-guard-pre",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_file_paths_codex,
+            handle=_deny_drift_pre_multi,
+        )
     else:
-        return _pair_drift_guard_pre_claude(debug, ctx.config.debug_log_dir)
+        _run_guard(
+            "pair-drift-guard-pre",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_file_path_claude,
+            handle=_deny_drift_pre_single,
+        )
 
 
-def _pair_drift_guard_pre_claude(debug: bool, log_dir: Path) -> None:
-    """Claude Code: read tool_input.file_path from Edit/Write tools."""
-    with HookDebugLogger("pair-drift-guard-pre", enabled=debug, log_dir=log_dir) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
+def _deny_drift_pre_single(file_path: str, log: HookDebugLogger) -> None:
+    """Claude Code: deny pre-existing drift for one edited file."""
+    if not file_path:
+        sys.exit(0)
 
-        try:
-            file_path: str = _extract_file_path_claude(payload)
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
+    path = Path(file_path)
 
-        if not file_path:
-            sys.exit(0)
+    if path.suffix == ".ipynb":
+        _emit_decision(
+            PreToolUseDecision(
+                PreToolUseOutcome.DENY,
+                _ipynb_edit_deny_message(path, with_edit_tool=True),
+            ),
+            logger=log,
+        )
+        sys.exit(0)
 
-        path = Path(file_path)
+    if not path.exists():
+        sys.exit(0)
 
-        if path.suffix == ".ipynb":
+    try:
+        deny_reason = _run_pre_drift_check(path, log)
+        if deny_reason is not None:
             _emit_decision(
-                PreToolUseDecision(
-                    PreToolUseOutcome.DENY,
-                    f"Direct Edit/Write of `{path.name}` is not supported — edit notebooks "
-                    "via the py:percent round-trip instead:\n"
-                    f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
-                    f"  2. Edit {path.stem}.py with Edit/Write\n"
-                    f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
-                    "(Outputs in the `.ipynb` are preserved through the round-trip.)",
-                ),
+                PreToolUseDecision(PreToolUseOutcome.DENY, deny_reason),
                 logger=log,
             )
             sys.exit(0)
+    except Exception as exc:  # noqa: BLE001
+        log.record_exception(exc)
+        print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
+        sys.exit(0)
+
+
+def _deny_drift_pre_multi(file_paths: list[str], log: HookDebugLogger) -> None:
+    """Codex: deny pre-existing drift for every apply_patch file."""
+    if not file_paths:
+        sys.exit(0)
+
+    deny_reasons: list[str] = []
+
+    for file_path in file_paths:
+        path = Path(file_path)
+
+        if path.suffix == ".ipynb":
+            deny_reasons.append(_ipynb_edit_deny_message(path, with_edit_tool=False))
+            continue
 
         if not path.exists():
-            sys.exit(0)
+            continue
 
         try:
             deny_reason = _run_pre_drift_check(path, log)
             if deny_reason is not None:
-                _emit_decision(
-                    PreToolUseDecision(PreToolUseOutcome.DENY, deny_reason),
-                    logger=log,
-                )
-                sys.exit(0)
+                deny_reasons.append(deny_reason)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
             print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
-            sys.exit(0)
 
+    if deny_reasons:
+        merged = "\n\n---\n\n".join(deny_reasons)
+        _emit_decision(
+            PreToolUseDecision(PreToolUseOutcome.DENY, merged),
+            logger=log,
+        )
 
-def _pair_drift_guard_pre_codex(debug: bool, log_dir: Path) -> None:
-    """Codex: parse apply_patch command for *** Update File: / *** Add File: paths."""
-    with HookDebugLogger("pair-drift-guard-pre", enabled=debug, log_dir=log_dir) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
-
-        try:
-            file_paths = _extract_file_paths_codex(payload)
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
-
-        if not file_paths:
-            sys.exit(0)
-
-        deny_reasons: list[str] = []
-
-        for file_path in file_paths:
-            path = Path(file_path)
-
-            if path.suffix == ".ipynb":
-                deny_reasons.append(
-                    f"apply_patch of `{path.name}` is not supported — edit notebooks "
-                    "via the py:percent round-trip instead:\n"
-                    f"  1. j-cli convert ipynb-to-py {path.name} {path.stem}.py\n"
-                    f"  2. Edit {path.stem}.py\n"
-                    f"  3. j-cli convert py-to-ipynb {path.stem}.py {path.name}\n"
-                    "(Outputs in the `.ipynb` are preserved through the round-trip.)"
-                )
-                continue
-
-            if not path.exists():
-                continue
-
-            try:
-                deny_reason = _run_pre_drift_check(path, log)
-                if deny_reason is not None:
-                    deny_reasons.append(deny_reason)
-            except Exception as exc:  # noqa: BLE001
-                log.record_exception(exc)
-                print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
-
-        if deny_reasons:
-            merged = "\n\n---\n\n".join(deny_reasons)
-            _emit_decision(
-                PreToolUseDecision(PreToolUseOutcome.DENY, merged),
-                logger=log,
-            )
-
-        sys.exit(0)
+    sys.exit(0)
 
 
 def _emit_decision(decision: HookDecision, *, logger=None) -> None:
@@ -407,37 +429,34 @@ def notebook_edit_guard(ctx: CliContext, platform: str, debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
     # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
     # --platform accepted for interface uniformity; not used for dispatch.
-    with HookDebugLogger(
-        "notebook-edit-guard", enabled=debug, log_dir=ctx.config.debug_log_dir
-    ) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
+    _run_guard(
+        "notebook-edit-guard",
+        debug,
+        ctx.config.debug_log_dir,
+        extract=lambda payload: payload.get("tool_name", "") or "",
+        handle=_deny_notebook_edit,
+    )
 
-        try:
-            tool_name: str = payload.get("tool_name", "") or ""
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
 
-        if tool_name != "NotebookEdit":
-            sys.exit(0)
-
-        _emit_decision(
-            PreToolUseDecision(
-                PreToolUseOutcome.DENY,
-                "NotebookEdit is disabled in this project — edit notebooks via the "
-                "py:percent round-trip instead:\n"
-                "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
-                "  2. Edit <nb.py> with Edit/Write\n"
-                "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
-                "(The paired `.py` round-trip preserves outputs and keeps the pair "
-                "in sync via `pair-drift-guard-pre`.)",
-            ),
-            logger=log,
-        )
+def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> None:
+    """Deny the NotebookEdit tool with the py:percent round-trip hint."""
+    if tool_name != "NotebookEdit":
         sys.exit(0)
+
+    _emit_decision(
+        PreToolUseDecision(
+            PreToolUseOutcome.DENY,
+            "NotebookEdit is disabled in this project — edit notebooks via the "
+            "py:percent round-trip instead:\n"
+            "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
+            "  2. Edit <nb.py> with Edit/Write\n"
+            "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
+            "(The paired `.py` round-trip preserves outputs and keeps the pair "
+            "in sync via `pair-drift-guard-pre`.)",
+        ),
+        logger=log,
+    )
+    sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -458,97 +477,75 @@ def notebook_edit_guard(ctx: CliContext, platform: str, debug: bool) -> None:
 def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
     """PostToolUse hook: auto-sync py/ipynb pair after agent's own edit."""
     if platform == "codex":
-        return _pair_drift_guard_post_codex(debug, ctx.config.debug_log_dir)
+        _run_guard(
+            "pair-drift-guard-post",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_file_paths_codex,
+            handle=_sync_drift_post_multi,
+        )
     else:
-        return _pair_drift_guard_post_claude(debug, ctx.config.debug_log_dir)
+        _run_guard(
+            "pair-drift-guard-post",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_file_path_claude,
+            handle=_sync_drift_post_single,
+        )
 
 
-def _pair_drift_guard_post_claude(debug: bool, log_dir: Path) -> None:
-    """Claude Code: read tool_input.file_path from Edit/Write tools."""
-    with HookDebugLogger(
-        "pair-drift-guard-post", enabled=debug, log_dir=log_dir
-    ) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
+def _sync_drift_post_single(file_path: str, log: HookDebugLogger) -> None:
+    """Claude Code: auto-sync the pair after one edited file."""
+    if not file_path:
+        sys.exit(0)
 
-        try:
-            file_path: str = _extract_file_path_claude(payload)
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
+    path = Path(file_path)
 
-        if not file_path:
-            sys.exit(0)
+    if path.suffix == ".ipynb":
+        sys.exit(0)
 
+    if not path.exists():
+        sys.exit(0)
+
+    try:
+        context_str = _run_post_drift_check(path, log)
+        if context_str is not None:
+            _emit_decision(PostToolUseContext(context_str), logger=log)
+    except Exception as exc:  # noqa: BLE001
+        log.record_exception(exc)
+        print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+        sys.exit(0)
+
+
+def _sync_drift_post_multi(file_paths: list[str], log: HookDebugLogger) -> None:
+    """Codex: auto-sync the pair for every apply_patch file."""
+    if not file_paths:
+        sys.exit(0)
+
+    contexts: list[str] = []
+
+    for file_path in file_paths:
         path = Path(file_path)
 
         if path.suffix == ".ipynb":
-            sys.exit(0)
+            continue
 
         if not path.exists():
-            sys.exit(0)
+            continue
 
         try:
             context_str = _run_post_drift_check(path, log)
             if context_str is not None:
-                _emit_decision(PostToolUseContext(context_str), logger=log)
+                contexts.append(context_str)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
             print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
-            sys.exit(0)
 
+    if contexts:
+        merged = _merge_post_contexts(contexts)
+        _emit_decision(PostToolUseContext(merged), logger=log)
 
-def _pair_drift_guard_post_codex(debug: bool, log_dir: Path) -> None:
-    """Codex: parse apply_patch command for file paths, run post-edit sync."""
-    with HookDebugLogger(
-        "pair-drift-guard-post", enabled=debug, log_dir=log_dir
-    ) as log:
-        try:
-            payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
-
-        try:
-            file_paths = _extract_file_paths_codex(payload)
-        except (AttributeError, TypeError) as exc:
-            log.record_exception(exc)
-            sys.exit(0)
-
-        if not file_paths:
-            sys.exit(0)
-
-        contexts: list[str] = []
-
-        for file_path in file_paths:
-            path = Path(file_path)
-
-            if path.suffix == ".ipynb":
-                continue
-
-            if not path.exists():
-                continue
-
-            try:
-                context_str = _run_post_drift_check(path, log)
-                if context_str is not None:
-                    contexts.append(context_str)
-            except Exception as exc:  # noqa: BLE001
-                log.record_exception(exc)
-                print(
-                    f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr
-                )
-
-        if contexts:
-            merged = _merge_post_contexts(contexts)
-            _emit_decision(PostToolUseContext(merged), logger=log)
-
-        sys.exit(0)
-
-
-def _merge_post_contexts(contexts: list[str]) -> str:
-    return _merge_post_contexts_impl(contexts, max_chars=_HOOK_CONTEXT_MAX_CHARS)
+    sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
