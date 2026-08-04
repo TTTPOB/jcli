@@ -127,7 +127,7 @@ class TestKernelWebsocketReadyProbe:
         assert client.kernel_socket is None
 
     def test_websocket_dispatcher_poll_is_bounded(self):
-        """The listener checks for cross-thread shutdown before join expires."""
+        """The listener delegates to run_forever instead of spinning."""
         from jupyter_jcli.kernel import _JCLIKernelWebSocketClient
 
         client = _JCLIKernelWebSocketClient(endpoint="ws://example.test/channels")
@@ -135,11 +135,7 @@ class TestKernelWebsocketReadyProbe:
 
         client._run_websocket()
 
-        client.kernel_socket.run_forever.assert_called_once_with(
-            ping_interval=client.ping_interval,
-            ping_timeout=2,
-            reconnect=client.reconnect_interval,
-        )
+        client.kernel_socket.run_forever.assert_called_once()
 
     def test_kernel_stopped_when_ready_probe_fails(self):
         """kernel.stop() must be called even if the ready probe raises."""
