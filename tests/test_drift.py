@@ -6,41 +6,14 @@ from unittest.mock import patch
 import nbformat
 
 from jupyter_jcli.diff import check_drift
+from tests.helpers import make_ipynb_text, make_py_text
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_py_text(*sources: str, kernel: str = "python3") -> str:
-    lines = [
-        "# ---\n",
-        "# jupyter:\n",
-        "#   kernelspec:\n",
-        f"#     name: {kernel}\n",
-        "# ---\n",
-        "\n",
-    ]
-    for src in sources:
-        lines.append("# %%\n")
-        lines.append(src + "\n")
-        lines.append("\n")
-    return "".join(lines)
-
-
-def _make_ipynb_text(*sources: str, kernel: str = "python3") -> str:
-    nb = nbformat.v4.new_notebook()
-    nb.metadata["kernelspec"] = {
-        "name": kernel,
-        "display_name": kernel,
-        "language": "python",
-    }
-    for src in sources:
-        nb.cells.append(nbformat.v4.new_code_cell(src))
-    return nbformat.writes(nb)
-
-
-def _make_py_text_with_ids(cells: list[tuple[str | None, str]]) -> str:
+def make_py_text_with_ids(cells: list[tuple[str | None, str]]) -> str:
     lines = [
         "# ---\n",
         "# jupyter:\n",
@@ -59,8 +32,8 @@ def _write_pair(
 ) -> tuple[Path, Path]:
     py = tmp_path / "nb.py"
     ipynb = tmp_path / "nb.ipynb"
-    py.write_text(_make_py_text(*py_src), encoding="utf-8")
-    ipynb.write_text(_make_ipynb_text(*ipynb_src), encoding="utf-8")
+    py.write_text(make_py_text(*py_src), encoding="utf-8")
+    ipynb.write_text(make_ipynb_text(*ipynb_src), encoding="utf-8")
     return py, ipynb
 
 
@@ -84,7 +57,7 @@ class TestCheckDrift:
 
     def test_in_sync_no_drift(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 2"])
-        base_py = _make_py_text("x = 1", "y = 2")
+        base_py = make_py_text("x = 1", "y = 2")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
@@ -99,9 +72,9 @@ class TestCheckDrift:
         existing_id = notebook.cells[0].id
         py = tmp_path / "nb.py"
         ipynb = tmp_path / "nb.ipynb"
-        base = _make_py_text_with_ids([(existing_id, "x = 1")])
+        base = make_py_text_with_ids([(existing_id, "x = 1")])
         py.write_text(
-            _make_py_text_with_ids([(existing_id, "x = 1"), (None, "y = 2")]),
+            make_py_text_with_ids([(existing_id, "x = 1"), (None, "y = 2")]),
             encoding="utf-8",
         )
         nbformat.write(notebook, str(ipynb))
@@ -121,7 +94,7 @@ class TestCheckDrift:
             ["# %load_ext autoreload\n# %autoreload 2"],
             ["%load_ext autoreload\n%autoreload 2"],
         )
-        base_py = _make_py_text("# %load_ext autoreload\n# %autoreload 2")
+        base_py = make_py_text("# %load_ext autoreload\n# %autoreload 2")
 
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
@@ -130,7 +103,7 @@ class TestCheckDrift:
 
     def test_py_only_changed(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 10", "y = 2"], ["x = 1", "y = 2"])
-        base_py = _make_py_text("x = 1", "y = 2")
+        base_py = make_py_text("x = 1", "y = 2")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"
@@ -140,7 +113,7 @@ class TestCheckDrift:
 
     def test_ipynb_only_changed(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
-        base_py = _make_py_text("x = 1", "y = 2")
+        base_py = make_py_text("x = 1", "y = 2")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"
@@ -150,7 +123,7 @@ class TestCheckDrift:
 
     def test_both_changed_same_cell_conflict(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 10"], ["x = 99"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "conflict"
@@ -159,7 +132,7 @@ class TestCheckDrift:
     def test_ours_insert_cell_auto_merges(self, tmp_path):
         """ours (py) adds a cell; theirs (ipynb) unchanged from base -> MERGED."""
         py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"
@@ -169,7 +142,7 @@ class TestCheckDrift:
     def test_theirs_insert_cell_auto_merges(self, tmp_path):
         """theirs (ipynb) adds a cell; ours (py) unchanged from base -> MERGED."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1", "z = 3"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"
@@ -202,7 +175,7 @@ class TestCheckDrift:
     def test_both_changed_different_cells_merged(self, tmp_path):
         """Both sides changed different cells -> merged, both files need update."""
         py, ipynb = _write_pair(tmp_path, ["x = 10", "y = 2"], ["x = 1", "y = 20"])
-        base_py = _make_py_text("x = 1", "y = 2")
+        base_py = make_py_text("x = 1", "y = 2")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"
@@ -212,7 +185,7 @@ class TestCheckDrift:
     def test_ipynb_head_never_consulted(self, tmp_path):
         """.ipynb is gitignored by design; check_drift must never query its HEAD."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 99"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
 
         calls_by_suffix: dict[str, int] = {".py": 0, ".ipynb": 0}
 
@@ -254,7 +227,7 @@ class TestCheckDrift:
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1\n"])
         py.write_text(py.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
 
-        with self._patch_git(_make_py_text("x = 1")):
+        with self._patch_git(make_py_text("x = 1")):
             result = check_drift(py, ipynb)
 
         assert result.status == "in_sync"
@@ -272,7 +245,7 @@ class TestCheckDrift:
     def test_diff_text_nonempty_in_conflict(self, tmp_path):
         """CONFLICT result has diff_text containing conflict markers."""
         py, ipynb = _write_pair(tmp_path, ["x = 10"], ["x = 99"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "conflict"
@@ -292,7 +265,7 @@ class TestCheckDrift:
     def test_diff_text_empty_in_merged(self, tmp_path):
         """MERGED result has empty diff_text."""
         py, ipynb = _write_pair(tmp_path, ["x = 10"], ["x = 1"])
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "merged"

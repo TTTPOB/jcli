@@ -24,8 +24,10 @@ from jupyter_jcli.parser import parse_file
 # ---------------------------------------------------------------------------
 
 
-def _invoke(payload: dict) -> tuple[int, dict | None]:
-    """Invoke pair-drift-guard-pre with the given payload. Returns (exit_code, json_out).
+def _invoke(
+    payload: dict, hook: str = "pair-drift-guard-pre"
+) -> tuple[int, dict | None]:
+    """Invoke a hook command with the given payload. Returns (exit_code, json_out).
 
     Parses the first valid JSON object from output; non-JSON lines (stderr notices
     mixed in by CliRunner) are skipped.
@@ -33,7 +35,7 @@ def _invoke(payload: dict) -> tuple[int, dict | None]:
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["_hooks", "pair-drift-guard-pre"],
+        ["_hooks", hook],
         input=json.dumps(payload),
         catch_exceptions=False,
     )
@@ -271,10 +273,10 @@ class TestAutoMergeOtherSide:
         """
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
 
-        from tests.test_drift import _make_ipynb_text, _make_py_text
+        from tests.helpers import make_ipynb_text, make_py_text
 
-        base_py = _make_py_text("x = 1")
-        base_ipynb = _make_ipynb_text("x = 1")
+        base_py = make_py_text("x = 1")
+        base_ipynb = make_ipynb_text("x = 1")
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
@@ -300,10 +302,10 @@ class TestAutoMergeOtherSide:
         """
         py, _ipynb = _make_pair(tmp_path, ["x = 99"], ["x = 1"])
 
-        from tests.test_drift import _make_ipynb_text, _make_py_text
+        from tests.helpers import make_ipynb_text, make_py_text
 
-        base_py = _make_py_text("x = 1")
-        base_ipynb = _make_ipynb_text("x = 1")
+        base_py = make_py_text("x = 1")
+        base_ipynb = make_ipynb_text("x = 1")
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
@@ -331,10 +333,10 @@ class TestConflict:
     def test_conflict_returns_deny(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
-        from tests.test_drift import _make_ipynb_text, _make_py_text
+        from tests.helpers import make_ipynb_text, make_py_text
 
-        base_py = _make_py_text("x = 1")
-        base_ipynb = _make_ipynb_text("x = 1")
+        base_py = make_py_text("x = 1")
+        base_ipynb = make_ipynb_text("x = 1")
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else base_ipynb
@@ -427,31 +429,13 @@ class TestFailOpen:
 # ---------------------------------------------------------------------------
 
 
-def _invoke_nb_edit_guard(payload: dict) -> tuple[int, dict | None]:
-    runner = CliRunner()
-    result = runner.invoke(
-        main,
-        ["_hooks", "notebook-edit-guard"],
-        input=json.dumps(payload),
-        catch_exceptions=False,
-    )
-    for line in result.output.splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return result.exit_code, json.loads(line)
-            except json.JSONDecodeError:
-                continue
-    return result.exit_code, None
-
-
 class TestNotebookEditGuard:
     def test_notebook_edit_is_denied(self, tmp_path):
         payload = {
             "tool_name": "NotebookEdit",
             "tool_input": {"notebook_path": str(tmp_path / "nb.ipynb")},
         }
-        code, out = _invoke_nb_edit_guard(payload)
+        code, out = _invoke(payload, "notebook-edit-guard")
         assert code == 0
         assert _decision(out) == "deny"
         reason = _reason(out)
@@ -460,7 +444,7 @@ class TestNotebookEditGuard:
 
     def test_notebook_edit_denied_regardless_of_file(self):
         payload = {"tool_name": "NotebookEdit", "tool_input": {}}
-        code, out = _invoke_nb_edit_guard(payload)
+        code, out = _invoke(payload, "notebook-edit-guard")
         assert code == 0
         assert _decision(out) == "deny"
 
@@ -470,7 +454,7 @@ class TestNotebookEditGuard:
             "tool_name": "Edit",
             "tool_input": {"file_path": str(tmp_path / "nb.py")},
         }
-        code, out = _invoke_nb_edit_guard(payload)
+        code, out = _invoke(payload, "notebook-edit-guard")
         assert code == 0
         assert _decision(out) is None  # allow
 
@@ -489,7 +473,7 @@ class TestNotebookEditGuard:
 
     def test_message_contains_three_step_workflow(self):
         payload = {"tool_name": "NotebookEdit", "tool_input": {}}
-        _code, out = _invoke_nb_edit_guard(payload)
+        _code, out = _invoke(payload, "notebook-edit-guard")
         reason = _reason(out)
         assert "ipynb-to-py" in reason
         assert "py-to-ipynb" in reason
@@ -498,24 +482,6 @@ class TestNotebookEditGuard:
 # ---------------------------------------------------------------------------
 # pair-drift-guard-post — PostToolUse auto-sync
 # ---------------------------------------------------------------------------
-
-
-def _invoke_post(payload: dict) -> tuple[int, dict | None]:
-    runner = CliRunner()
-    result = runner.invoke(
-        main,
-        ["_hooks", "pair-drift-guard-post"],
-        input=json.dumps(payload),
-        catch_exceptions=False,
-    )
-    for line in result.output.splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return result.exit_code, json.loads(line)
-            except json.JSONDecodeError:
-                continue
-    return result.exit_code, None
 
 
 def _event_name(out: dict | None) -> str | None:
@@ -531,16 +497,17 @@ class TestPairDriftGuardPost:
         """Agent edits py, pair stays in sync -> no output."""
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
 
-        from tests.test_drift import _make_py_text
+        from tests.helpers import make_py_text
 
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
 
         with patch(
             "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -548,17 +515,18 @@ class TestPairDriftGuardPost:
 
     def test_auto_syncs_ipynb_after_py_edit(self, tmp_path):
         """Agent edits py (x=1->x=10), ipynb still has x=1 -> auto-sync ipynb."""
-        from tests.test_drift import _make_py_text
+        from tests.helpers import make_py_text
 
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
 
         with patch(
             "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -579,9 +547,9 @@ class TestPairDriftGuardPost:
 
     def test_conflict_after_edit_warns(self, tmp_path):
         """Agent's edit creates a conflict -> warn with cell indices."""
-        from tests.test_drift import _make_py_text
+        from tests.helpers import make_py_text
 
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         # py has x=10, ipynb has x=99 -> both changed same cell -> conflict
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
@@ -589,8 +557,9 @@ class TestPairDriftGuardPost:
             return base_py if path.suffix == ".py" else None
 
         with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -605,8 +574,9 @@ class TestPairDriftGuardPost:
         py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
         with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -620,8 +590,9 @@ class TestPairDriftGuardPost:
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -634,8 +605,9 @@ class TestPairDriftGuardPost:
         """Files without a paired counterpart are silently ignored."""
         solo = tmp_path / "script.py"
         solo.write_text("x = 1\n", encoding="utf-8")
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(solo)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(solo)}},
+            "pair-drift-guard-post",
         )
         assert code == 0
         assert _decision(out) is None
@@ -659,8 +631,9 @@ class TestPairDriftGuardPost:
             "jupyter_jcli.commands.hooks.command._run_post_drift_check",
             side_effect=RuntimeError("boom"),
         ):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
         assert code == 0
         assert _decision(out) is None
@@ -668,8 +641,9 @@ class TestPairDriftGuardPost:
     def test_ipynb_edit_in_post_is_silent(self, tmp_path):
         """If .ipynb somehow reached Post (Pre should have blocked it), exit silently."""
         _py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}},
+            "pair-drift-guard-post",
         )
         assert code == 0
         assert _decision(out) is None  # no output — Pre was the line of defense
@@ -695,8 +669,9 @@ class TestConsecutiveEdits:
             "# %%\nnew = 0\n\n# %%\nx = 10\n\n# %%\ny = 2\n",
             encoding="utf-8",
         )
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code == 0
@@ -724,8 +699,9 @@ class TestConsecutiveEdits:
             py.read_text(encoding="utf-8").replace("value_39 = 39", "value_39 = 999"),
             encoding="utf-8",
         )
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code == 0
@@ -749,8 +725,9 @@ class TestConsecutiveEdits:
         notebook.cells[1].source = "y = 2"
         nbformat.write(notebook, ipynb)
 
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code == 0
@@ -774,8 +751,9 @@ class TestConsecutiveEdits:
         )
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        code1, out1 = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code1, out1 = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code1 == 0
@@ -795,8 +773,9 @@ class TestConsecutiveEdits:
         )
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@160 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@160 +0000")
-        code2, out2 = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code2, out2 = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code2 == 0
@@ -828,8 +807,9 @@ class TestPreToPostChain:
         )
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        code0, out0 = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code0, out0 = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
         assert code0 == 0
         assert "Auto-synced" in _additional_context(out0)
@@ -855,8 +835,9 @@ class TestPreToPostChain:
         )
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@180 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@180 +0000")
-        post_code, post_out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        post_code, post_out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert post_code == 0
@@ -897,8 +878,9 @@ class TestConvertSeededBaseline:
         py.write_text(
             py.read_text(encoding="utf-8").replace("x = 10", "x = 20"), encoding="utf-8"
         )
-        code, out = _invoke_post(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
         )
 
         assert code == 0
@@ -1001,17 +983,18 @@ class TestPostToolUseSchema:
     """PostToolUse hook must emit additionalContext, never permissionDecision."""
 
     def test_conflict_post_schema(self, tmp_path):
-        from tests.test_drift import _make_py_text
+        from tests.helpers import make_py_text
 
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
 
         def _git_side(path: Path) -> str | None:
             return base_py if path.suffix == ".py" else None
 
         with patch("jupyter_jcli.diff.drift._get_git_base_text", side_effect=_git_side):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -1027,8 +1010,9 @@ class TestPostToolUseSchema:
         py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
 
         with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0
@@ -1041,17 +1025,18 @@ class TestPostToolUseSchema:
         assert "decision" not in out
 
     def test_auto_synced_post_schema(self, tmp_path):
-        from tests.test_drift import _make_py_text
+        from tests.helpers import make_py_text
 
-        base_py = _make_py_text("x = 1")
+        base_py = make_py_text("x = 1")
         py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
 
         with patch(
             "jupyter_jcli.diff.drift._get_git_base_text",
             side_effect=lambda p: base_py if p.suffix == ".py" else None,
         ):
-            code, out = _invoke_post(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            code, out = _invoke(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+                "pair-drift-guard-post",
             )
 
         assert code == 0

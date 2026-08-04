@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from jupyter_jcli import pair_baseline
-from tests.test_drift import _make_py_text
+from tests.helpers import make_py_text
 
 
 @pytest.fixture
@@ -65,8 +65,8 @@ class TestReadWriteBaseline:
         assert pair_baseline.read_baseline(py_path) is None
 
     def test_head_without_ref_returns_head_text(self, git_repo: Path) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 1")
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 1")
 
     def test_ref_without_head_file_returns_ref_text(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -75,33 +75,33 @@ class TestReadWriteBaseline:
         py_path = git_repo / "ghost.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 2")) is True
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 2")
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 2")) is True
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 2")
 
     def test_newer_ref_wins_and_subject_is_recorded(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
 
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 10")
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 10")
         ref_name = _ref_name("nb.py")
         show = _git(git_repo, "show", f"{ref_name}:file")
         subject = _git(git_repo, "log", "-1", "--format=%s", ref_name)
-        assert show.stdout == _make_py_text("x = 10")
+        assert show.stdout == make_py_text("x = 10")
         assert subject.stdout.strip() == "jcli pair-sync baseline: nb.py"
 
     def test_paths_with_spaces_and_unicode_round_trip(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         rel_path = "子 目录/测试 notebook.py"
-        py_path = _write_and_commit(git_repo, rel_path, _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, rel_path, make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 3")) is True
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 3")
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 3")) is True
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 3")
 
     def test_write_baseline_works_without_git_identity(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -113,27 +113,27 @@ class TestReadWriteBaseline:
         py_path = tmp_path / "nb.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 4")) is True
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 4")
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 4")) is True
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 4")
 
     def test_non_git_directory_fails_open(self, tmp_path: Path) -> None:
         py_path = tmp_path / "nb.py"
         assert pair_baseline.read_baseline(py_path) is None
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 1")) is False
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 1")) is False
 
 
 class TestLazyEviction:
     def test_newer_head_evicts_ref_and_returns_head(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
 
-        _write_and_commit(git_repo, "nb.py", _make_py_text("x = 20"), 200)
+        _write_and_commit(git_repo, "nb.py", make_py_text("x = 20"), 200)
 
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 20")
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 20")
         refs = _git(
             git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
         )
@@ -142,29 +142,29 @@ class TestLazyEviction:
     def test_delete_failure_does_not_block_head_fallback(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
 
-        _write_and_commit(git_repo, "nb.py", _make_py_text("x = 20"), 200)
+        _write_and_commit(git_repo, "nb.py", make_py_text("x = 20"), 200)
 
         def _boom(_repo_root: Path, _ref_name: str) -> bool:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(pair_baseline, "_delete_ref", _boom)
-        assert pair_baseline.read_baseline(py_path) == _make_py_text("x = 20")
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 20")
 
 
 class TestGc:
     def test_gc_dry_run_reports_without_deleting(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
-        _write_and_commit(git_repo, "nb.py", _make_py_text("x = 20"), 200)
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
+        _write_and_commit(git_repo, "nb.py", make_py_text("x = 20"), 200)
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=True)
         refs = _git(
@@ -181,7 +181,7 @@ class TestGc:
         ghost_path = git_repo / "ghost.py"
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(ghost_path, _make_py_text("x = 3")) is True
+        assert pair_baseline.write_baseline(ghost_path, make_py_text("x = 3")) is True
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=False)
         refs = _git(
@@ -194,10 +194,10 @@ class TestGc:
     def test_gc_keeps_ref_newer_than_head(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        py_path = _write_and_commit(git_repo, "nb.py", _make_py_text("x = 1"), 100)
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
-        assert pair_baseline.write_baseline(py_path, _make_py_text("x = 10")) is True
+        assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
 
         removed, kept = pair_baseline.gc_stale_refs(git_repo, dry_run=False)
         refs = _git(
