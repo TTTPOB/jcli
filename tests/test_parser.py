@@ -3,7 +3,7 @@
 import pytest
 
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
-from jupyter_jcli.parser import parse_cell_spec
+from jupyter_jcli.parser import find_pair, find_paired_ipynb, parse_cell_spec
 
 
 @pytest.mark.parametrize(
@@ -47,3 +47,13 @@ def test_plain_python_has_no_source_line_range():
 
     assert cell.source_start_line is None
     assert cell.source_end_line is None
+
+
+def test_pair_discovery_ignores_non_python_file(tmp_path):
+    markdown = tmp_path / "notebook.md"
+    notebook = tmp_path / "notebook.ipynb"
+    markdown.write_text("# Notes\n", encoding="utf-8")
+    notebook.write_text("{}", encoding="utf-8")
+
+    assert find_paired_ipynb(markdown) is None
+    assert find_pair(markdown) is None

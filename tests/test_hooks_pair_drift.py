@@ -202,6 +202,22 @@ class TestNonPairedFiles:
         assert code == 0
         assert _decision(out) is None  # allow (empty stdout)
 
+    def test_markdown_with_same_stem_notebook_allows(self, tmp_path):
+        markdown = tmp_path / "nb.md"
+        ipynb = tmp_path / "nb.ipynb"
+        markdown.write_text("# Notes\n", encoding="utf-8")
+        notebook = nbformat.v4.new_notebook(
+            cells=[nbformat.v4.new_code_cell("value = 1")]
+        )
+        nbformat.write(notebook, ipynb)
+
+        code, out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(markdown)}}
+        )
+
+        assert code == 0
+        assert _decision(out) is None
+
     def test_nonexistent_file_allows(self, tmp_path):
         code, out = _invoke(
             {

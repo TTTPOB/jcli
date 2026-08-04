@@ -33,6 +33,8 @@ def ipynb_path_for_py(py_path: Path) -> Path:
 
 def find_paired_ipynb(py_path: Path) -> Path | None:
     """Find the paired .ipynb for a .py file."""
+    if py_path.suffix != ".py":
+        return None
     ipynb_path = ipynb_path_for_py(py_path)
     return ipynb_path if ipynb_path.exists() else None
 
