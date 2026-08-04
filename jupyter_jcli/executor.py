@@ -8,10 +8,12 @@ from pathlib import Path
 
 from jupyter_jcli._enums import OutputType
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences from text."""
-    return re.compile(r"\x1b\[[0-9;]*m").sub("", text)
+    return _ANSI_ESCAPE_RE.sub("", text)
 
 
 def save_base64_image(data: str, suffix: str = ".png") -> str:
