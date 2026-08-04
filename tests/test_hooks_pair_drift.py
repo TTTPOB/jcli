@@ -15,6 +15,7 @@ from click.testing import CliRunner
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.hooks.pair_drift import _merge_post_contexts
 from jupyter_jcli.diff import check_drift
 from jupyter_jcli.parser import parse_file
 
@@ -62,6 +63,19 @@ def _additional_context(out: dict | None) -> str:
     if out is None:
         return ""
     return out.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
+@pytest.mark.parametrize(
+    ("max_chars", "omitted"),
+    [(120, 2), (160, 1)],
+)
+def test_merge_post_contexts_respects_total_character_limit(max_chars, omitted):
+    contexts = ["a.py:" + "x" * 80, "b.py:" + "x" * 80]
+
+    result = _merge_post_contexts(contexts, max_chars=max_chars)
+
+    assert len(result) <= max_chars
+    assert f"({omitted} additional file contexts omitted)" in result
 
 
 def _make_pair(
