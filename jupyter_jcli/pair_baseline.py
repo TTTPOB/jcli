@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from jupyter_jcli.gitutil import git_root
+
 _REF_PREFIX = "refs/jcli/pair-sync/"
 _SUBJECT_PREFIX = "jcli pair-sync baseline: "
 
@@ -24,19 +26,7 @@ class RefInfo:
 
 def _git_root(path: Path) -> Path | None:
     cwd = path if path.is_dir() else path.parent
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=str(cwd),
-        )
-    except (OSError, FileNotFoundError):
-        return None
-    if top.returncode != 0:
-        return None
-    return Path(top.stdout.strip())
+    return git_root(cwd)
 
 
 def _rel_posix_path(py_path: Path, repo_root: Path) -> str | None:

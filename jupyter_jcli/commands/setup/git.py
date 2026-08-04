@@ -10,6 +10,7 @@ import click
 
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
+from jupyter_jcli.gitutil import git_root
 from jupyter_jcli.output import emit, emit_error
 
 from .common import Scope
@@ -107,23 +108,13 @@ def git_setup(
         raise SystemExit(1)  # unreachable — satisfies type checker
 
     # Locate repo root
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=False,
+    repo_root = git_root()
+    if repo_root is None:
+        emit_error(
+            "NOT_A_GIT_REPO",
+            "Current directory is not inside a git repository.",
+            ctx.use_json,
         )
-        if top.returncode != 0:
-            emit_error(
-                "NOT_A_GIT_REPO",
-                "Current directory is not inside a git repository.",
-                ctx.use_json,
-            )
-            raise SystemExit(1)
-        repo_root = Path(top.stdout.strip())
-    except (OSError, FileNotFoundError):
-        emit_error("NOT_A_GIT_REPO", "git not found in PATH.", ctx.use_json)
         raise SystemExit(1)
 
     scope_e = Scope(scope)

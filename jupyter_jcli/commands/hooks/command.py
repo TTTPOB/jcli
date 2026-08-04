@@ -592,8 +592,9 @@ def pre_commit_pair_sync(
 def gc_pair_sync_refs(dry_run: bool) -> None:
     """Delete stale sticky pair-sync refs under refs/jcli/pair-sync."""
     from jupyter_jcli import pair_baseline
+    from jupyter_jcli.gitutil import git_root
 
-    repo_root = pair_baseline._git_root(Path.cwd())
+    repo_root = git_root(Path.cwd())
     if repo_root is None:
         print("gc-pair-sync-refs: not in a git repo, skipping", file=sys.stderr)
         sys.exit(0)

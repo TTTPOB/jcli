@@ -3,9 +3,9 @@
 import fnmatch
 import subprocess
 import sys
-from pathlib import Path
 
 from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli.gitutil import git_root
 
 from .pair_drift import (
     _diff_section,
@@ -17,19 +17,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
     # ------------------------------------------------------------------
     # Step 1: locate repo root (fail-open if git missing / not a repo)
     # ------------------------------------------------------------------
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if top.returncode != 0:
-            print("pre-commit-pair-sync: not in a git repo, skipping", file=sys.stderr)
-            sys.exit(0)
-        repo_root = Path(top.stdout.strip())
-    except (OSError, FileNotFoundError):
-        print("pre-commit-pair-sync: git not found in PATH, skipping", file=sys.stderr)
+    repo_root = git_root()
+    if repo_root is None:
+        print("pre-commit-pair-sync: not in a git repo, skipping", file=sys.stderr)
         sys.exit(0)
 
     # ------------------------------------------------------------------
