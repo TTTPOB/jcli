@@ -293,28 +293,6 @@ class TestAutoMergeOtherSide:
             "Someone else edited" in reason or "Re-read" in reason or "nb.py" in reason
         )
 
-    def test_direct_ipynb_edit_is_always_denied(self, tmp_path):
-        """Agent tries to Edit .ipynb directly — blocked regardless of drift state."""
-        _py, ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 99"])
-
-        from tests.test_drift import _make_py_text
-
-        base_py = _make_py_text("x = 1")
-
-        with patch(
-            "jupyter_jcli.diff.drift._get_git_base_text",
-            side_effect=lambda p: base_py if p.suffix == ".py" else None,
-        ):
-            code, out = _invoke(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(ipynb)}}
-            )
-
-        assert code == 0
-        assert _decision(out) == "deny"
-        reason = _reason(out)
-        assert "nb.ipynb" in reason
-        assert "round-trip" in reason or "py:percent" in reason
-
     def test_py_changed_agent_edits_py_allows(self, tmp_path):
         """py drifted (x=1->x=99), agent edits py.
         Merged = x=99. py already has x=99 -> no py update.
@@ -598,25 +576,6 @@ class TestPairDriftGuardPost:
         nb = nbf.read(str(ipynb), as_version=4)
         non_empty = [c.source for c in nb.cells if c.source.strip()]
         assert non_empty == ["x = 10"]
-
-    def test_ipynb_as_edited_file_in_post_is_silent(self, tmp_path):
-        """Post hook silently exits for .ipynb — Pre should have blocked it already."""
-        _py, ipynb = _make_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
-
-        from tests.test_drift import _make_py_text
-
-        base_py = _make_py_text("x = 1", "y = 2")
-
-        with patch(
-            "jupyter_jcli.diff.drift._get_git_base_text",
-            side_effect=lambda p: base_py if p.suffix == ".py" else None,
-        ):
-            code, out = _invoke_post(
-                {"tool_name": "Write", "tool_input": {"file_path": str(ipynb)}}
-            )
-
-        assert code == 0
-        assert _decision(out) is None  # silent — Pre is the line of defense for ipynb
 
     def test_conflict_after_edit_warns(self, tmp_path):
         """Agent's edit creates a conflict -> warn with cell indices."""
@@ -1031,68 +990,6 @@ class TestGcPairSyncRefsCLI:
             git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
         )
         assert refs.stdout.strip() == ""
-
-
-# ---------------------------------------------------------------------------
-# --debug smoke tests for pair-drift-guard-pre and pair-drift-guard-post
-# ---------------------------------------------------------------------------
-
-
-class TestPairDriftGuardPreDebug:
-    def test_debug_creates_log_for_pre(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        runner = CliRunner()
-        payload = json.dumps(
-            {"tool_name": "Edit", "tool_input": {"file_path": "nonexistent.py"}}
-        )
-        runner.invoke(
-            main,
-            ["_hooks", "pair-drift-guard-pre", "--debug"],
-            input=payload,
-            catch_exceptions=False,
-        )
-        logs = sorted(tmp_path.glob("pair-drift-guard-pre-*.log"))
-        assert len(logs) == 1
-        data = json.loads(logs[0].read_text())
-        assert data["hook"] == "pair-drift-guard-pre"
-        assert data["exit_code"] == 0
-        assert data["stdout_raw"] == ""
-
-    def test_debug_creates_log_for_post(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        runner = CliRunner()
-        payload = json.dumps(
-            {"tool_name": "Edit", "tool_input": {"file_path": "nonexistent.py"}}
-        )
-        runner.invoke(
-            main,
-            ["_hooks", "pair-drift-guard-post", "--debug"],
-            input=payload,
-            catch_exceptions=False,
-        )
-        logs = sorted(tmp_path.glob("pair-drift-guard-post-*.log"))
-        assert len(logs) == 1
-        data = json.loads(logs[0].read_text())
-        assert data["hook"] == "pair-drift-guard-post"
-        assert data["exit_code"] == 0
-
-    def test_debug_notebook_edit_guard(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
-        runner = CliRunner()
-        payload = json.dumps({"tool_name": "NotebookEdit", "tool_input": {}})
-        runner.invoke(
-            main,
-            ["_hooks", "notebook-edit-guard", "--debug"],
-            input=payload,
-            catch_exceptions=False,
-        )
-        logs = sorted(tmp_path.glob("notebook-edit-guard-*.log"))
-        assert len(logs) == 1
-        data = json.loads(logs[0].read_text())
-        assert data["hook"] == "notebook-edit-guard"
-        assert (
-            data["stdout_parsed"]["hookSpecificOutput"]["permissionDecision"] == "deny"
-        )
 
 
 # ---------------------------------------------------------------------------

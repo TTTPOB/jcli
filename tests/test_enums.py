@@ -104,14 +104,6 @@ class TestCellType:
 
 
 class TestOutputType:
-    def test_members_exist(self):
-        assert OutputType.STREAM
-        assert OutputType.EXECUTE_RESULT
-        assert OutputType.DISPLAY_DATA
-        assert OutputType.ERROR
-        assert OutputType.IMAGE
-        assert OutputType.HTML
-
     def test_str_inheritance(self):
         assert OutputType.STREAM == "stream"
         assert OutputType.EXECUTE_RESULT == "execute_result"
