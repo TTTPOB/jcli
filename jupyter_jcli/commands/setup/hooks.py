@@ -84,12 +84,34 @@ _MANAGED_BLOCKS: list[dict] = [
     },
 ]
 
-# All managed values across all blocks (current + legacy) — used for upgrade detection
-_ALL_MANAGED_VALS: frozenset[str] = frozenset(
-    val
+# DSH consumes Claude-shaped JSON, but its tool names are lower-case and its
+# bridge needs an explicit platform selector for the payload differences.
+_DSH_MATCHERS = {
+    "Bash": "^bash$",
+    "Edit|Write": "^(edit|write)$",
+}
+_DSH_MANAGED_BLOCKS: list[dict] = [
+    {
+        **block,
+        "matcher": _DSH_MATCHERS[block["matcher"]],
+        "platforms": ["dsh"],
+    }
     for block in _MANAGED_BLOCKS
-    for val in ({block["entry"][_MANAGED_KEY]} | block["legacy"])
-)
+    if block["matcher"] in _DSH_MATCHERS
+]
+
+
+def _managed_values(blocks: list[dict]) -> frozenset[str]:
+    return frozenset(
+        val
+        for block in blocks
+        for val in ({block["entry"][_MANAGED_KEY]} | block["legacy"])
+    )
+
+
+# All managed values across all blocks (current + legacy) — used for upgrade detection
+_ALL_MANAGED_VALS = _managed_values(_MANAGED_BLOCKS)
+_DSH_MANAGED_VALS = _managed_values(_DSH_MANAGED_BLOCKS)
 
 
 @click.command("claude")
@@ -330,6 +352,7 @@ def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:
     Substitutes {platform_flag} in the command string:
       "claude" -> "" (backward compat, no flag)
       "codex"  -> " --platform codex"
+      "dsh"    -> " --platform dsh"
     """
     target_event: str = block_desc.get("event", "PreToolUse")
     target_matcher: str = block_desc["matcher"]
@@ -337,8 +360,11 @@ def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:
     current_val: str = current_entry[_MANAGED_KEY]
     all_vals: frozenset[str] = frozenset({current_val}) | block_desc["legacy"]
 
-    # Substitute platform flag (shallow-copy to avoid mutating _MANAGED_BLOCKS)
-    platform_flag = " --platform codex" if platform == "codex" else ""
+    # Substitute platform flag (shallow-copy to avoid mutating descriptors).
+    platform_flag = {
+        "codex": " --platform codex",
+        "dsh": " --platform dsh",
+    }.get(platform, "")
     current_entry = {
         **current_entry,
         "command": current_entry["command"].replace("{platform_flag}", platform_flag),
@@ -374,13 +400,16 @@ def _write_settings(path: Path, settings: dict) -> None:
     )
 
 
-def _remove_managed_hooks(settings: dict) -> int:
-    """Remove all jcli-managed entries from settings["hooks"] (all event types).
+def _remove_managed_hooks(
+    settings: dict, managed_values: frozenset[str] | None = None
+) -> int:
+    """Remove managed entries from settings["hooks"] (all event types).
 
-    Returns the number of entries removed.  Empty event-type blocks are
-    dropped; the caller is responsible for pruning empty "hooks" / top-level
-    dicts afterwards.
+    ``managed_values`` narrows removal for integrations that own a separate
+    settings file, such as the DSH bridge. Empty event-type blocks are dropped;
+    the caller is responsible for pruning empty ``hooks`` / top-level dicts.
     """
+    values = _ALL_MANAGED_VALS if managed_values is None else managed_values
     hooks_map = settings.get("hooks")
     if not hooks_map:
         return 0
@@ -400,10 +429,7 @@ def _remove_managed_hooks(settings: dict) -> int:
             new_inner = [
                 entry
                 for entry in inner
-                if not (
-                    isinstance(entry, dict)
-                    and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS
-                )
+                if not (isinstance(entry, dict) and entry.get(_MANAGED_KEY) in values)
             ]
             removed += len(inner) - len(new_inner)
             if new_inner:
@@ -412,3 +438,17 @@ def _remove_managed_hooks(settings: dict) -> int:
         hooks_map[event_key] = new_event_list
 
     return removed
+
+
+def _install_dsh_hooks(settings: dict) -> None:
+    """Install the four DSH bridge hook blocks into a JSON settings map."""
+    # Remove stale matcher/command variants before adding the current lower-case
+    # DSH rows, so upgrades cannot leave duplicate guards behind.
+    _remove_dsh_hooks(settings)
+    for block_desc in _DSH_MANAGED_BLOCKS:
+        _merge_hook(settings, block_desc, "dsh")
+
+
+def _remove_dsh_hooks(settings: dict) -> int:
+    """Remove only DSH-managed hook blocks from a JSON settings map."""
+    return _remove_managed_hooks(settings, _DSH_MANAGED_VALS)

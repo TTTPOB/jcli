@@ -19,6 +19,7 @@ dependencies = [
     "jupyter-kernel-client>=0.7.3,<1",
     "jupyter-server-client",
     "nbformat>=5",
+    "pyyaml>=6",
     "tree-sitter>=0.22",
     "tree-sitter-bash>=0.22",
     "typing-extensions>=4.4",

@@ -32,6 +32,9 @@ from .pair_drift import (
 from .payload import (
     _extract_bash_command_claude,
     _extract_bash_command_codex,
+    _extract_bash_command_dsh,
+    _extract_dsh_bash_command_and_cwd,
+    _extract_dsh_file_path,
     _extract_file_path_claude,
     _extract_file_paths_codex,
 )
@@ -135,7 +138,9 @@ def _check_exec_guard(sc) -> str | None:
 
 
 @hooks.command("notebook-exec-guard")
-@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
+)
 @click.option(
     "--debug",
     "debug",
@@ -146,11 +151,10 @@ def _check_exec_guard(sc) -> str | None:
 @pass_ctx
 def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
-    extract = (
-        _extract_bash_command_codex
-        if platform == "codex"
-        else _extract_bash_command_claude
-    )
+    extract = {
+        "codex": _extract_bash_command_codex,
+        "dsh": _extract_bash_command_dsh,
+    }.get(platform, _extract_bash_command_claude)
     _run_guard(
         "notebook-exec-guard",
         debug,
@@ -203,7 +207,9 @@ _PYTHON_HINT = (
 
 
 @hooks.command("python-run-guard")
-@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
+)
 @click.option(
     "--debug",
     "debug",
@@ -214,14 +220,17 @@ _PYTHON_HINT = (
 @pass_ctx
 def python_run_guard(ctx: CliContext, platform: str, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
-    extract_command = (
-        _extract_bash_command_codex
-        if platform == "codex"
-        else _extract_bash_command_claude
-    )
+    if platform == "dsh":
+        extract = _extract_dsh_bash_command_and_cwd
+    else:
+        extract_command = (
+            _extract_bash_command_codex
+            if platform == "codex"
+            else _extract_bash_command_claude
+        )
 
-    def extract(payload: dict) -> tuple[str, str]:
-        return (extract_command(payload), payload.get("cwd", "") or "")
+        def extract(payload: dict) -> tuple[str, str]:
+            return (extract_command(payload), payload.get("cwd", "") or "")
 
     _run_guard(
         "python-run-guard",
@@ -304,7 +313,9 @@ def _ipynb_edit_deny_message(path: Path, *, with_edit_tool: bool) -> str:
 
 
 @hooks.command("pair-drift-guard-pre")
-@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
+)
 @click.option(
     "--debug",
     "debug",
@@ -322,6 +333,14 @@ def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
             ctx.config.debug_log_dir,
             extract=_extract_file_paths_codex,
             handle=_deny_drift_pre_multi,
+        )
+    elif platform == "dsh":
+        _run_guard(
+            "pair-drift-guard-pre",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_dsh_file_path,
+            handle=_deny_drift_pre_single,
         )
     else:
         _run_guard(
@@ -465,7 +484,9 @@ def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> None:
 
 
 @hooks.command("pair-drift-guard-post")
-@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@click.option(
+    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
+)
 @click.option(
     "--debug",
     "debug",
@@ -483,6 +504,14 @@ def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
             ctx.config.debug_log_dir,
             extract=_extract_file_paths_codex,
             handle=_sync_drift_post_multi,
+        )
+    elif platform == "dsh":
+        _run_guard(
+            "pair-drift-guard-post",
+            debug,
+            ctx.config.debug_log_dir,
+            extract=_extract_dsh_file_path,
+            handle=_sync_drift_post_single,
         )
     else:
         _run_guard(

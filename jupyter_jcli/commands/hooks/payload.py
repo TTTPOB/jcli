@@ -1,6 +1,7 @@
 """Platform-specific payload extraction for agent hook handlers."""
 
 import re
+from pathlib import Path
 
 
 def _extract_bash_command_claude(payload: dict) -> str:
@@ -28,9 +29,49 @@ def _extract_bash_command_codex(payload: dict) -> str:
     return cmd or ""
 
 
+def _extract_bash_command_dsh(payload: dict) -> str:
+    """DSH Claude bridge: the Bash command is a string in tool_input."""
+    tool_input = payload.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        return ""
+    command = tool_input.get("command", "")
+    return command if isinstance(command, str) else ""
+
+
+def _extract_dsh_bash_command_and_cwd(payload: dict) -> tuple[str, str]:
+    """Return a DSH Bash command and its effective working directory.
+
+    DSH's ``workdir`` is relative to the session ``cwd`` when not absolute.
+    """
+    tool_input = payload.get("tool_input", {})
+    session_cwd = payload.get("cwd", "")
+    if not isinstance(session_cwd, str):
+        session_cwd = ""
+    workdir = tool_input.get("workdir", "") if isinstance(tool_input, dict) else ""
+    if not isinstance(workdir, str) or not workdir:
+        return (_extract_bash_command_dsh(payload), session_cwd)
+    workdir_path = Path(workdir)
+    if not workdir_path.is_absolute() and session_cwd:
+        workdir_path = Path(session_cwd) / workdir_path
+    return (_extract_bash_command_dsh(payload), str(workdir_path))
+
+
 def _extract_file_path_claude(payload: dict) -> str:
     """Claude Code: Edit/Write tools have file_path in tool_input."""
     return payload.get("tool_input", {}).get("file_path", "") or ""
+
+
+def _extract_dsh_file_path(payload: dict) -> str:
+    """DSH Edit/Write: return file_path normalized against the session cwd."""
+    tool_input = payload.get("tool_input", {})
+    file_path = tool_input.get("file_path", "") if isinstance(tool_input, dict) else ""
+    if not isinstance(file_path, str) or not file_path:
+        return ""
+    cwd = payload.get("cwd", "")
+    if not isinstance(cwd, str) or not cwd:
+        return file_path
+    path = Path(file_path)
+    return str(path if path.is_absolute() else Path(cwd) / path)
 
 
 def _extract_file_paths_codex(payload: dict) -> list[str]:

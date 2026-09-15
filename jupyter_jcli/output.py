@@ -2,6 +2,7 @@
 
 import json
 import sys
+from typing import NoReturn
 
 import click
 
@@ -21,7 +22,7 @@ def emit(data: dict, use_json: bool = False) -> None:
         click.echo(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def emit_error(code: str, message: str, use_json: bool = False) -> None:
+def emit_error(code: str, message: str, use_json: bool = False) -> NoReturn:
     """Print error and exit with code 1."""
     if use_json:
         click.echo(

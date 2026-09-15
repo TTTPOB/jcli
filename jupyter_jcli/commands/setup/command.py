@@ -2,6 +2,7 @@
 
 import click
 
+from .dsh import dsh
 from .git import git_setup
 from .hooks import claude, codex
 from .opencode import opencode
@@ -14,5 +15,6 @@ def setup():
 
 setup.add_command(claude)
 setup.add_command(codex)
+setup.add_command(dsh)
 setup.add_command(opencode)
 setup.add_command(git_setup)

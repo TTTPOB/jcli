@@ -68,6 +68,8 @@ j-cli setup claude
 # or
 j-cli setup codex
 # or
+j-cli setup dsh
+# or
 j-cli setup opencode
 ```
 
@@ -228,6 +230,42 @@ The install command is idempotent — re-running updates hooks in place without 
 | `pair-drift-guard-post` | PostToolUse (apply_patch) | After `apply_patch` completes | Auto-sync the other side of the pair |
 
 > `notebook-edit-guard` is not installed for Codex — Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
+
+### `setup dsh`
+
+Install the j-cli hook integration for DeepSeek Harness (DSH). The command
+writes a Claude-shaped `jcli-hooks.json` plus a Cordis row for the
+`@deepseek-ai/dsh-hooks-claude-code` bridge. That bridge must be available where
+DSH resolves plugins. Workspace installation also requires
+`dsh-workspace-overlay` to mount `.dsh/cordis.yml`; global installation loads
+the bridge directly through the Host patch.
+
+```bash
+j-cli setup dsh                 # default --local; writes .dsh/cordis.yml
+j-cli setup dsh --project       # same workspace file, project spelling
+j-cli setup dsh --proj          # alias for --project
+j-cli setup dsh --global        # writes $DSH_HOME/cordis.patch.yml
+j-cli setup dsh --user          # alias for --global
+
+# remove only the j-cli-managed DSH row and hook entries
+j-cli setup dsh --remove
+j-cli setup dsh --global --remove
+```
+
+`--local` is intentionally a project alias: `dsh-workspace-overlay` reads only
+`<workspace>/.dsh/cordis.yml` and has no separate local layer or gitignored
+`.dsh` file. The global form writes a true Host patch at
+`$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`) and its hook
+JSON beside it. The generated bridge `configPath` is absolute because DSH
+resolves relative bridge config paths from the process launch directory.
+Rerun `setup dsh` after moving a workspace or changing `DSH_HOME`. DSH's `PATH`
+must resolve the updated `j-cli` installation to run the generated commands.
+
+The workspace and global rows can both be active in one DSH process. The
+installer warns when it detects both managed rows, because each would run the
+same j-cli guards twice. Re-running is idempotent; YAML comments, `!!js` tags,
+unrelated rows, and unrelated JSON hooks are preserved. Removal never deletes
+unmanaged configuration.
 
 ### `setup opencode`
 
