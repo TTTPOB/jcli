@@ -9,9 +9,15 @@ from jupyter_jcli.commands.hooks.command import (
     _extract_bash_command_codex,
     _extract_file_paths_codex,
 )
+from jupyter_jcli.commands.hooks.decision import HookOutcome
+from jupyter_jcli.commands.hooks.pair_drift import PostDriftNotice
 from jupyter_jcli.commands.hooks.payload import (
     _parse_codex_apply_patch_file_paths,
 )
+
+
+def _success_notice(context: str) -> PostDriftNotice:
+    return PostDriftNotice(context, HookOutcome.success())
 
 
 class TestExtractBashCommandCodex:
@@ -179,7 +185,7 @@ class TestCodexNotebookExecGuard:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -211,7 +217,7 @@ class TestCodexPythonRunGuard:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -282,7 +288,7 @@ class TestCodexMultiFilePreMerge:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
@@ -337,7 +343,7 @@ class TestCodexMultiFilePreMerge:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
@@ -375,7 +381,7 @@ class TestCodexMultiFilePreMerge:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
@@ -383,8 +389,8 @@ class TestCodexMultiFilePreMerge:
         # No separator when there's only one reason
         assert "---" not in reason
 
-    def test_error_on_one_file_still_denies_other(self, tmp_path, monkeypatch):
-        """Exception on one file should not prevent denying based on another."""
+    def test_error_on_one_file_is_visible(self, tmp_path, monkeypatch):
+        """An operation failure must not be hidden by another file's denial."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "good.py").write_text("# %%\nprint('good')\n", encoding="utf-8")
         (tmp_path / "bad.py").write_text("# %%\nprint('bad')\n", encoding="utf-8")
@@ -433,13 +439,10 @@ class TestCodexMultiFilePreMerge:
             input=payload,
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
-        output = json.loads(result.stdout)
-        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert "good.py" in output["hookSpecificOutput"]["permissionDecisionReason"]
-        # bad.py should NOT appear since it raised an exception
-        assert "bad.py" not in output["hookSpecificOutput"]["permissionDecisionReason"]
-        assert call_count[0] == 2
+        assert result.exit_code == 1
+        assert "boom" in (result.stderr or result.output)
+        assert result.stdout == ""
+        assert call_count[0] == 1
 
 
 class TestCodexMultiFilePostMerge:
@@ -459,11 +462,11 @@ class TestCodexMultiFilePostMerge:
             call_count[0] += 1
             # Return different messages per file
             if "a" in str(path):
-                return (
+                return _success_notice(
                     "Auto-synced your edit in `a.py` to `a.ipynb`. Pair is now in sync."
                 )
             if "b" in str(path):
-                return (
+                return _success_notice(
                     "Auto-synced your edit in `b.py` to `b.ipynb`. Pair is now in sync."
                 )
             return None
@@ -521,7 +524,9 @@ class TestCodexMultiFilePostMerge:
         (tmp_path / "only.py").write_text("# %%\nprint('only')\n", encoding="utf-8")
 
         def fake_post_drift_check(path, logger=None):
-            return "Auto-synced your edit in `only.py` to `only.ipynb`. Pair is now in sync."
+            return _success_notice(
+                "Auto-synced your edit in `only.py` to `only.ipynb`. Pair is now in sync."
+            )
 
         monkeypatch.setattr(
             "jupyter_jcli.commands.hooks.command._run_post_drift_check",

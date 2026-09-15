@@ -10,6 +10,17 @@ import time
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_config(tmp_path, monkeypatch):
+    """Keep tests from reading or writing real user configuration."""
+    home = tmp_path / "home"
+    dsh_home = home / ".dsh"
+    dsh_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DSH_HOME", str(dsh_home))
+    yield
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))

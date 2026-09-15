@@ -20,6 +20,7 @@ from jupyter_jcli.cli import CliContext, pass_ctx
 from .debug import HookDebugLogger, read_hook_stdin
 from .decision import (
     HookDecision,
+    HookOutcome,
     PostToolUseContext,
     PreToolUseDecision,
     PreToolUseOutcome,
@@ -68,29 +69,64 @@ def _run_guard(
     log_dir: Path,
     *,
     extract: Callable[[dict], _T],
-    handle: Callable[[_T, HookDebugLogger], None],
+    handle: Callable[[_T, HookDebugLogger], HookOutcome | None],
 ) -> None:
     """Run one hook handler with shared stdin/logging/exit plumbing.
 
-    Reads the hook payload from stdin, extracts the interesting value, and
-    hands it to *handle*.  Malformed input or an unexpected payload shape
-    exits silently with 0 — a hook must never break the agent harness.
+    Handlers return a typed outcome.  Parsing, extraction, and unexpected
+    handler failures are operation failures rather than silent allows.
     """
     with HookDebugLogger(hook_name, enabled=debug, log_dir=log_dir) as log:
         try:
             payload = read_hook_stdin(log)
-        except (json.JSONDecodeError, ValueError):
-            sys.exit(0)
-
-        try:
-            value = extract(payload)
-        except (AttributeError, TypeError) as exc:
+            if not isinstance(payload, dict):
+                raise TypeError("hook payload must be a JSON object")
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             log.record_exception(exc)
-            sys.exit(0)
+            outcome = HookOutcome.failure(f"malformed hook payload: {exc}")
+        else:
+            try:
+                tool_input = payload.get("tool_input")
+                if "tool_input" in payload and not isinstance(tool_input, dict):
+                    raise TypeError("tool_input must be an object")
+                tool_name = payload.get("tool_name")
+                if "tool_name" in payload and not isinstance(tool_name, str):
+                    raise TypeError("tool_name must be a string")
+                cwd = payload.get("cwd")
+                if "cwd" in payload and not isinstance(cwd, str):
+                    raise TypeError("cwd must be a string")
+                if isinstance(tool_input, dict):
+                    command = tool_input.get("command")
+                    if "command" in tool_input and not (
+                        isinstance(command, str)
+                        or (
+                            isinstance(command, list)
+                            and all(isinstance(item, str) for item in command)
+                        )
+                    ):
+                        raise TypeError(
+                            "tool_input.command must be a string or argv list"
+                        )
+                    file_path = tool_input.get("file_path")
+                    if "file_path" in tool_input and not isinstance(file_path, str):
+                        raise TypeError("tool_input.file_path must be a string")
+                    workdir = tool_input.get("workdir")
+                    if "workdir" in tool_input and not isinstance(workdir, str):
+                        raise TypeError("tool_input.workdir must be a string")
+                value = extract(payload)
+            except (AttributeError, TypeError, ValueError) as exc:
+                log.record_exception(exc)
+                outcome = HookOutcome.failure(f"malformed hook payload: {exc}")
+            else:
+                try:
+                    outcome = handle(value, log) or HookOutcome.success()
+                except Exception as exc:  # noqa: BLE001
+                    log.record_exception(exc)
+                    outcome = HookOutcome.failure(str(exc) or type(exc).__name__)
 
-        handle(value, log)
-
-    sys.exit(0)
+        if outcome.diagnostic:
+            print(f"{hook_name}: {outcome.diagnostic}", file=sys.stderr)
+        raise SystemExit(int(outcome.code))
 
 
 def _check_exec_guard(sc) -> str | None:
@@ -164,25 +200,22 @@ def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
     )
 
 
-def _deny_bypass_commands(command: str, log: HookDebugLogger) -> None:
+def _deny_bypass_commands(command: str, log: HookDebugLogger) -> HookOutcome:
     """Deny notebook-execution bypass commands parsed from *command*."""
     from .parser import iter_simple_commands, unwrap_runner
 
-    try:
-        simple_commands = iter_simple_commands(command)
-    except Exception as exc:  # noqa: BLE001
-        log.record_exception(exc)
-        sys.exit(0)
-
+    simple_commands = iter_simple_commands(command)
     for sc in simple_commands:
         inner = unwrap_runner(sc)
         label = _check_exec_guard(inner)
         if label is not None:
+            reason = _HINT.format(label=label)
             _emit_decision(
-                PreToolUseDecision(PreToolUseOutcome.DENY, _HINT.format(label=label)),
+                PreToolUseDecision(PreToolUseOutcome.DENY, reason),
                 logger=log,
             )
-            sys.exit(0)
+            return HookOutcome.denied(reason)
+    return HookOutcome.success()
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +274,9 @@ def python_run_guard(ctx: CliContext, platform: str, debug: bool):
     )
 
 
-def _deny_python_run(command_and_cwd: tuple[str, str], log: HookDebugLogger) -> None:
+def _deny_python_run(
+    command_and_cwd: tuple[str, str], log: HookDebugLogger
+) -> HookOutcome:
     """Deny running a py:percent file that has a paired notebook."""
     command, cwd = command_and_cwd
     cwd_path = Path(cwd) if cwd else Path.cwd()
@@ -254,38 +289,28 @@ def _deny_python_run(command_and_cwd: tuple[str, str], log: HookDebugLogger) -> 
         unwrap_runner,
     )
 
-    try:
-        simple_commands = iter_simple_commands(command)
-    except Exception as exc:  # noqa: BLE001
-        log.record_exception(exc)
-        sys.exit(0)
-
+    simple_commands = iter_simple_commands(command)
     for sc in simple_commands:
         inner = unwrap_runner(sc)
         file_str = extract_script_target(inner)
         if file_str is None:
             continue
-        try:
-            file_path = Path(file_str)
-            if not file_path.is_absolute():
-                file_path = cwd_path / file_path
-            ipynb = find_paired_ipynb(file_path)
-        except Exception as exc:  # noqa: BLE001
-            log.record_exception(exc)
-            sys.exit(0)
+        file_path = Path(file_str)
+        if not file_path.is_absolute():
+            file_path = cwd_path / file_path
+        ipynb = find_paired_ipynb(file_path)
         if ipynb is not None:
+            reason = _PYTHON_HINT.format(
+                label="python script",
+                file=file_str,
+                ipynb=ipynb.name,
+            )
             _emit_decision(
-                PreToolUseDecision(
-                    PreToolUseOutcome.DENY,
-                    _PYTHON_HINT.format(
-                        label="python script",
-                        file=file_str,
-                        ipynb=ipynb.name,
-                    ),
-                ),
+                PreToolUseDecision(PreToolUseOutcome.DENY, reason),
                 logger=log,
             )
-            sys.exit(0)
+            return HookOutcome.denied(reason)
+    return HookOutcome.success()
 
 
 # ---------------------------------------------------------------------------
@@ -352,44 +377,38 @@ def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
         )
 
 
-def _deny_drift_pre_single(file_path: str, log: HookDebugLogger) -> None:
+def _deny_drift_pre_single(file_path: str, log: HookDebugLogger) -> HookOutcome:
     """Claude Code: deny pre-existing drift for one edited file."""
     if not file_path:
-        sys.exit(0)
+        return HookOutcome.success()
 
     path = Path(file_path)
 
     if path.suffix == ".ipynb":
+        reason = _ipynb_edit_deny_message(path, with_edit_tool=True)
         _emit_decision(
-            PreToolUseDecision(
-                PreToolUseOutcome.DENY,
-                _ipynb_edit_deny_message(path, with_edit_tool=True),
-            ),
+            PreToolUseDecision(PreToolUseOutcome.DENY, reason),
             logger=log,
         )
-        sys.exit(0)
+        return HookOutcome.denied(reason)
 
     if not path.exists():
-        sys.exit(0)
+        return HookOutcome.success()
 
-    try:
-        deny_reason = _run_pre_drift_check(path, log)
-        if deny_reason is not None:
-            _emit_decision(
-                PreToolUseDecision(PreToolUseOutcome.DENY, deny_reason),
-                logger=log,
-            )
-            sys.exit(0)
-    except Exception as exc:  # noqa: BLE001
-        log.record_exception(exc)
-        print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
-        sys.exit(0)
+    deny_reason = _run_pre_drift_check(path, log)
+    if deny_reason is not None:
+        _emit_decision(
+            PreToolUseDecision(PreToolUseOutcome.DENY, deny_reason),
+            logger=log,
+        )
+        return HookOutcome.denied(deny_reason)
+    return HookOutcome.success()
 
 
-def _deny_drift_pre_multi(file_paths: list[str], log: HookDebugLogger) -> None:
+def _deny_drift_pre_multi(file_paths: list[str], log: HookDebugLogger) -> HookOutcome:
     """Codex: deny pre-existing drift for every apply_patch file."""
     if not file_paths:
-        sys.exit(0)
+        return HookOutcome.success()
 
     deny_reasons: list[str] = []
 
@@ -403,13 +422,9 @@ def _deny_drift_pre_multi(file_paths: list[str], log: HookDebugLogger) -> None:
         if not path.exists():
             continue
 
-        try:
-            deny_reason = _run_pre_drift_check(path, log)
-            if deny_reason is not None:
-                deny_reasons.append(deny_reason)
-        except Exception as exc:  # noqa: BLE001
-            log.record_exception(exc)
-            print(f"pair-drift-guard-pre: unexpected error: {exc}", file=sys.stderr)
+        deny_reason = _run_pre_drift_check(path, log)
+        if deny_reason is not None:
+            deny_reasons.append(deny_reason)
 
     if deny_reasons:
         merged = "\n\n---\n\n".join(deny_reasons)
@@ -417,8 +432,8 @@ def _deny_drift_pre_multi(file_paths: list[str], log: HookDebugLogger) -> None:
             PreToolUseDecision(PreToolUseOutcome.DENY, merged),
             logger=log,
         )
-
-    sys.exit(0)
+        return HookOutcome.denied(merged)
+    return HookOutcome.success()
 
 
 def _emit_decision(decision: HookDecision, *, logger=None) -> None:
@@ -457,25 +472,25 @@ def notebook_edit_guard(ctx: CliContext, platform: str, debug: bool) -> None:
     )
 
 
-def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> None:
+def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> HookOutcome:
     """Deny the NotebookEdit tool with the py:percent round-trip hint."""
     if tool_name != "NotebookEdit":
-        sys.exit(0)
+        return HookOutcome.success()
 
+    reason = (
+        "NotebookEdit is disabled in this project — edit notebooks via the "
+        "py:percent round-trip instead:\n"
+        "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
+        "  2. Edit <nb.py> with Edit/Write\n"
+        "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
+        "(The paired `.py` round-trip preserves outputs and keeps the pair "
+        "in sync via `pair-drift-guard-pre`.)"
+    )
     _emit_decision(
-        PreToolUseDecision(
-            PreToolUseOutcome.DENY,
-            "NotebookEdit is disabled in this project — edit notebooks via the "
-            "py:percent round-trip instead:\n"
-            "  1. j-cli convert ipynb-to-py <nb.ipynb> <nb.py>\n"
-            "  2. Edit <nb.py> with Edit/Write\n"
-            "  3. j-cli convert py-to-ipynb <nb.py> <nb.ipynb>\n"
-            "(The paired `.py` round-trip preserves outputs and keeps the pair "
-            "in sync via `pair-drift-guard-pre`.)",
-        ),
+        PreToolUseDecision(PreToolUseOutcome.DENY, reason),
         logger=log,
     )
-    sys.exit(0)
+    return HookOutcome.denied(reason)
 
 
 # ---------------------------------------------------------------------------
@@ -523,58 +538,55 @@ def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
         )
 
 
-def _sync_drift_post_single(file_path: str, log: HookDebugLogger) -> None:
+def _sync_drift_post_single(file_path: str, log: HookDebugLogger) -> HookOutcome:
     """Claude Code: auto-sync the pair after one edited file."""
     if not file_path:
-        sys.exit(0)
+        return HookOutcome.success()
 
     path = Path(file_path)
 
-    if path.suffix == ".ipynb":
-        sys.exit(0)
+    if path.suffix == ".ipynb" or not path.exists():
+        return HookOutcome.success()
 
-    if not path.exists():
-        sys.exit(0)
-
-    try:
-        context_str = _run_post_drift_check(path, log)
-        if context_str is not None:
-            _emit_decision(PostToolUseContext(context_str), logger=log)
-    except Exception as exc:  # noqa: BLE001
-        log.record_exception(exc)
-        print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
-        sys.exit(0)
+    notice = _run_post_drift_check(path, log)
+    if notice is None:
+        return HookOutcome.success()
+    _emit_decision(PostToolUseContext(notice.context), logger=log)
+    return notice.outcome
 
 
-def _sync_drift_post_multi(file_paths: list[str], log: HookDebugLogger) -> None:
+def _sync_drift_post_multi(file_paths: list[str], log: HookDebugLogger) -> HookOutcome:
     """Codex: auto-sync the pair for every apply_patch file."""
     if not file_paths:
-        sys.exit(0)
+        return HookOutcome.success()
 
     contexts: list[str] = []
+    diagnostics: list[str] = []
 
     for file_path in file_paths:
         path = Path(file_path)
 
-        if path.suffix == ".ipynb":
-            continue
-
-        if not path.exists():
+        if path.suffix == ".ipynb" or not path.exists():
             continue
 
         try:
-            context_str = _run_post_drift_check(path, log)
-            if context_str is not None:
-                contexts.append(context_str)
+            notice = _run_post_drift_check(path, log)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)
-            print(f"pair-drift-guard-post: unexpected error: {exc}", file=sys.stderr)
+            diagnostics.append(f"{path.name}: {exc}")
+            continue
+        if notice is not None:
+            contexts.append(notice.context)
+            if notice.outcome.diagnostic:
+                diagnostics.append(notice.outcome.diagnostic)
 
     if contexts:
         merged = _merge_post_contexts(contexts)
         _emit_decision(PostToolUseContext(merged), logger=log)
 
-    sys.exit(0)
+    if diagnostics:
+        return HookOutcome.failure("; ".join(diagnostics))
+    return HookOutcome.success()
 
 
 # ---------------------------------------------------------------------------
@@ -604,8 +616,15 @@ def pre_commit_pair_sync(
     """Git pre-commit hook: sync py/ipynb pairs before commit."""
     with HookDebugLogger(
         "pre-commit-pair-sync", enabled=debug, log_dir=ctx.config.debug_log_dir
-    ) as _log:
-        _run_pre_commit_pair_sync(include_globs)
+    ) as log:
+        try:
+            outcome = _run_pre_commit_pair_sync(include_globs)
+        except Exception as exc:  # noqa: BLE001
+            log.record_exception(exc)
+            outcome = HookOutcome.failure(str(exc) or type(exc).__name__)
+        if outcome.diagnostic:
+            print(f"pre-commit-pair-sync: {outcome.diagnostic}", file=sys.stderr)
+        raise SystemExit(int(outcome.code))
 
 
 @hooks.command("gc-pair-sync-refs")
@@ -618,24 +637,36 @@ def pre_commit_pair_sync(
 def gc_pair_sync_refs(dry_run: bool) -> None:
     """Delete stale sticky pair-sync refs under refs/jcli/pair-sync."""
     from jupyter_jcli import pair_baseline
-    from jupyter_jcli.gitutil import git_root
+    from jupyter_jcli.gitutil import resolve_git_root
 
-    repo_root = git_root(Path.cwd())
+    root_result = resolve_git_root(Path.cwd())
+    if root_result.error is not None:
+        print(
+            f"gc-pair-sync-refs: git lookup failed: {root_result.error}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    repo_root = root_result.root
     if repo_root is None:
         print("gc-pair-sync-refs: not in a git repo, skipping", file=sys.stderr)
-        sys.exit(0)
+        return
 
-    refs = pair_baseline.list_all_refs(repo_root)
-    for ref_info in refs:
-        status, reason = pair_baseline._classify_ref(repo_root, ref_info)
-        rel_display = ref_info.rel_posix_path or "<unknown>"
-        if status == "keep":
-            print(f"keep\t{rel_display}\t{reason}", file=sys.stderr)
-        elif dry_run:
-            print(f"would-remove\t{rel_display}\t{reason}", file=sys.stderr)
-        else:
-            print(f"remove\t{rel_display}\t{reason}", file=sys.stderr)
+    try:
+        refs = pair_baseline.list_all_refs(repo_root, strict=True)
+        for ref_info in refs:
+            status, reason = pair_baseline._classify_ref(
+                repo_root, ref_info, strict=True
+            )
+            rel_display = ref_info.rel_posix_path or "<unknown>"
+            if status == "keep":
+                print(f"keep\t{rel_display}\t{reason}", file=sys.stderr)
+            elif dry_run:
+                print(f"would-remove\t{rel_display}\t{reason}", file=sys.stderr)
+            else:
+                print(f"remove\t{rel_display}\t{reason}", file=sys.stderr)
 
-    removed, kept = pair_baseline.gc_stale_refs(repo_root, dry_run)
+        removed, kept = pair_baseline.gc_stale_refs(repo_root, dry_run, strict=True)
+    except Exception as exc:
+        print(f"gc-pair-sync-refs: git operation failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     print(f"removed {removed}, kept {kept}", file=sys.stderr)
-    sys.exit(0)

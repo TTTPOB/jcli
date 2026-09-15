@@ -32,10 +32,12 @@ def _extract_bash_command_codex(payload: dict) -> str:
 def _extract_bash_command_dsh(payload: dict) -> str:
     """DSH Claude bridge: the Bash command is a string in tool_input."""
     tool_input = payload.get("tool_input", {})
-    if not isinstance(tool_input, dict):
+    if not isinstance(tool_input, dict) or "command" not in tool_input:
         return ""
-    command = tool_input.get("command", "")
-    return command if isinstance(command, str) else ""
+    command = tool_input["command"]
+    if not isinstance(command, str):
+        raise TypeError("tool_input.command must be a string for DSH")
+    return command
 
 
 def _extract_dsh_bash_command_and_cwd(payload: dict) -> tuple[str, str]:

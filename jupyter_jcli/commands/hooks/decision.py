@@ -13,8 +13,36 @@ See https://developers.openai.com/codex/hooks for Codex wire schema.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Protocol
+
+
+class HookExitCode(IntEnum):
+    """Process statuses shared by every j-cli hook entry point."""
+
+    OK = 0
+    FAILURE = 1
+    DENY = 2
+
+
+@dataclass(frozen=True)
+class HookOutcome:
+    """Typed result for hook control flow and diagnostics."""
+
+    code: HookExitCode = HookExitCode.OK
+    diagnostic: str | None = None
+
+    @classmethod
+    def success(cls) -> HookOutcome:
+        return cls(HookExitCode.OK)
+
+    @classmethod
+    def failure(cls, diagnostic: str) -> HookOutcome:
+        return cls(HookExitCode.FAILURE, diagnostic)
+
+    @classmethod
+    def denied(cls, diagnostic: str) -> HookOutcome:
+        return cls(HookExitCode.DENY, diagnostic)
 
 
 class HookEvent(str, Enum):

@@ -1,14 +1,41 @@
 """Py/ipynb pair drift checks and synchronization for agent hooks."""
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from jupyter_jcli._enums import DriftStatus
+
+from .decision import HookOutcome
 
 _MAX_DIFF_CHARS = 6000
 _HOOK_SUMMARY_MAX_CELLS = 16
 _HOOK_SUMMARY_MAX_CHARS = 8000
 _HOOK_CONTEXT_MAX_CHARS = 16000
+
+
+@dataclass(frozen=True)
+class PostDriftNotice:
+    """PostToolUse context plus its non-blocking process outcome."""
+
+    context: str
+    outcome: HookOutcome
+
+
+def _persist_baseline_for_hook(py_path: Path, canonical_text: str) -> None:
+    """Persist a baseline, distinguishing no repository from Git failure."""
+    from jupyter_jcli import pair_baseline
+    from jupyter_jcli.gitutil import resolve_git_root
+
+    root_result = resolve_git_root(py_path.parent)
+    if root_result.error is not None:
+        raise RuntimeError(f"baseline Git lookup failed: {root_result.error}")
+    if root_result.root is None:
+        return
+    if not pair_baseline.write_baseline(py_path, canonical_text):
+        raise RuntimeError(
+            "pair synchronized but baseline persistence failed; baseline was not advanced"
+        )
 
 
 def _run_pre_drift_check(path: Path, logger=None) -> str | None:
@@ -30,17 +57,15 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
     try:
         from jupyter_jcli.diff import check_drift
 
-        result = check_drift(py_path, ipynb_path)
-    except UnicodeDecodeError:
-        print(
-            "pair-drift-guard-pre: non-UTF-8 content, skipping drift check",
-            file=sys.stderr,
-        )
-        return None
-    except Exception as exc:  # noqa: BLE001
+        result = check_drift(py_path, ipynb_path, strict_baseline=True)
+    except UnicodeDecodeError as exc:
         if logger is not None:
             logger.record_exception(exc)
-        return None
+        raise RuntimeError("non-UTF-8 content prevented pair drift checking") from exc
+    except Exception as exc:
+        if logger is not None:
+            logger.record_exception(exc)
+        raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
     if result.status == DriftStatus.IN_SYNC:
         return None
@@ -91,9 +116,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
     return None
 
 
-def _prepare_merged_py(
-    py_path: Path, merged_cells, logger=None
-) -> tuple[str | None, str | None]:
+def _prepare_merged_py(py_path: Path, merged_cells, logger=None) -> tuple[str, str]:
     try:
         from jupyter_jcli.formats import percent
         from jupyter_jcli.formats.model import ParsedFile
@@ -117,10 +140,10 @@ def _prepare_merged_py(
             merged_text,
             include_cell_ids=None if include_cell_ids else False,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if logger is not None:
             logger.record_exception(exc)
-        return None, None
+        raise RuntimeError(f"could not prepare merged py text: {exc}") from exc
 
 
 def _apply_merge_and_decide(
@@ -131,71 +154,68 @@ def _apply_merge_and_decide(
     logger=None,
 ) -> str | None:
     """Write merged content and emit allow/deny based on which file changed."""
-    from jupyter_jcli import pair_baseline
     from jupyter_jcli.pairing import update_ipynb_sources
 
     try:
         target_before = target.read_bytes()
-    except OSError:
-        return None
+    except OSError as exc:
+        raise RuntimeError(f"could not read edited source {target}: {exc}") from exc
 
     wrote_target = False
-    synced = False
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
+    failures: list[str] = []
 
     if result.py_needs_update:
         try:
+            if py_path == target and py_path.read_bytes() != target_before:
+                raise RuntimeError("edited source changed while the guard was running")
             if merged_py_text is None:
                 merged_py_text, canonical_merged_py = _prepare_merged_py(
                     py_path, result.merged_cells, logger
                 )
-            if merged_py_text is None:
-                raise RuntimeError("could not prepare merged py text")
-            if py_path.read_bytes() == target_before or py_path != target:
-                py_path.write_text(merged_py_text, encoding="utf-8")
-                synced = True
-                if py_path == target:
-                    wrote_target = True
-                else:
-                    print(
-                        f"pair-drift-guard-pre: auto-synced {py_path.name} with merged content",
-                        file=sys.stderr,
-                    )
+            py_path.write_text(merged_py_text, encoding="utf-8")
+            if py_path == target:
+                wrote_target = True
+            else:
+                print(
+                    f"pair-drift-guard-pre: auto-synced {py_path.name} with merged content",
+                    file=sys.stderr,
+                )
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
-            print(
-                f"pair-drift-guard-pre: could not write {py_path.name}: {exc}",
-                file=sys.stderr,
-            )
+            failures.append(f"{py_path.name}: {exc}")
 
     if result.ipynb_needs_update:
         try:
-            if target.read_bytes() == target_before or ipynb_path != target:
-                update_ipynb_sources(ipynb_path, result.merged_cells)
-                synced = True
-                if ipynb_path == target:
-                    wrote_target = True
-                else:
-                    print(
-                        f"pair-drift-guard: auto-synced {ipynb_path.name} with merged content",
-                        file=sys.stderr,
-                    )
+            if ipynb_path == target and ipynb_path.read_bytes() != target_before:
+                raise RuntimeError("edited source changed while the guard was running")
+            update_ipynb_sources(ipynb_path, result.merged_cells)
+            if ipynb_path == target:
+                wrote_target = True
+            else:
+                print(
+                    f"pair-drift-guard-pre: auto-synced {ipynb_path.name} with merged content",
+                    file=sys.stderr,
+                )
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
-            print(
-                f"pair-drift-guard-pre: could not write {ipynb_path.name}: {exc}",
-                file=sys.stderr,
-            )
+            failures.append(f"{ipynb_path.name}: {exc}")
 
-    if synced and canonical_merged_py is None:
+    if failures:
+        raise RuntimeError(
+            "source file was not fully synchronized; paired file remains unsynced: "
+            + "; ".join(failures)
+        )
+
+    if canonical_merged_py is None:
         _, canonical_merged_py = _prepare_merged_py(
             py_path, result.merged_cells, logger
         )
-    if synced and canonical_merged_py is not None:
-        pair_baseline.write_baseline(py_path, canonical_merged_py)
+
+    _persist_baseline_for_hook(py_path, canonical_merged_py)
 
     if wrote_target:
         other = ipynb_path if target == py_path else py_path
@@ -208,19 +228,15 @@ def _apply_merge_and_decide(
     return None
 
 
-def _post_drift_notice(drift_reason: str) -> str:
-    """Rewrap a drift reason as a post-hoc notification to the agent.
-
-    The edit has already been applied; we can only inform the agent that
-    the paired file is now out of sync because someone changed it
-    behind our back.
-    """
-    return (
+def _post_drift_notice(drift_reason: str) -> PostDriftNotice:
+    """Rewrap a drift reason as a visible post-edit diagnostic."""
+    context = (
         "Paired notebook drift detected after edit — the other side may "
         "have been modified by a human or another agent.\n\n"
         f"{drift_reason}\n\n"
         "Run `j-cli convert` to reconcile before further edits."
     )
+    return PostDriftNotice(context, HookOutcome.failure(context))
 
 
 def _diff_section(diff_text: str, py_name: str = "") -> str:
@@ -262,8 +278,8 @@ def _merge_post_contexts(
     return f"{separator.join(included)}\n\n{suffix}"
 
 
-def _run_post_drift_check(path: Path, logger=None) -> str | None:
-    """Run drift check after an agent edit and return a context notice if needed."""
+def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
+    """Run drift check after an agent edit and return a typed notice if needed."""
     from jupyter_jcli.parser import find_pair
 
     pair = find_pair(path)
@@ -281,20 +297,24 @@ def _run_post_drift_check(path: Path, logger=None) -> str | None:
     try:
         from jupyter_jcli.diff import check_drift
 
-        result = check_drift(py_path, ipynb_path)
-    except UnicodeDecodeError:
-        print("pair-drift-guard-post: non-UTF-8 content, skipping", file=sys.stderr)
-        return None
-    except Exception as exc:  # noqa: BLE001
+        result = check_drift(py_path, ipynb_path, strict_baseline=True)
+    except UnicodeDecodeError as exc:
         if logger is not None:
             logger.record_exception(exc)
-        return None
+        raise RuntimeError("non-UTF-8 content prevented pair drift checking") from exc
+    except Exception as exc:
+        if logger is not None:
+            logger.record_exception(exc)
+        raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
     if result.status == DriftStatus.IN_SYNC:
         return None
 
     if result.status == DriftStatus.MERGED:
-        return _sync_pair_after_edit(path, py_path, ipynb_path, result, logger=logger)
+        context = _sync_pair_after_edit(
+            path, py_path, ipynb_path, result, logger=logger
+        )
+        return PostDriftNotice(context, HookOutcome.success()) if context else None
 
     if result.status == DriftStatus.CONFLICT:
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
@@ -349,52 +369,62 @@ def _sync_pair_after_edit(
     from jupyter_jcli.pairing import update_ipynb_sources
 
     # Read before write_baseline advances the sticky pair-sync reference.
-    old_baseline_text = pair_baseline.read_baseline(py_path)
+    old_baseline_text = pair_baseline.read_baseline(py_path, strict=True)
     both_sides_need_update = result.ipynb_needs_update and result.py_needs_update
-    ipynb_converged = not result.ipynb_needs_update
-    py_converged = not result.py_needs_update
     merged_py_text: str | None = None
     canonical_merged_py: str | None = None
     summary_text: str | None = None
+    failures: list[str] = []
 
-    if result.ipynb_needs_update and (ipynb_path != edited or both_sides_need_update):
-        try:
-            update_ipynb_sources(ipynb_path, result.merged_cells)
-            ipynb_converged = True
-        except Exception as exc:  # noqa: BLE001
-            if logger is not None:
-                logger.record_exception(exc)
-            print(
-                f"pair-drift-guard-post: could not write {ipynb_path.name}: {exc}",
-                file=sys.stderr,
+    if result.ipynb_needs_update:
+        if ipynb_path == edited and not both_sides_need_update:
+            failures.append(
+                f"{ipynb_path.name}: edited source requires a canonical update"
             )
+        else:
+            try:
+                update_ipynb_sources(ipynb_path, result.merged_cells)
+            except Exception as exc:  # noqa: BLE001
+                if logger is not None:
+                    logger.record_exception(exc)
+                failures.append(f"{ipynb_path.name}: could not write: {exc}")
 
-    if result.py_needs_update and (py_path != edited or both_sides_need_update):
-        try:
-            if merged_py_text is None:
-                merged_py_text, canonical_merged_py = _prepare_merged_py(
-                    py_path, result.merged_cells, logger
-                )
-            if merged_py_text is None:
-                raise RuntimeError("could not prepare merged py text")
-            py_path.write_text(merged_py_text, encoding="utf-8")
-            py_converged = True
-        except Exception as exc:  # noqa: BLE001
-            if logger is not None:
-                logger.record_exception(exc)
-            print(
-                f"pair-drift-guard-post: could not write {py_path.name}: {exc}",
-                file=sys.stderr,
+    if result.py_needs_update:
+        if py_path == edited and not both_sides_need_update:
+            failures.append(
+                f"{py_path.name}: edited source requires a canonical update"
             )
+        else:
+            try:
+                if merged_py_text is None:
+                    merged_py_text, canonical_merged_py = _prepare_merged_py(
+                        py_path, result.merged_cells, logger
+                    )
+                py_path.write_text(merged_py_text, encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                if logger is not None:
+                    logger.record_exception(exc)
+                failures.append(f"{py_path.name}: could not write: {exc}")
 
-    synced = ipynb_converged and py_converged
-    if synced and canonical_merged_py is None:
+    if failures:
+        raise RuntimeError(
+            "source file was modified, paired file remains unsynced: "
+            + "; ".join(failures)
+        )
+
+    if canonical_merged_py is None:
         _, canonical_merged_py = _prepare_merged_py(
             py_path, result.merged_cells, logger
         )
-    if synced and canonical_merged_py is not None:
-        pair_baseline.write_baseline(py_path, canonical_merged_py)
-    if synced and old_baseline_text is not None and canonical_merged_py is not None:
+
+    try:
+        _persist_baseline_for_hook(py_path, canonical_merged_py)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"source file was modified and pair synchronized, but {exc}"
+        ) from exc
+
+    if old_baseline_text is not None:
         try:
             from jupyter_jcli.diff import diff_cells
             from jupyter_jcli.formats.percent import loads
@@ -410,11 +440,9 @@ def _sync_pair_after_edit(
         except Exception as exc:  # noqa: BLE001
             if logger is not None:
                 logger.record_exception(exc)
-    if synced:
-        other = ipynb_path if edited == py_path else py_path
-        context = (
-            f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
-            "Pair is now in sync."
-        )
-        return f"{context}\n\n{summary_text}" if summary_text is not None else context
-    return None
+    other = ipynb_path if edited == py_path else py_path
+    context = (
+        f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
+        "Pair is now in sync."
+    )
+    return f"{context}\n\n{summary_text}" if summary_text is not None else context

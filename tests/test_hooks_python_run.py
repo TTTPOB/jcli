@@ -13,14 +13,15 @@ from jupyter_jcli.cli import main
 
 
 def _invoke(command: str, cwd: str) -> tuple[int, dict | None]:
-    """Invoke python-run-guard with a Bash command payload. Returns (exit_code, json_output)."""
+    """Invoke python-run-guard and parse its optional JSON decision."""
     runner = CliRunner()
     payload = json.dumps({"tool_input": {"command": command}, "cwd": cwd})
     result = runner.invoke(
         main, ["_hooks", "python-run-guard"], input=payload, catch_exceptions=False
     )
-    if result.output.strip():
-        return result.exit_code, json.loads(result.output)
+    for line in result.output.splitlines():
+        if line.strip().startswith("{"):
+            return result.exit_code, json.loads(line)
     return result.exit_code, None
 
 
@@ -62,7 +63,7 @@ def test_paired_intercept(command: str, tmp_path):
     (tmp_path / "foo.py").touch()
     (tmp_path / "foo.ipynb").touch()
     exit_code, out = _invoke(command, str(tmp_path))
-    assert exit_code == 0
+    assert exit_code == 2
     assert _is_deny(out), (
         f"command={command!r}: expected deny but got allow, output={out}"
     )
@@ -73,7 +74,7 @@ def test_dummy_py_paired_intercept(tmp_path):
     (tmp_path / "bar.dummy.py").touch()
     (tmp_path / "bar.ipynb").touch()
     exit_code, out = _invoke("python bar.dummy.py", str(tmp_path))
-    assert exit_code == 0
+    assert exit_code == 2
     assert _is_deny(out)
 
 
@@ -145,13 +146,13 @@ def test_non_match_allow(command: str, tmp_path):
         '{"tool_input": {"command": null}}',
     ],
 )
-def test_malformed_stdin_allows(raw_input: str):
+def test_malformed_stdin_fails(raw_input: str):
     runner = CliRunner()
     result = runner.invoke(
         main, ["_hooks", "python-run-guard"], input=raw_input, catch_exceptions=False
     )
-    assert result.exit_code == 0
-    assert result.output.strip() == "", f"Expected empty stdout for input {raw_input!r}"
+    assert result.exit_code == 1
+    assert "malformed hook payload" in (result.stderr or result.output)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +166,7 @@ def test_decision_shape(tmp_path):
     (tmp_path / "foo.ipynb").touch()
 
     exit_code, out = _invoke("python foo.py", str(tmp_path))
-    assert exit_code == 0
+    assert exit_code == 2
     assert out is not None
 
     hook_out = out["hookSpecificOutput"]

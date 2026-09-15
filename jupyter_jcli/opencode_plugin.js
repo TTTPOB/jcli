@@ -12,7 +12,7 @@ export const JcliPlugin = async ({ client, directory }) => {
         body: { service, level, message, extra },
       })
     } catch {
-      // Logging must not turn a fail-open guard error into a tool failure.
+      // Logging must not hide or replace the guard's own diagnostic.
     }
   }
 
@@ -35,42 +35,97 @@ export const JcliPlugin = async ({ client, directory }) => {
         new Response(proc.stderr).text(),
         proc.exited,
       ])
+      const trimmedStdout = stdout.trim()
+      const trimmedStderr = stderr.trim()
+
+      // Exit status is authoritative. A deny must stay a deny even when a
+      // broken producer writes non-JSON noise to stdout.
+      if (exitCode === 2) {
+        let hookOutput
+        if (trimmedStdout) {
+          try {
+            hookOutput = JSON.parse(trimmedStdout)
+          } catch (error) {
+            await log("error", `${guard} returned invalid JSON with deny status`, {
+              exitCode,
+              error: String(error),
+              stdout: trimmedStdout,
+              stderr: trimmedStderr,
+            })
+          }
+        }
+        const reason =
+          trimmedStderr ||
+          hookOutput?.hookSpecificOutput?.permissionDecisionReason ||
+          `${guard} denied this tool call`
+        await log("error", `${guard} denied the tool call`, {
+          exitCode,
+          stderr: trimmedStderr,
+          reason,
+        })
+        return { kind: "deny", exitCode, diagnostic: reason, output: hookOutput }
+      }
+
+      let hookOutput
+      if (trimmedStdout) {
+        try {
+          hookOutput = JSON.parse(trimmedStdout)
+        } catch (error) {
+          const diagnostic = `${guard} returned invalid JSON: ${String(error)}`
+          await log("error", diagnostic, {
+            exitCode,
+            stdout: trimmedStdout,
+            stderr: trimmedStderr,
+          })
+          return { kind: "failure", exitCode: 1, diagnostic }
+        }
+      }
 
       if (exitCode !== 0) {
-        await log("error", `${guard} exited with status ${exitCode}`, { stderr: stderr.trim() })
-        return undefined
-      }
-      if (stderr.trim()) {
-        await log("warn", `${guard} wrote to stderr`, { stderr: stderr.trim() })
-      }
-      if (!stdout.trim()) return undefined
-
-      try {
-        return JSON.parse(stdout)
-      } catch (error) {
-        await log("error", `${guard} returned invalid JSON`, {
-          error: String(error),
-          stdout: stdout.trim(),
+        const diagnostic =
+          trimmedStderr || `${guard} failed with status ${exitCode}`
+        await log("error", `${guard} failed with status ${exitCode}`, {
+          exitCode,
+          stderr: trimmedStderr,
         })
-        return undefined
+        return { kind: "failure", exitCode, diagnostic, output: hookOutput }
       }
+
+      if (trimmedStderr) {
+        await log("warn", `${guard} wrote to stderr`, { stderr: trimmedStderr })
+      }
+      return { kind: "ok", exitCode: 0, output: hookOutput }
     } catch (error) {
-      await log("error", `failed to run ${guard}`, { error: String(error) })
-      return undefined
+      const diagnostic = `failed to run ${guard}: ${String(error)}`
+      await log("error", diagnostic)
+      return { kind: "failure", exitCode: 1, diagnostic }
     }
   }
 
   const denyIfRequested = (result) => {
-    const output = result?.hookSpecificOutput
-    if (output?.permissionDecision === "deny") {
-      throw new Error(output.permissionDecisionReason || "j-cli denied this tool call")
+    if (result?.kind === "deny") {
+      throw new Error(result.diagnostic || "j-cli denied this tool call")
+    }
+    if (result?.kind === "failure") {
+      throw new Error(`j-cli guard failure: ${result.diagnostic}`)
+    }
+    const decision = result?.output?.hookSpecificOutput
+    if (decision?.permissionDecision === "deny") {
+      throw new Error(decision.permissionDecisionReason || "j-cli denied this tool call")
     }
   }
 
   const appendContext = (result, output) => {
-    const context = result?.hookSpecificOutput?.additionalContext
-    if (!context) return
-    output.output = output.output ? `${output.output}\n\n${context}` : context
+    const context = result?.output?.hookSpecificOutput?.additionalContext
+    const diagnostic =
+      result?.kind === "failure" || result?.kind === "deny"
+        ? result.diagnostic
+        : undefined
+    const text = [context, diagnostic && `j-cli guard diagnostic: ${diagnostic}`]
+      .filter(Boolean)
+      .join("\n\n")
+    if (!text) return
+    output.output = output.output ? `${output.output}\n\n${text}` : text
   }
 
   const editPayload = (tool, args) => ({

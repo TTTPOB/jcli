@@ -80,6 +80,15 @@ class TestExitCodeCapture:
         data = json.loads(_log_files(tmp_path)[0].read_text())
         assert data["exit_code"] == 1
 
+    def test_exit_code_two_on_sys_exit_2(self, tmp_path):
+        with (
+            pytest.raises(SystemExit),
+            HookDebugLogger("hook", enabled=True, log_dir=tmp_path),
+        ):
+            sys.exit(2)
+        data = json.loads(_log_files(tmp_path)[0].read_text())
+        assert data["exit_code"] == 2
+
     def test_exit_code_zero_on_clean_exit(self, tmp_path):
         with HookDebugLogger("hook", enabled=True, log_dir=tmp_path):
             pass

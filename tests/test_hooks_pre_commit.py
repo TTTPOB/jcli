@@ -150,7 +150,9 @@ class TestInSync:
         _make_ipynb(git_repo / "nb.ipynb", "x = 1")
         _git(git_repo, "git", "add", "nb.py")
 
-        with patch("jupyter_jcli.diff.drift._get_git_base_text", return_value=None):
+        with patch(
+            "jupyter_jcli.diff.drift._get_git_base_text_strict", return_value=None
+        ):
             runner = CliRunner()
             result = _invoke(runner)
 
@@ -219,6 +221,32 @@ class TestMergedPyNeedsUpdate:
         # py must be re-staged
         assert "nb.py" in _staged_files(git_repo)
         assert "auto-synced" in (result.stderr or "")
+
+    def test_git_add_failure_is_nonzero(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        _make_py(git_repo / "nb.py", "x = 1", "y = 2")
+        _make_ipynb(git_repo / "nb.ipynb", "x = 1", "y = 2")
+        _git(git_repo, "git", "add", "nb.py", "nb.ipynb")
+        _git(git_repo, "git", "commit", "-m", "init")
+        _make_py(git_repo / "nb.py", "x = 1", "y = 20")
+        _make_ipynb(git_repo / "nb.ipynb", "x = 10", "y = 2")
+        _git(git_repo, "git", "add", "nb.py")
+
+        real_run = subprocess.run
+
+        def fake_run(args, **kwargs):
+            if list(args[:2]) == ["git", "add"]:
+                return subprocess.CompletedProcess(args, 7, "", "permission denied")
+            return real_run(args, **kwargs)
+
+        with patch(
+            "jupyter_jcli.commands.hooks.pre_commit.subprocess.run",
+            side_effect=fake_run,
+        ):
+            result = _invoke(CliRunner())
+
+        assert result.exit_code == 1
+        assert "git add failed" in _combined(result)
 
 
 # ---------------------------------------------------------------------------
@@ -406,12 +434,12 @@ class TestFailOpen:
         combined = _combined(result)
         assert "git" in combined.lower() or "repo" in combined.lower()
 
-    def test_git_not_found_exits_0(self, tmp_path, monkeypatch):
+    def test_git_not_found_exits_1(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch("subprocess.run", side_effect=FileNotFoundError("no git")):
             runner = CliRunner()
             result = _invoke(runner)
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         combined = _combined(result)
         assert "git" in combined.lower()
 

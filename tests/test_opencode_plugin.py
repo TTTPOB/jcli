@@ -32,6 +32,18 @@ elif mode == "deny" and guard == "notebook-exec-guard":
         "permissionDecision": "deny",
         "permissionDecisionReason": "blocked by test",
     }}))
+    print("blocked by test", file=sys.stderr)
+    sys.exit(2)
+elif mode == "deny-invalid" and guard == "notebook-exec-guard":
+    print("not json from a denying guard")
+    print("deny reason from stderr", file=sys.stderr)
+    sys.exit(2)
+elif mode == "post-deny" and guard == "pair-drift-guard-post":
+    print(json.dumps({"hookSpecificOutput": {
+        "additionalContext": "post context",
+    }}))
+    print("post diagnostic", file=sys.stderr)
+    sys.exit(2)
 elif mode == "context" and guard == "pair-drift-guard-post":
     print(json.dumps({"hookSpecificOutput": {
         "additionalContext": "pair synced by test",
@@ -96,11 +108,25 @@ if (scenario === "deny") {
 }
 
 if (scenario === "invalid") {
-  await hooks["tool.execute.before"](
-    { tool: "edit", sessionID: "s", callID: "1" },
-    { args: { filePath: "/tmp/analysis.py" } },
+  let error
+  try {
+    await hooks["tool.execute.before"](
+      { tool: "edit", sessionID: "s", callID: "1" },
+      { args: { filePath: "/tmp/analysis.py" } },
+    )
+  } catch (caught) {
+    error = String(caught)
+  }
+  console.log(JSON.stringify({ error, logs }))
+}
+
+if (scenario === "post-failure") {
+  const writeOutput = { title: "write", output: "written", metadata: {} }
+  await hooks["tool.execute.after"](
+    { tool: "write", sessionID: "s", callID: "1", args: { filePath: "/tmp/analysis.py" } },
+    writeOutput,
   )
-  console.log(JSON.stringify({ logs }))
+  console.log(JSON.stringify({ writeOutput, logs }))
 }
 """
 
@@ -165,16 +191,42 @@ def test_converts_deny_decision_to_tool_error(tmp_path):
     assert "blocked by test" in output["error"]
 
 
-def test_invalid_guard_output_fails_open_and_logs(tmp_path):
+def test_invalid_guard_output_is_visible_and_blocks(tmp_path):
     output, calls = _run_plugin(tmp_path, "invalid", mode="invalid")
     assert len(calls) == 1
+    assert "invalid JSON" in output["error"]
     assert output["logs"][0]["body"]["level"] == "error"
-    assert "invalid JSON" in output["logs"][0]["body"]["message"]
 
 
-def test_nonzero_guard_exit_fails_open_and_logs(tmp_path):
+def test_exit2_wins_over_invalid_stdout(tmp_path):
+    output, calls = _run_plugin(tmp_path, "deny", mode="deny-invalid")
+    assert len(calls) == 1
+    assert "deny reason from stderr" in output["error"]
+    assert "guard failure" not in output["error"]
+    assert any(
+        "invalid JSON with deny status" in entry["body"]["message"]
+        for entry in output["logs"]
+    )
+
+
+def test_nonzero_guard_exit_is_visible_and_blocks(tmp_path):
     output, calls = _run_plugin(tmp_path, "invalid", mode="failure")
     assert len(calls) == 1
+    assert "test failure" in output["error"]
     assert output["logs"][0]["body"]["level"] == "error"
     assert "status 7" in output["logs"][0]["body"]["message"]
     assert output["logs"][0]["body"]["extra"]["stderr"] == "test failure"
+
+
+def test_post_nonzero_guard_exit_is_appended_to_tool_output(tmp_path):
+    output, calls = _run_plugin(tmp_path, "post-failure", mode="failure")
+    assert len(calls) == 1
+    assert output["writeOutput"]["output"].startswith("written")
+    assert "test failure" in output["writeOutput"]["output"]
+
+
+def test_post_exit2_diagnostic_is_appended_to_tool_output(tmp_path):
+    output, calls = _run_plugin(tmp_path, "post-failure", mode="post-deny")
+    assert len(calls) == 1
+    assert "post context" in output["writeOutput"]["output"]
+    assert "post diagnostic" in output["writeOutput"]["output"]

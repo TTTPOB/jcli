@@ -5,22 +5,44 @@ import subprocess
 import sys
 
 from jupyter_jcli._enums import DriftStatus
-from jupyter_jcli.gitutil import git_root
+from jupyter_jcli.gitutil import resolve_git_root
 
+from .decision import HookOutcome
 from .pair_drift import (
     _diff_section,
     _prepare_merged_py,
 )
 
 
-def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
+def _run_git_add(repo_root, path) -> None:
+    """Stage *path* and propagate git failures to the hook caller."""
+    try:
+        result = subprocess.run(
+            ["git", "add", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+        )
+    except (OSError, FileNotFoundError) as exc:
+        raise RuntimeError(f"git add failed: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "git add failed").strip()
+        raise RuntimeError(f"git add failed for {path}: {detail}")
+
+
+def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
     # ------------------------------------------------------------------
-    # Step 1: locate repo root (fail-open if git missing / not a repo)
+    # Step 1: locate repo root. A directory outside git is a normal noop;
+    # an unavailable or failing git executable is an operation failure.
     # ------------------------------------------------------------------
-    repo_root = git_root()
+    root_result = resolve_git_root()
+    if root_result.error is not None:
+        return HookOutcome.failure(f"git repository lookup failed: {root_result.error}")
+    repo_root = root_result.root
     if repo_root is None:
         print("pre-commit-pair-sync: not in a git repo, skipping", file=sys.stderr)
-        sys.exit(0)
+        return HookOutcome.success()
 
     # ------------------------------------------------------------------
     # Step 2: staged files
@@ -33,16 +55,12 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             check=False,
             cwd=str(repo_root),
         )
-        if diff.returncode != 0:
-            print(
-                "pre-commit-pair-sync: could not list staged files, skipping",
-                file=sys.stderr,
-            )
-            sys.exit(0)
-        staged_rel = [p for p in diff.stdout.splitlines() if p.strip()]
-    except (OSError, FileNotFoundError):
-        print("pre-commit-pair-sync: git not found in PATH, skipping", file=sys.stderr)
-        sys.exit(0)
+    except (OSError, FileNotFoundError) as exc:
+        return HookOutcome.failure(f"could not list staged files: {exc}")
+    if diff.returncode != 0:
+        detail = (diff.stderr or diff.stdout or "git diff failed").strip()
+        return HookOutcome.failure(f"could not list staged files: {detail}")
+    staged_rel = [p for p in diff.stdout.splitlines() if p.strip()]
 
     # ------------------------------------------------------------------
     # Step 3: block staged .ipynb
@@ -57,7 +75,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         for p in staged_ipynb:
             print(f"  {p}", file=sys.stderr)
         print("  Hint: git restore --staged <file>.ipynb", file=sys.stderr)
-        sys.exit(1)
+        return HookOutcome.failure("staged .ipynb files require manual unstaging")
 
     # ------------------------------------------------------------------
     # Step 4: filter staged .py files
@@ -97,29 +115,17 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                 py_text = percent.dumps(parsed_nb)
                 py_path.parent.mkdir(parents=True, exist_ok=True)
                 py_path.write_text(py_text, encoding="utf-8")
-                subprocess.run(
-                    ["git", "add", str(py_path)],
-                    check=False,
-                    cwd=str(repo_root),
-                )
-                updated_py.append(rel_path)
-                print(
-                    f"pre-commit-pair-sync: initial sync "
-                    f"{py_path.name} from {ipynb_path.name}",
-                    file=sys.stderr,
-                )
-            except UnicodeDecodeError:
-                print(
-                    f"pre-commit-pair-sync: non-UTF-8 content in {ipynb_path.name}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                _run_git_add(repo_root, py_path)
             except Exception as exc:  # noqa: BLE001
-                print(
-                    f"pre-commit-pair-sync: error syncing {py_path.name}: {exc}",
-                    file=sys.stderr,
+                return HookOutcome.failure(
+                    f"could not initially sync {py_path.name}: {exc}"
                 )
-                sys.exit(1)
+            updated_py.append(rel_path)
+            print(
+                f"pre-commit-pair-sync: initial sync "
+                f"{py_path.name} from {ipynb_path.name}",
+                file=sys.stderr,
+            )
             continue
 
         if not py_path.exists() or not ipynb_path.exists():
@@ -129,20 +135,11 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
         try:
             from jupyter_jcli.diff import check_drift
 
-            result = check_drift(py_path, ipynb_path)
-        except UnicodeDecodeError:
-            print(
-                f"pre-commit-pair-sync: non-UTF-8 content in "
-                f"{py_path.name}/{ipynb_path.name}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            result = check_drift(py_path, ipynb_path, strict_baseline=True)
         except Exception as exc:  # noqa: BLE001
-            print(
-                f"pre-commit-pair-sync: error checking {py_path.name}: {exc}",
-                file=sys.stderr,
+            return HookOutcome.failure(
+                f"error checking {py_path.name}/{ipynb_path.name}: {exc}"
             )
-            sys.exit(1)
 
         if result.status == DriftStatus.IN_SYNC:
             continue
@@ -151,21 +148,13 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             if result.py_needs_update:
                 try:
                     merged_text, _ = _prepare_merged_py(py_path, result.merged_cells)
-                    if merged_text is None:
-                        raise RuntimeError("could not prepare merged py text")
                     py_path.write_text(merged_text, encoding="utf-8")
-                    subprocess.run(
-                        ["git", "add", str(py_path)],
-                        check=False,
-                        cwd=str(repo_root),
-                    )
-                    updated_py.append(rel_path)
+                    _run_git_add(repo_root, py_path)
                 except Exception as exc:  # noqa: BLE001
-                    print(
-                        f"pre-commit-pair-sync: could not write {py_path.name}: {exc}",
-                        file=sys.stderr,
+                    return HookOutcome.failure(
+                        f"could not synchronize {py_path.name}: {exc}"
                     )
-                    sys.exit(1)
+                updated_py.append(rel_path)
             if result.ipynb_needs_update:
                 try:
                     from jupyter_jcli.pairing import update_ipynb_sources
@@ -177,11 +166,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
                         ipynb_rel = str(ipynb_path)
                     updated_ipynb.append(ipynb_rel)
                 except Exception as exc:  # noqa: BLE001
-                    print(
-                        f"pre-commit-pair-sync: could not write {ipynb_path.name}: {exc}",
-                        file=sys.stderr,
+                    return HookOutcome.failure(
+                        f"could not synchronize {ipynb_path.name}: {exc}"
                     )
-                    sys.exit(1)
             continue
 
         if result.status == DriftStatus.CONFLICT:
@@ -223,7 +210,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             "OR  j-cli convert py-to-ipynb <nb.py> <nb.ipynb>",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return HookOutcome.failure("merge conflicts require manual resolution")
 
     if drifts:
         print(
@@ -240,7 +227,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             "OR  j-cli convert py-to-ipynb <nb.py> <nb.ipynb>",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return HookOutcome.failure("unmerged pair drift requires manual resolution")
 
     if updated_py:
         print(
@@ -253,3 +240,4 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> None:
             f"{', '.join(updated_ipynb)}",
             file=sys.stderr,
         )
+    return HookOutcome.success()

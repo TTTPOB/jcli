@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -66,6 +67,25 @@ class TestLocalScope:
         runner = CliRunner()
         _invoke(runner, ["--local"])
         assert _hooks_path_config(git_repo) is None
+
+    def test_hook_shim_propagates_jcli_status(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        assert _invoke(runner, ["--local"]).exit_code == 0
+
+        fake = git_repo / "j-cli"
+        fake.write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+        fake.chmod(0o755)
+        env = {**os.environ, "PATH": f"{git_repo}:{os.environ['PATH']}"}
+        result = subprocess.run(
+            [str(git_repo / ".git" / "hooks" / "pre-commit")],
+            check=False,
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 7
 
     def test_local_overwrite_notice(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)

@@ -56,33 +56,42 @@ The command is idempotent — re-running updates the hook in place without dupli
 
 > **Note:** `notebook-edit-guard` is not installed for Codex because Codex has no `NotebookEdit` tool; file edits go through `apply_patch` instead.
 
-## One-time DSH hook install
+## One-time DSH native adapter install
 
-Use this when DeepSeek Harness can resolve `@deepseek-ai/dsh-hooks-claude-code`.
-Workspace installation also requires `dsh-workspace-overlay`:
+Use this to install j-cli's self-contained native TypeScript adapter for DeepSeek Harness. It has no official DSH hook-bridge dependency and needs no `tsc`, `tsx`, npm, or separate Node project. Workspace installation also requires `dsh-workspace-overlay`:
 
 ```bash
-j-cli setup dsh                 # default --local; .dsh/cordis.yml
-j-cli setup dsh --project       # same workspace file
+j-cli setup dsh                 # default --local; .dsh/cordis.yml + plugins/jcli.ts
+j-cli setup dsh --project       # same workspace files
 j-cli setup dsh --proj          # alias for --project
-j-cli setup dsh --global        # $DSH_HOME/cordis.patch.yml (default ~/.dsh)
+j-cli setup dsh --global        # $DSH_HOME/cordis.patch.yml + plugins/jcli.ts
 j-cli setup dsh --user          # alias for --global
 ```
 
 The workspace file is the overlay's only workspace layer, so `--local` is a
-project alias and is not gitignored automatically. The global form writes a
-true Host patch and uses the bridge directly; it does not install DSH plugins.
-Workspace rows require the overlay to mount `.dsh/cordis.yml`. Both forms write
-an adjacent `jcli-hooks.json` and use an absolute bridge `configPath`. Rerun the
-command after moving the workspace or changing `DSH_HOME`. DSH's `PATH` must
-resolve the updated `j-cli` installation. Choose one installation scope per
-workspace to avoid running guards twice; `setup dsh` warns when it sees both
-workspace and global managed rows.
+project alias and is not gitignored automatically. The generated paths are:
 
-The DSH bridge uses Claude-shaped JSON with lower-case tool matchers: `bash`,
-`edit`, and `write`. It runs the same four j-cli guards as Codex (there is no
-`NotebookEdit` block), while DSH `tool_input.workdir` is resolved relative to
-the session cwd.
+| Scope | Cordis file | Adapter file | Module name |
+|---|---|---|---|
+| Workspace | `<cwd>/.dsh/cordis.yml` | `<cwd>/.dsh/plugins/jcli.ts` | `./plugins/jcli.ts` |
+| Global (`$DSH_HOME` defaults to `~/.dsh`) | `$DSH_HOME/cordis.patch.yml` | `$DSH_HOME/plugins/jcli.ts` | absolute path |
+
+The workspace module is relative to `.dsh`, so a workspace can be moved as a
+unit. Global and workspace scopes never share an adapter file. Rerun the command
+after moving the workspace or changing `DSH_HOME`; DSH's `PATH` must resolve the
+updated `j-cli` installation. The DSH runtime needs direct-TypeScript support
+(Node 24.19 is the tested runtime); no compiler or package manager is required.
+Choose one scope per workspace to avoid duplicate guards; setup warns when both
+managed rows exist.
+
+Re-running `setup dsh` replaces a managed legacy bridge row in place. It removes
+only j-cli entries from the old `.dsh/jcli-hooks.json` (or global equivalent),
+keeps user entries, and warns that the native adapter does not execute remaining
+custom legacy hooks.
+`--remove` handles that old layout too and preserves user configuration. See
+[hook exit codes](../../docs/hook-exit-codes.md): `0` is allow/success, `2` is an
+explicit pre-hook refusal, and `1` is a parse, I/O, Git, synchronization, or
+baseline failure. Post-hook failures keep the tool result and add a diagnostic.
 
 ## One-time OpenCode hook install
 

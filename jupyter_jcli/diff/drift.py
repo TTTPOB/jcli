@@ -23,6 +23,11 @@ def _get_git_base_text(path: Path) -> str | None:
     return pair_baseline.read_baseline(path)
 
 
+def _get_git_base_text_strict(path: Path) -> str | None:
+    """Return a baseline while propagating Git failures to hook callers."""
+    return pair_baseline.read_baseline(path, strict=True)
+
+
 @dataclass
 class DriftResult:
     """Result of a drift check and optional three-way merge attempt."""
@@ -63,7 +68,9 @@ class DriftResult:
 # ---------------------------------------------------------------------------
 
 
-def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
+def check_drift(
+    py_path: Path, ipynb_path: Path, *, strict_baseline: bool = False
+) -> DriftResult:
     """Check whether a py/ipynb pair has drifted and attempt auto-merge.
 
     Strategy:
@@ -75,9 +82,11 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
       is DRIFT_ONLY with a unified diff — no side wins automatically.
 
     Note: ``.ipynb`` is by design gitignored and never has a HEAD blob; only
-    ``.py`` is used as the merge baseline.
+    ``.py`` is used as the merge baseline. Hook callers can set
+    ``strict_baseline=True`` to propagate Git errors instead of treating them
+    as an absent baseline; the default preserves the regular CLI behavior.
 
-    Raises any exception encountered (caller is responsible for fail-open).
+    Raises any exception encountered; callers decide how to report it.
     """
     ours_raw = py_path.read_text(encoding="utf-8")
     ours_parsed = percent.loads(ours_raw)
@@ -96,7 +105,11 @@ def check_drift(py_path: Path, ipynb_path: Path) -> DriftResult:
         include_cell_ids=None if include_cell_ids else False,
     )
 
-    base_raw = _get_git_base_text(py_path)
+    base_raw = (
+        _get_git_base_text_strict(py_path)
+        if strict_baseline
+        else _get_git_base_text(py_path)
+    )
 
     if base_raw is None:
         if ours_text == theirs_text:

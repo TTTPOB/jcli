@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from jupyter_jcli import pair_baseline
+from jupyter_jcli.gitutil import resolve_git_root
 from tests.helpers import make_py_text
 
 
@@ -57,6 +58,90 @@ def _write_and_commit(
 
 def _ref_name(rel_path: str) -> str:
     return pair_baseline._ref_name(Path(rel_path).as_posix())
+
+
+class TestStrictGitClassification:
+    def test_non_git_directory_is_normal_noop(self, tmp_path: Path) -> None:
+        result = resolve_git_root(tmp_path)
+        assert result.root is None
+        assert result.error is None
+
+    def test_non_repository_128_with_other_diagnostic_is_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = subprocess.CompletedProcess(
+            ["git", "rev-parse", "--show-toplevel"],
+            128,
+            "",
+            "error: bogus count number\nfatal: unable to parse command-line config",
+        )
+        monkeypatch.setattr("jupyter_jcli.gitutil.subprocess.run", lambda *a, **k: proc)
+        result = resolve_git_root(tmp_path)
+        assert result.root is None
+        assert isinstance(result.error, RuntimeError)
+        assert "bogus count" in str(result.error)
+
+    def test_strict_missing_ref_128_is_normal_none(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = subprocess.CompletedProcess(
+            ["git", "log"],
+            128,
+            "",
+            "fatal: ambiguous argument 'refs/jcli/pair-sync/missing': "
+            "unknown revision or path not in the working tree.\n"
+            "Use '--' to separate paths from revisions, like this:\n",
+        )
+        monkeypatch.setattr(pair_baseline, "_run_git", lambda *a, **k: proc)
+        assert (
+            pair_baseline._commit_timestamp(
+                git_repo, "refs/jcli/pair-sync/missing", strict=True
+            )
+            is None
+        )
+
+    def test_strict_git_128_with_unrelated_diagnostic_fails(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = subprocess.CompletedProcess(
+            ["git", "log"],
+            128,
+            "",
+            "error: bogus count number",
+        )
+        monkeypatch.setattr(pair_baseline, "_run_git", lambda *a, **k: proc)
+        with pytest.raises(RuntimeError, match="bogus count"):
+            pair_baseline._commit_timestamp(
+                git_repo, "refs/jcli/pair-sync/missing", strict=True
+            )
+
+    def test_strict_empty_head_timestamp_is_normal_none(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = subprocess.CompletedProcess(["git", "log"], 0, "", "")
+        monkeypatch.setattr(pair_baseline, "_run_git", lambda *a, **k: proc)
+        assert (
+            pair_baseline._head_timestamp(git_repo, "untracked.py", strict=True) is None
+        )
+
+    def test_gc_keeps_existing_untracked_baselined_file(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The sticky baseline can exist before the repository has its first HEAD.
+        ghost_path = git_repo / "untracked.py"
+        ghost_path.write_text(make_py_text("x = 1"), encoding="utf-8")
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        assert (
+            pair_baseline.write_baseline(
+                ghost_path, ghost_path.read_text(encoding="utf-8")
+            )
+            is True
+        )
+        assert pair_baseline.gc_stale_refs(git_repo, dry_run=True, strict=True) == (
+            0,
+            1,
+        )
 
 
 class TestReadWriteBaseline:

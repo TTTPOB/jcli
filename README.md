@@ -233,39 +233,55 @@ The install command is idempotent — re-running updates hooks in place without 
 
 ### `setup dsh`
 
-Install the j-cli hook integration for DeepSeek Harness (DSH). The command
-writes a Claude-shaped `jcli-hooks.json` plus a Cordis row for the
-`@deepseek-ai/dsh-hooks-claude-code` bridge. That bridge must be available where
-DSH resolves plugins. Workspace installation also requires
-`dsh-workspace-overlay` to mount `.dsh/cordis.yml`; global installation loads
-the bridge directly through the Host patch.
+Install the self-contained native TypeScript adapter for DeepSeek Harness (DSH).
+The adapter is packaged inside `jupyter-jcli`, has no official DSH hook-bridge
+dependency, and invokes the installed `j-cli` guards through DSH's native shell
+injection. It does not require `tsc`, `tsx`, npm, or a separate Node project.
+Workspace installation still requires `dsh-workspace-overlay` to mount
+`.dsh/cordis.yml`.
 
 ```bash
-j-cli setup dsh                 # default --local; writes .dsh/cordis.yml
-j-cli setup dsh --project       # same workspace file, project spelling
+j-cli setup dsh                 # default --local; native workspace adapter
+j-cli setup dsh --project       # same workspace files, project spelling
 j-cli setup dsh --proj          # alias for --project
-j-cli setup dsh --global        # writes $DSH_HOME/cordis.patch.yml
+j-cli setup dsh --global        # native adapter under $DSH_HOME/plugins
 j-cli setup dsh --user          # alias for --global
 
-# remove only the j-cli-managed DSH row and hook entries
+# remove only j-cli-managed rows, adapters, and legacy entries
 j-cli setup dsh --remove
 j-cli setup dsh --global --remove
 ```
 
-`--local` is intentionally a project alias: `dsh-workspace-overlay` reads only
-`<workspace>/.dsh/cordis.yml` and has no separate local layer or gitignored
-`.dsh` file. The global form writes a true Host patch at
-`$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`) and its hook
-JSON beside it. The generated bridge `configPath` is absolute because DSH
-resolves relative bridge config paths from the process launch directory.
-Rerun `setup dsh` after moving a workspace or changing `DSH_HOME`. DSH's `PATH`
-must resolve the updated `j-cli` installation to run the generated commands.
+| Scope | Flags | Cordis file | Native adapter | Cordis module name |
+|---|---|---|---|---|
+| Workspace | `--local` (default), `--project`, `--proj` | `<cwd>/.dsh/cordis.yml` | `<cwd>/.dsh/plugins/jcli.ts` | `./plugins/jcli.ts` |
+| Global | `--global`, `--user` | `$DSH_HOME/cordis.patch.yml` | `$DSH_HOME/plugins/jcli.ts` | absolute adapter path |
 
-The workspace and global rows can both be active in one DSH process. The
-installer warns when it detects both managed rows, because each would run the
-same j-cli guards twice. Re-running is idempotent; YAML comments, `!!js` tags,
-unrelated rows, and unrelated JSON hooks are preserved. Removal never deletes
-unmanaged configuration.
+`$DSH_HOME` defaults to `~/.dsh`; workspace paths use the canonical current
+working directory. The workspace module name is deliberately relative to the
+`.dsh` composition file, so the whole workspace can be moved together. Global
+and workspace scopes always use separate adapter paths.
+The installer validates the packaged resource, every existing YAML/JSON input,
+and TS ownership before writing. Adapter replacement is atomic and an existing
+TS file without the j-cli managed header is never overwritten or removed.
+Re-running is idempotent; YAML comments, `!!js` tags, explicit document markers,
+empty sequences, unrelated rows, and unrelated legacy settings are preserved.
+When both scopes are present, setup warns because DSH could run both adapters.
+Ensure the DSH runtime uses a Node release that supports direct TypeScript
+modules (Node 24.19 is the tested runtime), and ensure its `PATH` resolves the
+updated `j-cli` installation. No compiler or package manager is needed at
+runtime.
+
+Re-running `setup dsh` migrates a managed legacy bridge row in place to the
+native row. An old `.dsh/jcli-hooks.json` (or the global file with the same name)
+is cleaned only of j-cli-managed entries; user entries remain in place. If custom
+entries remain,
+setup warns that the native adapter does not execute those legacy hooks and they
+must be configured separately. `--remove` also understands this old layout and
+never deletes user configuration. See [hook exit codes](docs/hook-exit-codes.md):
+`0` means allow/success, `2` means an explicit pre-hook refusal, and `1` means
+parse, I/O, Git, synchronization, or baseline failure. Post-hook failures keep
+the tool result and add a diagnostic.
 
 ### `setup opencode`
 

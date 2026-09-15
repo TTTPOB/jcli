@@ -13,14 +13,15 @@ from jupyter_jcli.cli import main
 
 
 def _invoke(command: str) -> tuple[int, dict | None]:
-    """Invoke notebook-exec-guard with a Bash command payload. Returns (exit_code, json_output)."""
+    """Invoke notebook-exec-guard and parse its optional JSON decision."""
     runner = CliRunner()
     payload = json.dumps({"tool_input": {"command": command}})
     result = runner.invoke(
         main, ["_hooks", "notebook-exec-guard"], input=payload, catch_exceptions=False
     )
-    if result.output.strip():
-        return result.exit_code, json.loads(result.output)
+    for line in result.output.splitlines():
+        if line.strip().startswith("{"):
+            return result.exit_code, json.loads(line)
     return result.exit_code, None
 
 
@@ -76,14 +77,14 @@ def _is_deny(out: dict | None) -> bool:
 )
 def test_guard_decisions(command: str, should_deny: bool):
     exit_code, out = _invoke(command)
-    assert exit_code == 0
+    assert exit_code == (2 if should_deny else 0)
     assert _is_deny(out) == should_deny, (
         f"command={command!r}: expected deny={should_deny}, got deny={_is_deny(out)}, output={out}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Fail-open on bad input
+# Malformed hook input is an operation failure
 # ---------------------------------------------------------------------------
 
 
@@ -97,13 +98,81 @@ def test_guard_decisions(command: str, should_deny: bool):
         '{"tool_input": {"command": null}}',
     ],
 )
-def test_malformed_stdin_allows(raw_input: str):
+def test_malformed_stdin_fails(raw_input: str):
     runner = CliRunner()
     result = runner.invoke(
         main, ["_hooks", "notebook-exec-guard"], input=raw_input, catch_exceptions=False
     )
+    assert result.exit_code == 1
+    assert "malformed hook payload" in (result.stderr or result.output)
+
+
+def test_malformed_dsh_payload_is_nonzero():
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["_hooks", "notebook-exec-guard", "--platform", "dsh"],
+        input=json.dumps({"tool_input": None}),
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 1
+    assert "malformed hook payload" in (result.stderr or result.output)
+
+
+@pytest.mark.parametrize(
+    ("hook", "payload"),
+    [
+        (
+            "notebook-exec-guard",
+            {"tool_input": {"command": 42}},
+        ),
+        (
+            "notebook-exec-guard",
+            {"tool_input": {"command": ["bash", "-c", "echo ok"]}},
+        ),
+        (
+            "python-run-guard",
+            {"cwd": 42, "tool_input": {"command": "echo ok"}},
+        ),
+        (
+            "python-run-guard",
+            {"tool_input": {"command": ["bash", "-c", "echo ok"]}},
+        ),
+        (
+            "pair-drift-guard-pre",
+            {"tool_input": {"file_path": None}},
+        ),
+        (
+            "pair-drift-guard-post",
+            {"tool_input": {"file_path": None}},
+        ),
+        (
+            "notebook-edit-guard",
+            {"tool_name": None, "tool_input": {}},
+        ),
+    ],
+)
+def test_explicit_wrong_payload_types_fail(hook: str, payload: dict):
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["_hooks", hook, "--platform", "dsh"],
+        input=json.dumps(payload),
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 1
+    assert "malformed hook payload" in (result.stderr or result.output)
+
+
+@pytest.mark.parametrize("hook", ["notebook-exec-guard", "python-run-guard"])
+def test_missing_dsh_command_is_normal_noop(hook: str):
+    result = CliRunner().invoke(
+        main,
+        ["_hooks", hook, "--platform", "dsh"],
+        input=json.dumps({"tool_input": {}}),
+        catch_exceptions=False,
+    )
     assert result.exit_code == 0
-    assert result.output.strip() == "", f"Expected empty stdout for input {raw_input!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +194,18 @@ def test_deny_message_mentions_nbconvert_label():
     assert "nbconvert" in reason
 
 
+def test_deny_exit2_writes_reason_to_stderr():
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["_hooks", "notebook-exec-guard"],
+        input=json.dumps({"tool_input": {"command": "papermill in.ipynb out.ipynb"}}),
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 2
+    assert "papermill" in (result.stderr or result.output)
+
+
 # ---------------------------------------------------------------------------
 # --debug smoke test for notebook-exec-guard
 # ---------------------------------------------------------------------------
@@ -137,12 +218,13 @@ class TestNotebookExecGuardDebug:
         payload = json.dumps(
             {"tool_input": {"command": "jupyter nbconvert --execute foo.ipynb"}}
         )
-        runner.invoke(
+        result = runner.invoke(
             main,
             ["_hooks", "notebook-exec-guard", "--debug"],
             input=payload,
             catch_exceptions=False,
         )
+        assert result.exit_code == 2
         logs = sorted(tmp_path.glob("notebook-exec-guard-*.log"))
         assert len(logs) == 1
         data = json.loads(logs[0].read_text())
@@ -151,6 +233,7 @@ class TestNotebookExecGuardDebug:
             data["stdin_parsed"]["tool_input"]["command"]
             == "jupyter nbconvert --execute foo.ipynb"
         )
+        assert data["exit_code"] == 2
 
     def test_debug_allow_path_logs_empty_stdout(self, tmp_path, monkeypatch):
         monkeypatch.setenv("JCLI_DEBUG_LOG_DIR", str(tmp_path))
