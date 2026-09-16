@@ -103,6 +103,7 @@ class TestIpynbToPy:
         assert parsed.cells[2].cell_type == "code"
 
     def test_kernel_name_in_output(self, tmp_path):
+        # R metadata tests non-default kernelspec preservation, not R execution support.
         nb = _make_ipynb([("code", "x = 1", [])], kernel="ir")
         ipynb = tmp_path / "nb.ipynb"
         nbformat.write(nb, str(ipynb))

@@ -356,6 +356,7 @@ class TestEmitPyPercent:
         assert parsed2.cells[0].source == source
 
     def test_front_matter_preserved(self):
+        # R metadata tests non-default kernelspec preservation, not R execution support.
         # front_matter_raw always ends with \n (splitlines keepends=True)
         fmr = "# ---\n# jupyter:\n#   kernelspec:\n#     name: ir\n# ---\n"
         parsed = _parsed("ir", ("code", "print(1)"), fmr=fmr)
@@ -376,6 +377,7 @@ class TestEmitPyPercent:
     def test_synthesized_header_includes_display_name_and_language(self):
         """When ParsedFile carries display_name and language, they appear in the
         synthesized header in alphabetical order (display_name, language, name)."""
+        # R metadata tests non-default kernelspec preservation, not R execution support.
         from jupyter_jcli.formats.model import ParsedFile
 
         parsed = ParsedFile(

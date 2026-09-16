@@ -55,6 +55,7 @@ class TestCanonicalizePyText:
         assert parsed.cells[1].source == "z = 3"
 
     def test_kernel_name_preserved(self):
+        # R metadata tests non-default kernelspec preservation, not R execution support.
         text = (
             "# ---\n# jupyter:\n#   kernelspec:\n#     name: ir\n# ---\n\n"
             "# %%\n1 + 1\n\n"

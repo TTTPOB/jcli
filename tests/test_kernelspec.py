@@ -48,6 +48,7 @@ def test_kernelspec_list_json(jupyter_server):
 
 
 def test_kernelspec_inspect_file_py_percent_json(tmp_path):
+    # R metadata tests opaque kernelspec inspection, not R execution support.
     py_file = tmp_path / "analysis.py"
     py_file.write_text(
         "# ---\n"
