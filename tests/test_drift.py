@@ -5,7 +5,15 @@ from unittest.mock import patch
 
 import nbformat
 
-from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged, check_drift
+from jupyter_jcli.diff import (
+    BaselineAvailable,
+    BaselineMissing,
+    Conflict,
+    DriftOnly,
+    InSync,
+    Merged,
+    check_drift,
+)
 from jupyter_jcli.formats import percent
 from tests.helpers import make_ipynb_text, make_py_text
 
@@ -62,7 +70,7 @@ class TestCheckDrift:
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert isinstance(result, InSync)
-        assert result.baseline_seed_text is None
+        assert isinstance(result.baseline, BaselineAvailable)
 
     def test_new_cell_gets_id_written_to_both_sides(self, tmp_path):
         notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
@@ -130,7 +138,7 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert isinstance(result, Conflict)
         assert 0 in result.conflict_indices
-        assert not hasattr(result, "baseline_seed_text")
+        assert not hasattr(result, "baseline")
 
     def test_ours_insert_cell_auto_merges(self, tmp_path):
         """ours (py) adds a cell; theirs (ipynb) unchanged from base -> MERGED."""
@@ -158,7 +166,8 @@ class TestCheckDrift:
         with self._patch_git(None):
             result = check_drift(py, ipynb)
         assert isinstance(result, InSync)
-        assert result.baseline_seed_text == percent.canonicalize(
+        assert isinstance(result.baseline, BaselineMissing)
+        assert result.baseline.seed_text == percent.canonicalize(
             py.read_text(encoding="utf-8"), include_cell_ids=False
         )
 
@@ -169,7 +178,7 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert isinstance(result, DriftOnly)
         assert result.diff_text != ""
-        assert not hasattr(result, "baseline_seed_text")
+        assert not hasattr(result, "baseline")
 
     def test_no_git_base_count_mismatch_drift_only(self, tmp_path):
         """No git base + cell count mismatch -> DRIFT_ONLY."""
@@ -240,7 +249,7 @@ class TestCheckDrift:
         assert isinstance(result, InSync)
 
     def test_in_sync_has_no_merge_or_diff_fields(self, tmp_path):
-        """IN_SYNC only carries an optional baseline bootstrap seed."""
+        """IN_SYNC only carries its explicit baseline state."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1"])
         with self._patch_git(None):
             result = check_drift(py, ipynb)
@@ -277,4 +286,4 @@ class TestCheckDrift:
         assert isinstance(result, Merged)
         assert not hasattr(result, "diff_text")
         assert not hasattr(result, "conflict_indices")
-        assert not hasattr(result, "baseline_seed_text")
+        assert not hasattr(result, "baseline")

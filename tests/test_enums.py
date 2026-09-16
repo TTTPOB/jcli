@@ -15,7 +15,14 @@ from jupyter_jcli._enums import (
     OutputType,
     ResponseStatus,
 )
-from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
+from jupyter_jcli.diff import (
+    BaselineAvailable,
+    BaselineMissing,
+    Conflict,
+    DriftOnly,
+    InSync,
+    Merged,
+)
 
 # ---------------------------------------------------------------------------
 # DriftStatus
@@ -42,7 +49,7 @@ class TestDriftStatus:
 
     def test_concrete_results_expose_fixed_read_only_status(self):
         results = [
-            (InSync(), DriftStatus.IN_SYNC),
+            (InSync(BaselineAvailable()), DriftStatus.IN_SYNC),
             (Merged([], False, False), DriftStatus.MERGED),
             (Conflict([], ""), DriftStatus.CONFLICT),
             (DriftOnly(""), DriftStatus.DRIFT_ONLY),
@@ -53,9 +60,11 @@ class TestDriftStatus:
                 result.status = DriftStatus.IN_SYNC
 
     def test_concrete_result_fields_are_disjoint(self):
-        assert [field.name for field in dataclasses.fields(InSync)] == [
-            "baseline_seed_text"
+        assert [field.name for field in dataclasses.fields(BaselineAvailable)] == []
+        assert [field.name for field in dataclasses.fields(BaselineMissing)] == [
+            "seed_text"
         ]
+        assert [field.name for field in dataclasses.fields(InSync)] == ["baseline"]
         assert [field.name for field in dataclasses.fields(Merged)] == [
             "merged_cells",
             "py_needs_update",
@@ -68,9 +77,19 @@ class TestDriftStatus:
         ]
         assert [field.name for field in dataclasses.fields(DriftOnly)] == ["diff_text"]
 
-    def test_concrete_results_reject_status_constructor_argument(self):
+    def test_in_sync_requires_explicit_baseline(self):
         with pytest.raises(TypeError):
-            InSync(status=DriftStatus.IN_SYNC)
+            InSync()
+
+        available = InSync(BaselineAvailable())
+        missing = InSync(BaselineMissing(seed_text=""))
+        assert isinstance(available.baseline, BaselineAvailable)
+        assert isinstance(missing.baseline, BaselineMissing)
+        assert missing.baseline.seed_text == ""
+
+    def test_concrete_results_reject_status_constructor_argument(self):
+        with pytest.raises(TypeError, match="status"):
+            InSync(baseline=BaselineAvailable(), status=DriftStatus.IN_SYNC)
 
 
 # ---------------------------------------------------------------------------

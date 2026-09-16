@@ -41,11 +41,28 @@ class _DriftResult:
 
 
 @dataclass(frozen=True)
+class BaselineAvailable:
+    """A usable baseline was read from HEAD or the sticky baseline."""
+
+
+@dataclass(frozen=True)
+class BaselineMissing:
+    """No baseline was obtained under the current baseline-reading strategy.
+
+    Strict hook reads ensure lookup errors are raised instead of represented as
+    a missing baseline.
+    """
+
+    seed_text: str
+    """Canonical Python text to use when bootstrapping the baseline."""
+
+
+@dataclass(frozen=True)
 class InSync(_DriftResult):
     """The canonical Python and notebook sources are synchronized."""
 
-    baseline_seed_text: str | None = None
-    """Canonical Python text to bootstrap a missing baseline, when applicable."""
+    baseline: BaselineAvailable | BaselineMissing
+    """Whether a usable baseline was available, or the seed to bootstrap one."""
 
     _status: ClassVar[DriftStatus] = DriftStatus.IN_SYNC
 
@@ -137,7 +154,7 @@ def check_drift(
 
     if base_raw is None:
         if ours_text == theirs_text:
-            return InSync(baseline_seed_text=ours_text)
+            return InSync(baseline=BaselineMissing(seed_text=ours_text))
         return DriftOnly(diff_text=render_no_baseline_diff(ours_text, theirs_text))
 
     base_text = percent.canonicalize(
@@ -151,7 +168,7 @@ def check_drift(
 
     if not merge.has_conflict:
         if not py_needs and not ipynb_needs:
-            return InSync()
+            return InSync(baseline=BaselineAvailable())
         merged_cells = percent.loads(merge.text).cells
         return Merged(
             merge_mode=MergeMode.THREE_WAY,

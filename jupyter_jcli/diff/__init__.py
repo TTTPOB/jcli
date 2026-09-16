@@ -2,6 +2,8 @@
 
 from jupyter_jcli.diff.alignment import CellChange, align_cells, diff_cells
 from jupyter_jcli.diff.drift import (
+    BaselineAvailable,
+    BaselineMissing,
     Conflict,
     DriftOnly,
     DriftResult,
@@ -11,6 +13,8 @@ from jupyter_jcli.diff.drift import (
 )
 
 __all__ = [
+    "BaselineAvailable",
+    "BaselineMissing",
     "CellChange",
     "Conflict",
     "DriftOnly",

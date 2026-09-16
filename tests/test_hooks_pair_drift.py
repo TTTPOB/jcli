@@ -15,8 +15,11 @@ from click.testing import CliRunner
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus
 from jupyter_jcli.cli import main
-from jupyter_jcli.commands.hooks.pair_drift import _merge_post_contexts
-from jupyter_jcli.diff import check_drift
+from jupyter_jcli.commands.hooks.pair_drift import (
+    _merge_post_contexts,
+    _run_pre_drift_check,
+)
+from jupyter_jcli.diff import BaselineMissing, InSync, check_drift
 from jupyter_jcli.parser import parse_file
 
 # ---------------------------------------------------------------------------
@@ -261,6 +264,22 @@ class TestNoDrift:
             )
         assert code == 0
         assert _decision(out) is None
+
+    def test_pre_persists_empty_missing_baseline_seed(self, tmp_path):
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+
+        with (
+            patch(
+                "jupyter_jcli.diff.check_drift",
+                return_value=InSync(BaselineMissing(seed_text="")),
+            ),
+            patch(
+                "jupyter_jcli.commands.hooks.pair_drift._persist_baseline_for_hook"
+            ) as persist,
+        ):
+            assert _run_pre_drift_check(py) is None
+
+        persist.assert_called_once_with(py, "")
 
 
 # ---------------------------------------------------------------------------

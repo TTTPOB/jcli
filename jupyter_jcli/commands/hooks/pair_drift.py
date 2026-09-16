@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
+from jupyter_jcli.diff import BaselineMissing, Conflict, DriftOnly, InSync, Merged
 
 from .decision import HookOutcome
 
@@ -68,9 +68,9 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
         raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
     if isinstance(result, InSync):
-        if result.baseline_seed_text is not None:
+        if isinstance(result.baseline, BaselineMissing):
             try:
-                _persist_baseline_for_hook(py_path, result.baseline_seed_text)
+                _persist_baseline_for_hook(py_path, result.baseline.seed_text)
             except Exception as exc:
                 if logger is not None:
                     logger.record_exception(exc)
