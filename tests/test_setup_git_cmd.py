@@ -183,6 +183,7 @@ class TestGitignoreBlock:
 
         gi = (git_repo / ".gitignore").read_text()
         assert "*.ipynb" in gi
+        assert "**/.j-cli/" in gi
         assert "# >>> jcli managed (git hooks) >>>" in gi
         assert "# <<< jcli managed (git hooks) <<<" in gi
 

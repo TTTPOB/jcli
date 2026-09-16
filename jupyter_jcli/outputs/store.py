@@ -8,6 +8,7 @@ import json
 import os
 import time
 import uuid
+import warnings
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,11 +66,12 @@ def persist_inline_outputs(
     try:
         run_dir.mkdir(parents=True, exist_ok=False)
         stored_outputs = _write_payloads(raw_outputs, run_dir)
+        created_at = float(clock())
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "status": "complete",
             "run_id": run_id,
-            "created_at": float(clock()),
+            "created_at": created_at,
             "cwd": str(effective_cwd),
             "source": {
                 "kind": "inline",
@@ -84,7 +86,7 @@ def persist_inline_outputs(
             encoding="utf-8",
         )
         os.replace(temporary_manifest, manifest_path)
-        return StoredOutputs(
+        published = StoredOutputs(
             manifest_path=manifest_path.resolve(),
             outputs=_summary_outputs(stored_outputs),
         )
@@ -92,6 +94,21 @@ def persist_inline_outputs(
         raise OutputStoreError(
             f"Execution completed, but outputs could not be saved in {run_dir}: {error}"
         ) from error
+
+    try:
+        from jupyter_jcli.outputs.cleanup import cleanup_outputs
+
+        cleanup = cleanup_outputs(
+            cwd=effective_cwd, protected_run_ids={run_id}, now=created_at
+        )
+        if cleanup.failed_runs:
+            warnings.warn(
+                f"Automatic output cleanup was partial: {cleanup.failed_runs}",
+                stacklevel=2,
+            )
+    except Exception as error:  # noqa: BLE001 - cleanup must not hide saved output
+        warnings.warn(f"Automatic output cleanup failed: {error}", stacklevel=2)
+    return published
 
 
 def load_manifest(manifest_path: str | Path) -> dict[str, Any]:

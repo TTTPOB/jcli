@@ -20,7 +20,10 @@ from .common import Scope
 # ---------------------------------------------------------------------------
 
 _GITIGNORE_BLOCK = (
-    "# >>> jcli managed (git hooks) >>>\n*.ipynb\n# <<< jcli managed (git hooks) <<<\n"
+    "# >>> jcli managed (git hooks) >>>\n"
+    "*.ipynb\n"
+    "**/.j-cli/\n"
+    "# <<< jcli managed (git hooks) <<<\n"
 )
 
 _GITIGNORE_BLOCK_RE = re.compile(

@@ -19,6 +19,32 @@ def output():
     """Read persisted inline execution outputs."""
 
 
+@output.command("clean")
+@click.option("--dry-run", is_flag=True, help="Report eligible runs without deleting")
+@click.option("--days", type=click.IntRange(min=1), default=None)
+@click.option("--max-runs", type=click.IntRange(min=1), default=None)
+@click.pass_obj
+def clean(
+    ctx: CliContext, dry_run: bool, days: int | None, max_runs: int | None
+) -> None:
+    """Clean complete output runs in the current workspace."""
+    from jupyter_jcli.outputs.cleanup import cleanup_outputs
+
+    try:
+        result = cleanup_outputs(days=days, max_runs=max_runs, dry_run=dry_run)
+    except ValueError as error:
+        emit_error("OUTPUT_CLEAN_CONFIG_INVALID", str(error), ctx.use_json)
+    data = result.as_dict()
+    data["_human"] = (
+        f"deleted={len(result.deleted_runs)} "
+        f"eligible={len(result.would_delete_runs)} "
+        f"retained={len(result.retained_runs)} "
+        f"skipped={len(result.skipped_runs)} "
+        f"failed={len(result.failed_runs)}"
+    )
+    emit(data, use_json=ctx.use_json)
+
+
 @output.command("show")
 @click.argument("manifest", type=click.Path(dir_okay=False))
 @click.option("--output", "output_index", type=int, default=None)
