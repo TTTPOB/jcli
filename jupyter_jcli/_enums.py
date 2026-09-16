@@ -14,6 +14,14 @@ from __future__ import annotations
 from enum import Enum
 
 
+class HookPlatform(str, Enum):
+    """Agent platforms supported by hook entry points."""
+
+    CLAUDE = "claude"
+    CODEX = "codex"
+    DSH = "dsh"
+
+
 class DriftStatus(str, Enum):
     """Status of a py/ipynb pair drift check.
 

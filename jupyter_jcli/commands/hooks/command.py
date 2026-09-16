@@ -15,6 +15,7 @@ from typing import TypeVar
 
 import click
 
+from jupyter_jcli._enums import HookPlatform
 from jupyter_jcli.cli import CliContext, pass_ctx
 
 from .debug import HookDebugLogger, read_hook_stdin
@@ -42,6 +43,18 @@ from .payload import (
 from .pre_commit import _run_pre_commit_pair_sync
 
 _T = TypeVar("_T")
+
+
+def _platform_option():
+    """Validate platform values and pass enum members to hook callbacks."""
+    return click.option(
+        "--platform",
+        type=click.Choice([p.value for p in HookPlatform]),
+        default=HookPlatform.CLAUDE.value,
+        callback=lambda _ctx, _param, value: HookPlatform(value),
+        help="Agent platform.",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Guard patterns — each entry is (label, compiled_regex).
@@ -174,9 +187,7 @@ def _check_exec_guard(sc) -> str | None:
 
 
 @hooks.command("notebook-exec-guard")
-@click.option(
-    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
-)
+@_platform_option()
 @click.option(
     "--debug",
     "debug",
@@ -185,12 +196,13 @@ def _check_exec_guard(sc) -> str | None:
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-exec-guard-{ts}.log.",
 )
 @pass_ctx
-def nbconvert_guard(ctx: CliContext, platform: str, debug: bool):
+def nbconvert_guard(ctx: CliContext, platform: HookPlatform, debug: bool):
     """PreToolUse hook: deny notebook-execution bypass tools and redirect to j-cli."""
     extract = {
-        "codex": _extract_bash_command_codex,
-        "dsh": _extract_bash_command_dsh,
-    }.get(platform, _extract_bash_command_claude)
+        HookPlatform.CLAUDE: _extract_bash_command_claude,
+        HookPlatform.CODEX: _extract_bash_command_codex,
+        HookPlatform.DSH: _extract_bash_command_dsh,
+    }[platform]
     _run_guard(
         "notebook-exec-guard",
         debug,
@@ -240,9 +252,7 @@ _PYTHON_HINT = (
 
 
 @hooks.command("python-run-guard")
-@click.option(
-    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
-)
+@_platform_option()
 @click.option(
     "--debug",
     "debug",
@@ -251,14 +261,14 @@ _PYTHON_HINT = (
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/python-run-guard-{ts}.log.",
 )
 @pass_ctx
-def python_run_guard(ctx: CliContext, platform: str, debug: bool):
+def python_run_guard(ctx: CliContext, platform: HookPlatform, debug: bool):
     """PreToolUse hook: soft guard against running py:percent files as scripts."""
-    if platform == "dsh":
+    if platform == HookPlatform.DSH:
         extract = _extract_dsh_bash_command_and_cwd
     else:
         extract_command = (
             _extract_bash_command_codex
-            if platform == "codex"
+            if platform == HookPlatform.CODEX
             else _extract_bash_command_claude
         )
 
@@ -338,9 +348,7 @@ def _ipynb_edit_deny_message(path: Path, *, with_edit_tool: bool) -> str:
 
 
 @hooks.command("pair-drift-guard-pre")
-@click.option(
-    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
-)
+@_platform_option()
 @click.option(
     "--debug",
     "debug",
@@ -349,9 +357,9 @@ def _ipynb_edit_deny_message(path: Path, *, with_edit_tool: bool) -> str:
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-pre-{ts}.log.",
 )
 @pass_ctx
-def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
+def pair_drift_guard_pre(ctx: CliContext, platform: HookPlatform, debug: bool) -> None:
     """PreToolUse hook: detect pre-existing py/ipynb pair drift before an edit."""
-    if platform == "codex":
+    if platform == HookPlatform.CODEX:
         _run_guard(
             "pair-drift-guard-pre",
             debug,
@@ -359,7 +367,7 @@ def pair_drift_guard_pre(ctx: CliContext, platform: str, debug: bool) -> None:
             extract=_extract_file_paths_codex,
             handle=_deny_drift_pre_multi,
         )
-    elif platform == "dsh":
+    elif platform == HookPlatform.DSH:
         _run_guard(
             "pair-drift-guard-pre",
             debug,
@@ -450,7 +458,7 @@ def _emit_decision(decision: HookDecision, *, logger=None) -> None:
 
 
 @hooks.command("notebook-edit-guard")
-@click.option("--platform", default="claude", help="Agent platform: claude or codex")
+@_platform_option()
 @click.option(
     "--debug",
     "debug",
@@ -459,7 +467,7 @@ def _emit_decision(decision: HookDecision, *, logger=None) -> None:
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/notebook-edit-guard-{ts}.log.",
 )
 @pass_ctx
-def notebook_edit_guard(ctx: CliContext, platform: str, debug: bool) -> None:
+def notebook_edit_guard(ctx: CliContext, platform: HookPlatform, debug: bool) -> None:
     """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
     # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
     # --platform accepted for interface uniformity; not used for dispatch.
@@ -499,9 +507,7 @@ def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> HookOutcome:
 
 
 @hooks.command("pair-drift-guard-post")
-@click.option(
-    "--platform", default="claude", help="Agent platform: claude, codex, or dsh"
-)
+@_platform_option()
 @click.option(
     "--debug",
     "debug",
@@ -510,9 +516,9 @@ def _deny_notebook_edit(tool_name: str, log: HookDebugLogger) -> HookOutcome:
     help="Log stdin/stdout/stderr to /tmp/jcli-{uid}/pair-drift-guard-post-{ts}.log.",
 )
 @pass_ctx
-def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
+def pair_drift_guard_post(ctx: CliContext, platform: HookPlatform, debug: bool) -> None:
     """PostToolUse hook: auto-sync py/ipynb pair after agent's own edit."""
-    if platform == "codex":
+    if platform == HookPlatform.CODEX:
         _run_guard(
             "pair-drift-guard-post",
             debug,
@@ -520,7 +526,7 @@ def pair_drift_guard_post(ctx: CliContext, platform: str, debug: bool) -> None:
             extract=_extract_file_paths_codex,
             handle=_sync_drift_post_multi,
         )
-    elif platform == "dsh":
+    elif platform == HookPlatform.DSH:
         _run_guard(
             "pair-drift-guard-post",
             debug,

@@ -12,6 +12,25 @@ from jupyter_jcli.cli import main
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "notebook-exec-guard",
+        "python-run-guard",
+        "pair-drift-guard-pre",
+        "pair-drift-guard-post",
+        "notebook-edit-guard",
+    ],
+)
+def test_unknown_platform_rejected_before_reading_payload(guard):
+    result = CliRunner().invoke(
+        main, ["_hooks", guard, "--platform", "typo"], input="not json"
+    )
+    assert result.exit_code == 2
+    assert "Invalid value for '--platform'" in result.output
+    assert "typo" in result.output
+
+
 def _invoke(command: str) -> tuple[int, dict | None]:
     """Invoke notebook-exec-guard and parse its optional JSON decision."""
     runner = CliRunner()
