@@ -172,7 +172,7 @@ Cell specs are 0-indexed and use the same half-open range syntax as `exec`.
 
 ### `setup claude`
 
-Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Claude to use j-cli instead.
+Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, plus the `jcli-notebook-output` MCP server for reading notebook outputs.
 
 ```bash
 j-cli setup claude           # default: .claude/settings.local.json (gitignored)
@@ -184,7 +184,9 @@ j-cli setup claude --remove
 j-cli setup claude --project --remove
 ```
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. `--remove` prunes only j-cli managed entries, preserving any unrelated user hooks. If the settings file becomes empty after removal it is deleted.
+The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry if it points to another command. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. `--remove` prunes only j-cli managed hooks and the matching managed MCP entry, preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
+
+The notebook-output server requires the optional MCP dependencies. Install them with `uv tool install 'jupyter-jcli[mcp]'` (or the equivalent extras-aware command for your environment). If the extra is missing, `j-cli mcp serve` reports that `jupyter-jcli[mcp]` is required.
 
 ### `setup git`
 

@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.setup import mcp as setup_mcp
 from jupyter_jcli.commands.setup.common import Scope
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,15 @@ class TestScopeEnum:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_mcp(monkeypatch):
+    """Keep legacy hook tests from invoking the real Claude CLI."""
+    monkeypatch.setattr(
+        "jupyter_jcli.commands.setup.hooks.manage_claude_mcp",
+        lambda *args, **kwargs: "unchanged",
+    )
 
 
 def _invoke(runner: CliRunner, args: list[str]):
@@ -859,3 +869,186 @@ class TestRemove:
         # PreToolUse Read hook still present
         pre = settings.get("hooks", {}).get("PreToolUse", [])
         assert any(b.get("matcher") == "Read" for b in pre)
+
+
+# ---------------------------------------------------------------------------
+# Notebook-output MCP integration
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeMcp:
+    def test_project_install_uses_official_cli_and_explicit_root(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / ".mcp.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"other": {"command": "other-server", "args": []}},
+                    "projectSetting": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls = []
+
+        def fake_run(command, cwd, use_json):
+            calls.append((command, cwd, use_json))
+            current = _read_json(config)
+            current["mcpServers"]["jcli-notebook-output"] = {
+                "type": "stdio",
+                "command": "j-cli",
+                "args": ["mcp", "serve", "--root", str(tmp_path)],
+                "env": {},
+            }
+            config.write_text(json.dumps(current), encoding="utf-8")
+
+        monkeypatch.setattr(setup_mcp, "_run_claude", fake_run)
+
+        assert (
+            setup_mcp.manage_claude_mcp("project", tmp_path, False, False)
+            == "installed"
+        )
+        assert calls == [
+            (
+                [
+                    "claude",
+                    "mcp",
+                    "add",
+                    "--scope",
+                    "project",
+                    "jcli-notebook-output",
+                    "--",
+                    "j-cli",
+                    "mcp",
+                    "serve",
+                    "--root",
+                    str(tmp_path),
+                ],
+                tmp_path,
+                False,
+            )
+        ]
+        result = _read_json(config)
+        assert result["projectSetting"] is True
+        assert result["mcpServers"]["other"]["command"] == "other-server"
+
+    def test_project_install_is_idempotent(self, tmp_path, monkeypatch):
+        config = tmp_path / ".mcp.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "jcli-notebook-output": {
+                            "type": "stdio",
+                            "command": "j-cli",
+                            "args": [
+                                "mcp",
+                                "serve",
+                                "--root",
+                                str(tmp_path),
+                            ],
+                            "env": {},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_claude",
+            lambda *args, **kwargs: pytest.fail("Claude CLI should not be called"),
+        )
+
+        assert (
+            setup_mcp.manage_claude_mcp("project", tmp_path, False, False)
+            == "unchanged"
+        )
+
+    def test_same_name_with_other_command_is_rejected(self, tmp_path, monkeypatch):
+        config = tmp_path / ".mcp.json"
+        original = {
+            "mcpServers": {
+                "jcli-notebook-output": {
+                    "command": "unrelated-server",
+                    "args": [],
+                }
+            }
+        }
+        config.write_text(json.dumps(original), encoding="utf-8")
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_claude",
+            lambda *args, **kwargs: pytest.fail("Claude CLI should not be called"),
+        )
+
+        with pytest.raises(SystemExit):
+            setup_mcp.manage_claude_mcp("project", tmp_path, False, False)
+
+        assert _read_json(config) == original
+
+    def test_remove_only_owned_entry(self, tmp_path, monkeypatch):
+        config = tmp_path / ".mcp.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "jcli-notebook-output": {
+                            "command": "j-cli",
+                            "args": [
+                                "mcp",
+                                "serve",
+                                "--root",
+                                str(tmp_path),
+                            ],
+                        },
+                        "other": {"command": "keep-me"},
+                    },
+                    "keep": {"value": 1},
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls = []
+
+        def fake_run(command, cwd, use_json):
+            calls.append(command)
+            current = _read_json(config)
+            del current["mcpServers"]["jcli-notebook-output"]
+            config.write_text(json.dumps(current), encoding="utf-8")
+
+        monkeypatch.setattr(setup_mcp, "_run_claude", fake_run)
+
+        assert (
+            setup_mcp.manage_claude_mcp("project", tmp_path, True, False) == "removed"
+        )
+        assert calls == [
+            [
+                "claude",
+                "mcp",
+                "remove",
+                "--scope",
+                "project",
+                "jcli-notebook-output",
+            ]
+        ]
+        assert _read_json(config) == {
+            "mcpServers": {"other": {"command": "keep-me"}},
+            "keep": {"value": 1},
+        }
+
+    def test_user_scope_does_not_bind_setup_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+        calls = []
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_claude",
+            lambda command, cwd, use_json: calls.append(command),
+        )
+
+        setup_mcp.manage_claude_mcp("user", tmp_path, False, False)
+
+        assert calls[0][-3:] == ["j-cli", "mcp", "serve"]
+        assert "--root" not in calls[0]

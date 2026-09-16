@@ -11,6 +11,7 @@ from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 from .common import Scope
+from .mcp import manage_claude_mcp
 
 # ---------------------------------------------------------------------------
 # Managed hook blocks
@@ -142,8 +143,12 @@ _DSH_MANAGED_VALS = _managed_values(_DSH_MANAGED_BLOCKS)
 )
 @pass_ctx
 def claude(ctx: CliContext, scope: str, remove: bool):
-    """Install Claude Code hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, notebook-edit-guard, and pair-drift-guard-post."""
+    """Install Claude Code guards and the notebook-output MCP server."""
     path = _resolve_claude_path(scope)
+    # Validate existing hook JSON before asking Claude CLI to mutate MCP state.
+    if path.exists():
+        _load_settings(path, ctx.use_json)
+    manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
     _install_or_remove("claude", path, remove, ctx)
 
 
