@@ -239,7 +239,7 @@ def _delete_ref(repo_root: Path, ref_name: str, *, strict: bool = False) -> bool
 
 
 def read_baseline(py_path: Path, *, strict: bool = False) -> str | None:
-    """Return the freshest baseline text from sticky ref or HEAD."""
+    """Read the freshest baseline text without modifying Git refs."""
     repo_root = _git_root(py_path, strict=strict)
     if repo_root is None:
         return None
@@ -266,15 +266,6 @@ def read_baseline(py_path: Path, *, strict: bool = False) -> str | None:
     if head_text is None:
         return None
 
-    if ref_ts is not None and head_ts is not None and head_ts > ref_ts:
-        try:
-            if strict:
-                _delete_ref(repo_root, ref_name, strict=True)
-            else:
-                _delete_ref(repo_root, ref_name)
-        except RuntimeError:
-            if strict:
-                raise
     return head_text
 
 
@@ -394,8 +385,8 @@ def _classify_ref(
 
     ref_ts = _commit_timestamp(repo_root, ref_info.refname, strict=strict)
     head_ts = _head_timestamp(repo_root, ref_info.rel_posix_path, strict=strict)
-    if head_exists and ref_ts is not None and head_ts is not None and head_ts >= ref_ts:
-        return "stale", "head-newer-or-equal"
+    if head_exists and ref_ts is not None and head_ts is not None and head_ts > ref_ts:
+        return "stale", "head-newer"
 
     return "keep", "active"
 

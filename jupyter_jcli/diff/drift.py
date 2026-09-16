@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar, TypeAlias
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus, MergeMode
@@ -28,46 +29,62 @@ def _get_git_base_text_strict(path: Path) -> str | None:
     return pair_baseline.read_baseline(path, strict=True)
 
 
-@dataclass
-class DriftResult:
-    """Result of a drift check and optional three-way merge attempt."""
+class _DriftResult:
+    """Common read-only status API for concrete drift results."""
 
-    status: DriftStatus
-    """One of: DriftStatus.IN_SYNC | MERGED | CONFLICT | DRIFT_ONLY."""
+    _status: ClassVar[DriftStatus]
 
-    py_needs_update: bool = False
-    """True when the .py file should be rewritten with merged_py_cells."""
+    @property
+    def status(self) -> DriftStatus:
+        """Return the status fixed by the concrete result type."""
+        return self._status
 
-    ipynb_needs_update: bool = False
-    """True when the .ipynb file should be updated with merged_ipynb_cells."""
 
-    merged_cells: list[Cell] = field(default_factory=list)
-    """Merged cell list (common to both sides after merge)."""
-
-    conflict_indices: list[int] = field(default_factory=list)
-    """Cell indices with conflicts (non-empty iff status == DriftStatus.CONFLICT)."""
-
-    merge_mode: MergeMode = MergeMode.THREE_WAY
-    """How the merge was produced (only meaningful when status == MERGED)."""
-
-    diff_text: str = ""
-    """Diff content for agent consumption.
-
-    For CONFLICT: git merge-file output with <<<<<<< / ======= / >>>>>>> markers.
-    For DRIFT_ONLY: unified diff between py and ipynb (no common baseline).
-    Empty for IN_SYNC and MERGED.
-    """
+@dataclass(frozen=True)
+class InSync(_DriftResult):
+    """The canonical Python and notebook sources are synchronized."""
 
     baseline_seed_text: str | None = None
-    """Canonical py text safe to persist when no baseline exists and both sides are IN_SYNC.
+    """Canonical Python text to bootstrap a missing baseline, when applicable."""
 
-    This is None for every other result, including IN_SYNC pairs with an existing
-    baseline.
-    """
+    _status: ClassVar[DriftStatus] = DriftStatus.IN_SYNC
+
+
+@dataclass(frozen=True)
+class Merged(_DriftResult):
+    """The two sources were reconciled by a conflict-free three-way merge."""
+
+    merged_cells: list[Cell]
+    py_needs_update: bool
+    ipynb_needs_update: bool
+    merge_mode: MergeMode = MergeMode.THREE_WAY
+
+    _status: ClassVar[DriftStatus] = DriftStatus.MERGED
 
     def __post_init__(self) -> None:
-        self.status = DriftStatus(self.status)
-        self.merge_mode = MergeMode(self.merge_mode)
+        object.__setattr__(self, "merge_mode", MergeMode(self.merge_mode))
+
+
+@dataclass(frozen=True)
+class Conflict(_DriftResult):
+    """A three-way merge found cell-level conflicts."""
+
+    conflict_indices: list[int]
+    diff_text: str
+
+    _status: ClassVar[DriftStatus] = DriftStatus.CONFLICT
+
+
+@dataclass(frozen=True)
+class DriftOnly(_DriftResult):
+    """Sources differ but no Git baseline is available for a merge."""
+
+    diff_text: str
+
+    _status: ClassVar[DriftStatus] = DriftStatus.DRIFT_ONLY
+
+
+DriftResult: TypeAlias = InSync | Merged | Conflict | DriftOnly
 
 
 # ---------------------------------------------------------------------------
@@ -120,14 +137,8 @@ def check_drift(
 
     if base_raw is None:
         if ours_text == theirs_text:
-            return DriftResult(
-                status=DriftStatus.IN_SYNC,
-                baseline_seed_text=ours_text,
-            )
-        return DriftResult(
-            status=DriftStatus.DRIFT_ONLY,
-            diff_text=render_no_baseline_diff(ours_text, theirs_text),
-        )
+            return InSync(baseline_seed_text=ours_text)
+        return DriftOnly(diff_text=render_no_baseline_diff(ours_text, theirs_text))
 
     base_text = percent.canonicalize(
         base_raw,
@@ -140,18 +151,16 @@ def check_drift(
 
     if not merge.has_conflict:
         if not py_needs and not ipynb_needs:
-            return DriftResult(status=DriftStatus.IN_SYNC)
+            return InSync()
         merged_cells = percent.loads(merge.text).cells
-        return DriftResult(
-            status=DriftStatus.MERGED,
+        return Merged(
             merge_mode=MergeMode.THREE_WAY,
             merged_cells=merged_cells,
             py_needs_update=py_needs,
             ipynb_needs_update=ipynb_needs,
         )
 
-    return DriftResult(
-        status=DriftStatus.CONFLICT,
+    return Conflict(
         diff_text=merge.text,
         conflict_indices=locate_conflict_cells(merge.text),
     )

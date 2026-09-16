@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 
 from .decision import HookOutcome
 
@@ -67,7 +67,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
             logger.record_exception(exc)
         raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
-    if result.status == DriftStatus.IN_SYNC:
+    if isinstance(result, InSync):
         if result.baseline_seed_text is not None:
             try:
                 _persist_baseline_for_hook(py_path, result.baseline_seed_text)
@@ -77,7 +77,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
                 raise RuntimeError(f"pair baseline bootstrap failed: {exc}") from exc
         return None
 
-    if result.status == DriftStatus.CONFLICT:
+    if isinstance(result, Conflict):
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         return (
             f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
@@ -95,7 +95,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
             + _diff_section(result.diff_text, py_path.name)
         )
 
-    if result.status == DriftStatus.DRIFT_ONLY:
+    if isinstance(result, DriftOnly):
         return (
             f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
             f"auto-merge the pair. Current sources of `{py_path.name}` and "
@@ -117,7 +117,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
             + _diff_section(result.diff_text, py_path.name)
         )
 
-    if result.status == DriftStatus.MERGED:
+    if isinstance(result, Merged):
         return _apply_merge_and_decide(path, py_path, ipynb_path, result, logger=logger)
 
     return None
@@ -157,7 +157,7 @@ def _apply_merge_and_decide(
     target: Path,
     py_path: Path,
     ipynb_path: Path,
-    result,  # DriftResult
+    result: Merged,
     logger=None,
 ) -> str | None:
     """Write merged content and emit allow/deny based on which file changed."""
@@ -314,16 +314,16 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
             logger.record_exception(exc)
         raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
-    if result.status == DriftStatus.IN_SYNC:
+    if isinstance(result, InSync):
         return None
 
-    if result.status == DriftStatus.MERGED:
+    if isinstance(result, Merged):
         context = _sync_pair_after_edit(
             path, py_path, ipynb_path, result, logger=logger
         )
         return PostDriftNotice(context, HookOutcome.success()) if context else None
 
-    if result.status == DriftStatus.CONFLICT:
+    if isinstance(result, Conflict):
         idx_str = ", ".join(str(i) for i in result.conflict_indices)
         other = ipynb_path if path == py_path else py_path
         drift_reason = (
@@ -342,7 +342,7 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
         )
         return _post_drift_notice(drift_reason)
 
-    if result.status == DriftStatus.DRIFT_ONLY:
+    if isinstance(result, DriftOnly):
         if path == py_path:
             convert_hint = (
                 f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
@@ -368,7 +368,7 @@ def _sync_pair_after_edit(
     edited: Path,
     py_path: Path,
     ipynb_path: Path,
-    result,  # DriftResult
+    result: Merged,
     logger=None,
 ) -> str | None:
     """Write the merge result to the OTHER side (not the one the agent just edited)."""

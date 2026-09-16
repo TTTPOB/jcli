@@ -207,8 +207,8 @@ class TestReadWriteBaseline:
         assert pair_baseline.write_baseline(py_path, make_py_text("x = 1")) is False
 
 
-class TestLazyEviction:
-    def test_newer_head_evicts_ref_and_returns_head(
+class TestReadOnlyBaseline:
+    def test_newer_head_returns_head_without_deleting_sticky_ref(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
@@ -222,20 +222,24 @@ class TestLazyEviction:
         refs = _git(
             git_repo, "for-each-ref", "refs/jcli/pair-sync/", "--format=%(refname)"
         )
-        assert refs.stdout.strip() == ""
+        assert refs.stdout.strip() != ""
 
-    def test_delete_failure_does_not_block_head_fallback(
+        # Reading the newer HEAD does not discard the path-scoped sticky ref;
+        # after returning to the older HEAD, the sticky baseline is selected again.
+        _git(git_repo, "checkout", "--detach", "HEAD~1")
+        assert pair_baseline.read_baseline(py_path) == make_py_text("x = 10")
+
+    def test_read_baseline_never_calls_delete_ref(
         self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
         monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
         monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
         assert pair_baseline.write_baseline(py_path, make_py_text("x = 10")) is True
-
         _write_and_commit(git_repo, "nb.py", make_py_text("x = 20"), 200)
 
-        def _boom(_repo_root: Path, _ref_name: str) -> bool:
-            raise RuntimeError("boom")
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("read_baseline must be read-only")
 
         monkeypatch.setattr(pair_baseline, "_delete_ref", _boom)
         assert pair_baseline.read_baseline(py_path) == make_py_text("x = 20")
@@ -291,6 +295,26 @@ class TestGc:
         assert removed == 0
         assert kept == 1
         assert refs.stdout.strip() != ""
+
+    def test_gc_keeps_equal_timestamp_sticky_baseline(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        py_path = _write_and_commit(git_repo, "nb.py", make_py_text("x = 1"), 100)
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@100 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@100 +0000")
+        sticky = make_py_text("x = 10")
+        assert pair_baseline.write_baseline(py_path, sticky) is True
+
+        assert pair_baseline.read_baseline(py_path) == sticky
+        ref_info = pair_baseline.list_all_refs(git_repo, strict=True)[0]
+        assert pair_baseline._classify_ref(git_repo, ref_info, strict=True) == (
+            "keep",
+            "active",
+        )
+        assert pair_baseline.gc_stale_refs(git_repo, dry_run=False, strict=True) == (
+            0,
+            1,
+        )
 
     def test_gc_removes_invalid_subject_refs(self, git_repo: Path) -> None:
         _git(git_repo, "commit", "--allow-empty", "-m", "init", env=_git_env(100))

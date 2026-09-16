@@ -4,7 +4,7 @@ import fnmatch
 import subprocess
 import sys
 
-from jupyter_jcli._enums import DriftStatus
+from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 from jupyter_jcli.gitutil import resolve_git_root
 
 from .decision import HookOutcome
@@ -141,10 +141,10 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
                 f"error checking {py_path.name}/{ipynb_path.name}: {exc}"
             )
 
-        if result.status == DriftStatus.IN_SYNC:
+        if isinstance(result, InSync):
             continue
 
-        if result.status == DriftStatus.MERGED:
+        if isinstance(result, Merged):
             if result.py_needs_update:
                 try:
                     merged_text, _ = _prepare_merged_py(py_path, result.merged_cells)
@@ -171,7 +171,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
                     )
             continue
 
-        if result.status == DriftStatus.CONFLICT:
+        if isinstance(result, Conflict):
             try:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:
@@ -181,7 +181,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
             )
             continue
 
-        if result.status == DriftStatus.DRIFT_ONLY:
+        if isinstance(result, DriftOnly):
             try:
                 ipynb_rel = str(ipynb_path.relative_to(repo_root))
             except ValueError:

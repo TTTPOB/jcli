@@ -419,6 +419,23 @@ class TestFailOpen:
         assert code == 1
         assert _decision(out) is None
 
+    def test_pre_baseline_read_failure_is_not_treated_as_missing(self, tmp_path):
+        py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
+        with patch(
+            "jupyter_jcli.diff.drift._get_git_base_text_strict",
+            side_effect=RuntimeError("baseline unavailable"),
+        ):
+            result = CliRunner().invoke(
+                main,
+                ["_hooks", "pair-drift-guard-pre"],
+                input=json.dumps(
+                    {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+                ),
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 1
+        assert "pair drift check failed" in (result.stderr or result.output)
+
 
 # ---------------------------------------------------------------------------
 # notebook-edit-guard — always deny NotebookEdit

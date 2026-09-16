@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -14,7 +15,7 @@ from jupyter_jcli._enums import (
     OutputType,
     ResponseStatus,
 )
-from jupyter_jcli.diff import DriftResult
+from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 
 # ---------------------------------------------------------------------------
 # DriftStatus
@@ -39,23 +40,37 @@ class TestDriftStatus:
     def test_coerce_from_string(self):
         assert DriftStatus("in_sync") is DriftStatus.IN_SYNC
 
-    def test_drift_result_coerces_status(self):
-        r = DriftResult(status="in_sync")
-        assert r.status is DriftStatus.IN_SYNC
-        assert isinstance(r.status, DriftStatus)
+    def test_concrete_results_expose_fixed_read_only_status(self):
+        results = [
+            (InSync(), DriftStatus.IN_SYNC),
+            (Merged([], False, False), DriftStatus.MERGED),
+            (Conflict([], ""), DriftStatus.CONFLICT),
+            (DriftOnly(""), DriftStatus.DRIFT_ONLY),
+        ]
+        for result, expected in results:
+            assert result.status is expected
+            with pytest.raises((AttributeError, TypeError)):
+                result.status = DriftStatus.IN_SYNC
 
-    def test_drift_result_accepts_enum(self):
-        r = DriftResult(status=DriftStatus.MERGED)
-        assert r.status is DriftStatus.MERGED
+    def test_concrete_result_fields_are_disjoint(self):
+        assert [field.name for field in dataclasses.fields(InSync)] == [
+            "baseline_seed_text"
+        ]
+        assert [field.name for field in dataclasses.fields(Merged)] == [
+            "merged_cells",
+            "py_needs_update",
+            "ipynb_needs_update",
+            "merge_mode",
+        ]
+        assert [field.name for field in dataclasses.fields(Conflict)] == [
+            "conflict_indices",
+            "diff_text",
+        ]
+        assert [field.name for field in dataclasses.fields(DriftOnly)] == ["diff_text"]
 
-    def test_drift_result_preserves_existing_positional_fields(self):
-        r = DriftResult(DriftStatus.MERGED, True)
-        assert r.py_needs_update is True
-        assert r.baseline_seed_text is None
-
-    def test_drift_result_invalid_status_raises(self):
-        with pytest.raises(ValueError):
-            DriftResult(status="typo")
+    def test_concrete_results_reject_status_constructor_argument(self):
+        with pytest.raises(TypeError):
+            InSync(status=DriftStatus.IN_SYNC)
 
 
 # ---------------------------------------------------------------------------
@@ -78,11 +93,17 @@ class TestMergeMode:
     def test_coerce_from_string(self):
         assert MergeMode("three_way") is MergeMode.THREE_WAY
 
-    def test_drift_result_defaults_to_three_way(self):
-        from jupyter_jcli.diff import DriftResult
-
-        r = DriftResult(status="in_sync")
+    def test_merged_defaults_to_three_way(self):
+        r = Merged([], False, False)
         assert r.merge_mode is MergeMode.THREE_WAY
+
+    def test_merged_coerces_merge_mode(self):
+        r = Merged([], False, False, merge_mode="three_way")
+        assert r.merge_mode is MergeMode.THREE_WAY
+
+    def test_merged_rejects_invalid_merge_mode(self):
+        with pytest.raises(ValueError):
+            Merged([], False, False, merge_mode="bogus")
 
 
 # ---------------------------------------------------------------------------

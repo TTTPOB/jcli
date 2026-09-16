@@ -232,6 +232,12 @@ j-cli then performs a diff3 text merge with canonical baseline text, current
 Python text, and current notebook text emitted as py:percent. Text merging
 preserves insertions and deletions better than position-only cell merging. A
 successful result is parsed back into cells before either side is updated.
+Reading a baseline does not modify Git refs. An existing sticky baseline wins
+when its timestamp equals the Python file's latest commit in `HEAD`. A strictly
+newer commit makes the sticky baseline eligible for explicit garbage collection;
+reading alone leaves the ref in place. Switching to an older `HEAD` can therefore
+select that retained sticky baseline again. The pre-edit hook bootstraps a missing
+baseline from the canonical in-sync result without rereading either source.
 
 Without a baseline, equal canonical text is in sync. Different text reports
 drift and does not choose a winning side. A conflicting three-way merge returns
