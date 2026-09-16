@@ -53,7 +53,20 @@ elif mode == "invalid":
 """
 
 
-_RUNNER = r"""import { pathToFileURL } from "node:url"
+_RUNNER = r"""import { mock } from "bun:test"
+import { pathToFileURL } from "node:url"
+
+const schemaValue = () => ({
+  describe() { return this },
+  int() { return this },
+  nonnegative() { return this },
+  positive() { return this },
+  optional() { return this },
+})
+const tool = Object.assign((definition) => definition, {
+  schema: { string: schemaValue, number: schemaValue },
+})
+mock.module("@opencode-ai/plugin", () => ({ tool }))
 
 const module = await import(pathToFileURL(process.env.JCLI_TEST_PLUGIN).href)
 const logs = []

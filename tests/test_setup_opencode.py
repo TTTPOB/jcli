@@ -48,6 +48,8 @@ class TestOpenCodeInstall:
             .read_text(encoding="utf-8")
         )
         assert installed == packaged
+        assert "read_notebook_output" in installed
+        assert 'from "@opencode-ai/plugin"' in installed
 
     def test_second_install_is_noop(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
