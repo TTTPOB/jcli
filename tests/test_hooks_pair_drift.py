@@ -875,13 +875,13 @@ class TestPreBaselineBootstrapBoundaries:
         assert result.exit_code == 1
         assert "baseline persistence failed" in (result.stderr or result.output)
 
-    def test_pre_baseline_read_failure_is_not_treated_as_missing(self, git_repo: Path):
+    def test_pre_reads_baseline_once_for_bootstrap(self, git_repo: Path):
         py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
 
         with patch(
             "jupyter_jcli.pair_baseline.read_baseline",
-            side_effect=[None, RuntimeError("git lookup broke")],
-        ):
+            wraps=pair_baseline.read_baseline,
+        ) as read_baseline:
             result = CliRunner().invoke(
                 main,
                 ["_hooks", "pair-drift-guard-pre"],
@@ -891,10 +891,10 @@ class TestPreBaselineBootstrapBoundaries:
                 catch_exceptions=False,
             )
 
-        assert result.exit_code == 1
-        diagnostic = result.stderr or result.output
-        assert "pair baseline bootstrap failed" in diagnostic
-        assert "git lookup broke" in diagnostic
+        assert result.exit_code == 0
+        assert read_baseline.call_count == 1
+        assert read_baseline.call_args.args == (py,)
+        assert read_baseline.call_args.kwargs == {"strict": True}
 
 
 class TestConsecutiveEdits:

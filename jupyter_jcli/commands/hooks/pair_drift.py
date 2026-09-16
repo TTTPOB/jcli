@@ -68,28 +68,13 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
         raise RuntimeError(f"pair drift check failed: {exc}") from exc
 
     if result.status == DriftStatus.IN_SYNC:
-        try:
-            from jupyter_jcli import pair_baseline
-            from jupyter_jcli.formats import percent
-
-            if pair_baseline.read_baseline(py_path, strict=True) is None:
-                py_text = py_path.read_text(encoding="utf-8")
-                py_parsed = percent.loads(py_text)
-                canonical_py = percent.canonicalize(
-                    py_text,
-                    include_cell_ids=bool(py_parsed.stable_cell_ids),
-                )
-                _persist_baseline_for_hook(py_path, canonical_py)
-        except UnicodeDecodeError as exc:
-            if logger is not None:
-                logger.record_exception(exc)
-            raise RuntimeError(
-                "non-UTF-8 content prevented baseline bootstrap"
-            ) from exc
-        except Exception as exc:
-            if logger is not None:
-                logger.record_exception(exc)
-            raise RuntimeError(f"pair baseline bootstrap failed: {exc}") from exc
+        if result.baseline_seed_text is not None:
+            try:
+                _persist_baseline_for_hook(py_path, result.baseline_seed_text)
+            except Exception as exc:
+                if logger is not None:
+                    logger.record_exception(exc)
+                raise RuntimeError(f"pair baseline bootstrap failed: {exc}") from exc
         return None
 
     if result.status == DriftStatus.CONFLICT:
