@@ -48,6 +48,11 @@ class TestDriftStatus:
         r = DriftResult(status=DriftStatus.MERGED)
         assert r.status is DriftStatus.MERGED
 
+    def test_drift_result_preserves_existing_positional_fields(self):
+        r = DriftResult(DriftStatus.MERGED, True)
+        assert r.py_needs_update is True
+        assert r.baseline_seed_text is None
+
     def test_drift_result_invalid_status_raises(self):
         with pytest.raises(ValueError):
             DriftResult(status="typo")

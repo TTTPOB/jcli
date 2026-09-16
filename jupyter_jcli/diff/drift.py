@@ -35,13 +35,6 @@ class DriftResult:
     status: DriftStatus
     """One of: DriftStatus.IN_SYNC | MERGED | CONFLICT | DRIFT_ONLY."""
 
-    baseline_seed_text: str | None = None
-    """Canonical py text safe to persist when no baseline exists and both sides are IN_SYNC.
-
-    This is None for every other result, including IN_SYNC pairs with an existing
-    baseline.
-    """
-
     py_needs_update: bool = False
     """True when the .py file should be rewritten with merged_py_cells."""
 
@@ -63,6 +56,13 @@ class DriftResult:
     For CONFLICT: git merge-file output with <<<<<<< / ======= / >>>>>>> markers.
     For DRIFT_ONLY: unified diff between py and ipynb (no common baseline).
     Empty for IN_SYNC and MERGED.
+    """
+
+    baseline_seed_text: str | None = None
+    """Canonical py text safe to persist when no baseline exists and both sides are IN_SYNC.
+
+    This is None for every other result, including IN_SYNC pairs with an existing
+    baseline.
     """
 
     def __post_init__(self) -> None:
