@@ -13,6 +13,11 @@ from jupyter_jcli.diff import CellChange, align_cells
 from jupyter_jcli.formats import percent
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.output import emit, emit_error
+from jupyter_jcli.outputs import DEFAULT_TEXT_LIMIT, OutputProtocolError
+from jupyter_jcli.outputs.notebook import (
+    list_notebook_outputs,
+    read_notebook_output,
+)
 from jupyter_jcli.parser import find_pair, parse_cell_spec, parse_file
 from jupyter_jcli.summ import build_summary_data, format_summary_human
 
@@ -22,7 +27,72 @@ if TYPE_CHECKING:
 
 @click.group("notebook")
 def notebook():
-    """Inspect notebook cells."""
+    """Inspect notebook cells and saved outputs."""
+
+
+@notebook.command("outputs")
+@click.argument(
+    "file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--cell", "cell_index", required=True, type=int, help="Physical cell index"
+)
+@click.pass_obj
+def outputs(ctx: CliContext, file_path: str, cell_index: int) -> None:
+    """List saved outputs for one cell without returning payload data."""
+    try:
+        data = list_notebook_outputs(file_path, cell_index)
+    except OutputProtocolError as error:
+        emit_error(error.code, error.message, ctx.use_json)
+    except Exception as error:  # noqa: BLE001 - normalize reader failures for CLI output
+        emit_error("NOTEBOOK_OUTPUT_READ_FAILED", str(error), ctx.use_json)
+    emit(data, use_json=ctx.use_json)
+
+
+@notebook.command("output")
+@click.argument(
+    "file_path", metavar="FILE", type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--cell", "cell_index", required=True, type=int, help="Physical cell index"
+)
+@click.option(
+    "--output", "output_index", required=True, type=int, help="Physical output index"
+)
+@click.option("--mime", "mime_type", default=None, help="Exact MIME representation")
+@click.option("--offset", default=0, type=int, show_default=True, help="Text offset")
+@click.option(
+    "--limit",
+    default=DEFAULT_TEXT_LIMIT,
+    type=int,
+    show_default=True,
+    help="Maximum text characters",
+)
+@click.pass_obj
+def output_value(
+    ctx: CliContext,
+    file_path: str,
+    cell_index: int,
+    output_index: int,
+    mime_type: str | None,
+    offset: int,
+    limit: int,
+) -> None:
+    """Read one saved output or one exact MIME representation."""
+    try:
+        data = read_notebook_output(
+            file_path,
+            cell_index,
+            output_index,
+            mime_type=mime_type,
+            offset=offset,
+            limit=limit,
+        )
+    except OutputProtocolError as error:
+        emit_error(error.code, error.message, ctx.use_json)
+    except Exception as error:  # noqa: BLE001 - normalize reader failures for CLI output
+        emit_error("NOTEBOOK_OUTPUT_READ_FAILED", str(error), ctx.use_json)
+    emit(data, use_json=ctx.use_json)
 
 
 @notebook.command("summary")
