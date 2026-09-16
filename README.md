@@ -241,6 +241,16 @@ The install command is idempotent — re-running updates hooks in place without 
 
 The notebook-output server requires the optional MCP dependencies. Install them with `uv tool install 'jupyter-jcli[mcp]'` (or the equivalent extras-aware command for your environment). If the extra is missing, `j-cli mcp serve` reports that `jupyter-jcli[mcp]` is required.
 
+**What gets installed (5 hooks):**
+
+| Hook | Event | Trigger | Action |
+|------|-------|---------|--------|
+| `notebook-exec-guard` | PreToolUse (Bash) | `jupyter nbconvert --execute`, `papermill`, `runipy`, `ipython <.ipynb>` | Hard deny, redirect to j-cli |
+| `python-run-guard` | PreToolUse (Bash) | Shell command targeting a `.py` with a paired `.ipynb` | Soft deny, suggest a j-cli session |
+| `pair-drift-guard` | PreToolUse (Edit/Write) | Edit targeting a paired `.py` / `.ipynb` | Detect existing drift, auto-merge, deny stale edits |
+| `pair-drift-guard-post` | PostToolUse (Edit/Write) | After an edit completes | Auto-sync the other side of the pair |
+| `notebook-edit-guard` | PreToolUse (NotebookEdit) | Direct notebook edit | Hard deny, require the py:percent workflow |
+
 ### `setup git`
 
 Install a `pre-commit` hook shim that runs `j-cli _hooks pre-commit-pair-sync` and update `.gitignore` to exclude paired `.ipynb` files and workspace-local `**/.j-cli/` output data.
@@ -256,6 +266,27 @@ j-cli setup git --local --remove
 ```
 
 `--remove` deletes the hook only if it was written by j-cli, leaves `core.hooksPath` alone if it points to a non-j-cli directory, and removes the managed `.gitignore` block. Unrecognised hooks are skipped with a warning.
+
+The project installer writes a shim at `.githooks/pre-commit`, sets the local
+`core.hooksPath`, and adds a managed `.gitignore` block for `*.ipynb` and
+`**/.j-cli/`. The local installer writes `.git/hooks/pre-commit` without
+changing `core.hooksPath`. Re-running either form updates its managed content
+without duplication.
+
+| Commit-time situation | Result |
+|-----------------------|--------|
+| `.ipynb` staged | Blocked; unstage it and commit only the `.py` pair |
+| Pair in sync | Silently allowed |
+| One side changed and auto-merge succeeds | Merge both sides and re-stage an updated `.py` |
+| Both sides changed the same cell | Block with conflict markers for manual resolution |
+| New `.py` has no baseline and differs from its pair | Block with a two-way diff until one side is selected |
+
+Resolve a conflict by explicitly choosing the source of truth:
+
+```bash
+j-cli convert ipynb-to-py <nb.ipynb> <nb.py>   # take ipynb as truth
+j-cli convert py-to-ipynb <nb.py> <nb.ipynb>   # take py as truth
+```
 
 ### `setup codex`
 
