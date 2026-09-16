@@ -6,7 +6,17 @@ const DEFAULT_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 120_000
 const DEFAULT_DIAGNOSTIC_MAX_CHARS = 2_000
 const MAX_DIAGNOSTIC_MAX_CHARS = 16_000
+const MAX_TRANSPORT_BYTES = 32 * 1024 * 1024
+const OUTPUT_STDOUT_MAX_BYTES = MAX_TRANSPORT_BYTES + 1024
 const GENERIC_DENY_REASON = 'j-cli denied this tool call'
+const TEXTUAL_MIME_TYPES = [
+  'text/html',
+  'text/markdown',
+  'text/plain',
+  'application/json',
+  'image/svg+xml',
+] as const
+const RASTER_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const GUARDS = {
   notebook: 'notebook-exec-guard',
   python: 'python-run-guard',
@@ -23,11 +33,21 @@ export interface Config {
   diagnosticMaxChars?: number
 }
 
-type ContentBlock = { type: 'text'; text: string }
+type TextBlock = { type: 'text'; text: string }
+type ImageAttachment = {
+  attachmentId: string
+  mediaType: string
+  bytes: number
+  width: number
+  height: number
+  name?: string
+  originalDimensions?: { width: number; height: number }
+}
+type ContentBlock = TextBlock | { type: 'image'; attachment: ImageAttachment }
 type UserMessage = {
   id: string
   role: 'user'
-  content: ContentBlock[]
+  content: TextBlock[]
   source: { kind: 'plugin'; plugin: string }
 }
 
@@ -68,6 +88,7 @@ type ShellRequest = {
   command: string
   workdir?: string
   timeoutMs?: number
+  stdoutMaxBytes?: number
   signal?: AbortSignal
   stdin?: string
   sandboxPolicy?: SandboxPolicy
@@ -98,7 +119,31 @@ type Context = {
   shell: ShellExecutor
   logger: Logger
   get?(key: string): unknown
+  inject?(services: string[], callback: (ctx: Context) => void): unknown
   on(event: string, listener: (...args: any[]) => unknown): unknown
+}
+
+type ToolRunContext = {
+  agent?: Agent
+  signal: AbortSignal
+}
+
+type OutputToolArgs = {
+  file_path: string
+  cell_index: number
+  output_index?: number
+  mime_type?: string
+  offset?: number
+  limit?: number
+}
+
+type AttachmentStore = {
+  imageLimits?: { mediaTypes?: readonly string[] }
+  saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<ImageAttachment>
+}
+
+type ToolRegistry = {
+  register(tool: Record<string, unknown>): () => void
 }
 
 type GuardResult =
@@ -365,9 +410,307 @@ function ensureSandboxPolicy(ctx: Context): void {
   }
 }
 
+function toolRegistry(ctx: Context): ToolRegistry | undefined {
+  if (typeof ctx.get !== 'function') return undefined
+  const candidate = ctx.get('tools')
+  return isRecord(candidate) && typeof candidate.register === 'function'
+    ? candidate as ToolRegistry
+    : undefined
+}
+
+function attachmentStore(ctx: Context): AttachmentStore | undefined {
+  if (typeof ctx.get !== 'function') return undefined
+  const candidate = ctx.get('attachments')
+  return isRecord(candidate) && typeof candidate.saveImage === 'function'
+    ? candidate as AttachmentStore
+    : undefined
+}
+
+function supportedMimeTypes(ctx: Context, explicit: string | undefined): string[] {
+  const supported = new Set<string>(TEXTUAL_MIME_TYPES)
+  const attachments = attachmentStore(ctx)
+  if (attachments !== undefined) {
+    const accepted = attachments.imageLimits?.mediaTypes
+    for (const mimeType of accepted ?? RASTER_MIME_TYPES) {
+      if (RASTER_MIME_TYPES.has(mimeType)) supported.add(mimeType)
+    }
+  }
+  if (explicit !== undefined && (
+    explicit.startsWith('text/')
+    || explicit === 'image/svg+xml'
+    || explicit === 'application/json'
+    || explicit.endsWith('+json')
+  )) {
+    supported.add(explicit)
+  }
+  return [...supported]
+}
+
+function outputCommand(ctx: Context, config: NormalizedConfig, args: OutputToolArgs): string {
+  const command = args.output_index === undefined ? 'outputs' : 'output'
+  const parts = [
+    quotePosix(config.executable),
+    '-j',
+    'notebook',
+    command,
+    quotePosix(args.file_path),
+    '--cell',
+    String(args.cell_index),
+  ]
+  if (args.output_index !== undefined) {
+    parts.push('--output', String(args.output_index))
+    if (args.mime_type !== undefined) parts.push('--mime', quotePosix(args.mime_type))
+    if (args.offset !== undefined) parts.push('--offset', String(args.offset))
+    if (args.limit !== undefined) parts.push('--limit', String(args.limit))
+    for (const mimeType of supportedMimeTypes(ctx, args.mime_type)) {
+      parts.push('--supported-mime', quotePosix(mimeType))
+    }
+  }
+  return parts.join(' ')
+}
+
+function outputRequestFor(
+  ctx: Context,
+  exec: ToolRunContext,
+  config: NormalizedConfig,
+  args: OutputToolArgs,
+): ShellRequest {
+  const session = exec.agent?.session
+  const request: ShellRequest = {
+    command: outputCommand(ctx, config, args),
+    timeoutMs: config.timeoutMs,
+    stdoutMaxBytes: OUTPUT_STDOUT_MAX_BYTES,
+    signal: exec.signal,
+  }
+  if (session?.header.cwd !== undefined) request.workdir = session.header.cwd
+  const policy = policyService(ctx)
+  if (policy !== undefined) {
+    request.sandboxPolicy = exec.agent === undefined
+      ? policy.resolve({})
+      : policy.resolve({ session: exec.agent.session })
+  }
+  return request
+}
+
+function parseJsonRecord(value: string): Record<string, any> | undefined {
+  if (value.length === 0) return undefined
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isRecord(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function commandFailure(result: ShellRunResult): Error {
+  const parsed = parseJsonRecord(outputText(result.stderr))
+  const code = typeof parsed?.code === 'string' ? parsed.code : undefined
+  const message = typeof parsed?.message === 'string' ? parsed.message : undefined
+  const detail = code === undefined || message === undefined ? '' : `: ${code}: ${message}`
+  return new Error(`jcli-dsh: read_notebook_output failed (${resultStatus(result)})${detail}`)
+}
+
+async function runOutputCommand(
+  ctx: Context,
+  config: NormalizedConfig,
+  args: OutputToolArgs,
+  exec: ToolRunContext,
+): Promise<Record<string, any>> {
+  throwIfAborted(exec.signal)
+  let result: ShellRunResult
+  try {
+    const request = outputRequestFor(ctx, exec, config, args)
+    result = await ctx.shell.run(ctx.shell.resolve(request))
+  } catch (error: unknown) {
+    if (exec.signal.aborted || isAbortError(error)) throw abortError()
+    throw new Error(`jcli-dsh: read_notebook_output command failed: ${errorText(error)}`)
+  }
+  if (result.aborted || exec.signal.aborted) throw abortError()
+  if (result.timedOut) throw new Error('jcli-dsh: read_notebook_output command timed out')
+  if (result.exitCode !== 0) throw commandFailure(result)
+  if (result.stdout?.truncated) {
+    throw new Error('jcli-dsh: read_notebook_output response exceeded the trusted stdout budget')
+  }
+  const parsed = parseJsonRecord(outputText(result.stdout))
+  if (parsed === undefined || parsed.status !== 'ok' || parsed.schema_version !== 1) {
+    throw new Error('jcli-dsh: read_notebook_output returned an invalid JSON response')
+  }
+  return parsed
+}
+
+function decodeBase64(value: string): Uint8Array {
+  if (value.length % 4 !== 0) throw new Error('invalid base64 length')
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  const output = new Uint8Array(value.length / 4 * 3 - padding)
+  let offset = 0
+  for (let index = 0; index < value.length; index += 4) {
+    const chunk = value.slice(index, index + 4)
+    const values = [...chunk].map(character => character === '=' ? 0 : alphabet.indexOf(character))
+    if (values.some(part => part < 0)) throw new Error('invalid base64 character')
+    const bits = (values[0] << 18) | (values[1] << 12) | (values[2] << 6) | values[3]
+    if (offset < output.length) output[offset++] = bits >> 16 & 0xff
+    if (offset < output.length) output[offset++] = bits >> 8 & 0xff
+    if (offset < output.length) output[offset++] = bits & 0xff
+  }
+  return output
+}
+
+function imageAttachment(value: unknown): ImageAttachment {
+  if (!isRecord(value)
+    || typeof value.attachmentId !== 'string'
+    || typeof value.mediaType !== 'string'
+    || typeof value.bytes !== 'number'
+    || typeof value.width !== 'number'
+    || typeof value.height !== 'number') {
+    throw new Error('jcli-dsh: attachment save returned an invalid image reference')
+  }
+  return value as ImageAttachment
+}
+
+async function saveSelectedImage(
+  ctx: Context,
+  response: Record<string, any>,
+): Promise<Record<string, any>> {
+  const selected = response.selected
+  if (!isRecord(selected)
+    || selected.encoding !== 'base64'
+    || typeof selected.mime_type !== 'string'
+    || !RASTER_MIME_TYPES.has(selected.mime_type)) {
+    return response
+  }
+  const attachments = attachmentStore(ctx)
+  if (attachments === undefined) {
+    throw new Error('jcli-dsh: cannot view this image because the host attachment service is unavailable')
+  }
+  if (typeof selected.data !== 'string') {
+    throw new Error('jcli-dsh: image output did not contain valid base64 data')
+  }
+  let data: Uint8Array
+  try {
+    data = decodeBase64(selected.data)
+  } catch {
+    throw new Error('jcli-dsh: image output did not contain valid base64 data')
+  }
+  const attachment = imageAttachment(await attachments.saveImage({
+    data,
+    mediaType: selected.mime_type,
+  }))
+  const { data: _encoded, ...facts } = selected
+  return {
+    ...response,
+    selected: {
+      ...facts,
+      encoding: 'attachment',
+      bytes: attachment.bytes,
+      attachment,
+    },
+  }
+}
+
+function renderMetadata(value: Record<string, any>): string {
+  const { source, selected, stream, error: _error, outputs: _outputs, ...response } = value
+  const output = {
+    ...response,
+    ...(isRecord(selected)
+      ? { selected: Object.fromEntries(Object.entries(selected).filter(([key]) => key !== 'data' && key !== 'attachment')) }
+      : {}),
+    ...(isRecord(stream)
+      ? { stream: Object.fromEntries(Object.entries(stream).filter(([key]) => key !== 'data')) }
+      : {}),
+  }
+  return JSON.stringify({ provenance: source, output })
+}
+
+function renderOutput(_args: OutputToolArgs, value: Record<string, any>): ContentBlock[] {
+  if (Array.isArray(value.outputs)) {
+    return [{ type: 'text', text: JSON.stringify(value) }]
+  }
+  const metadata = { type: 'text' as const, text: renderMetadata(value) }
+  if (isRecord(value.selected)) {
+    if (value.selected.encoding === 'attachment' && isRecord(value.selected.attachment)) {
+      return [{ type: 'image', attachment: value.selected.attachment as ImageAttachment }, metadata]
+    }
+    if (value.selected.encoding === 'json') {
+      return [{ type: 'text', text: JSON.stringify(value.selected.data) }, metadata]
+    }
+    if (typeof value.selected.data === 'string') {
+      return [{ type: 'text', text: value.selected.data }, metadata]
+    }
+  }
+  if (isRecord(value.stream) && typeof value.stream.data === 'string') {
+    return [{ type: 'text', text: value.stream.data }, metadata]
+  }
+  if (isRecord(value.error)) {
+    return [{ type: 'text', text: JSON.stringify(value.error) }, metadata]
+  }
+  return [metadata]
+}
+
+function validateOutputArgs(value: unknown): OutputToolArgs {
+  const allowed = new Set(['file_path', 'cell_index', 'output_index', 'mime_type', 'offset', 'limit'])
+  if (!isRecord(value)
+    || Object.keys(value).some(key => !allowed.has(key))
+    || typeof value.file_path !== 'string'
+    || !Number.isInteger(value.cell_index)
+    || (value.output_index !== undefined && !Number.isInteger(value.output_index))
+    || (value.mime_type !== undefined && typeof value.mime_type !== 'string')
+    || (value.offset !== undefined && !Number.isInteger(value.offset))
+    || (value.limit !== undefined && !Number.isInteger(value.limit))
+    || (value.output_index === undefined
+      && (value.mime_type !== undefined || value.offset !== undefined || value.limit !== undefined))) {
+    throw new Error('invalid arguments for read_notebook_output')
+  }
+  return value as OutputToolArgs
+}
+
+function registerOutputTool(ctx: Context, config: NormalizedConfig): void {
+  const tools = toolRegistry(ctx)
+  if (tools === undefined) {
+    ctx.logger.warn('jcli-dsh: tools service is unavailable; read_notebook_output was not registered')
+    return
+  }
+  tools.register({
+    name: 'read_notebook_output',
+    description: 'List saved outputs for one notebook cell, or read one output on demand without executing or modifying the notebook. Omit output_index to return only the output directory.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        file_path: { type: 'string', description: 'Notebook or paired percent-Python path.' },
+        cell_index: { type: 'integer', description: 'Physical zero-based cell index in file_path.' },
+        output_index: { type: 'integer', description: 'Physical zero-based output index. Omit to list outputs without payloads.' },
+        mime_type: { type: 'string', description: 'Exact MIME representation to read.' },
+        offset: { type: 'integer', description: 'Zero-based text character offset.' },
+        limit: { type: 'integer', description: 'Maximum text characters to return.' },
+      },
+      required: ['file_path', 'cell_index'],
+    },
+    output: {
+      schema: {},
+      render: renderOutput,
+    },
+    isConcurrencySafe: () => true,
+    async execute(value: unknown, exec: ToolRunContext) {
+      const args = validateOutputArgs(value)
+      const response = await runOutputCommand(ctx, config, args, exec)
+      return saveSelectedImage(ctx, response)
+    },
+  })
+}
+
 export function apply(ctx: Context, config?: Config): void {
   ensureSandboxPolicy(ctx)
   const normalized = normalizeConfig(config)
+  const register = (scope: Context): void => {
+    try {
+      registerOutputTool(scope, normalized)
+    } catch (error: unknown) {
+      ctx.logger.warn(`jcli-dsh: failed to register read_notebook_output: ${errorText(error)}`)
+    }
+  }
+  if (typeof ctx.inject === 'function') ctx.inject(['tools'], register)
+  else register(ctx)
 
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision> => {
     const guards = exec.name === 'bash'

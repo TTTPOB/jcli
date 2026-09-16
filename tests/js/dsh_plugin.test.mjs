@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -42,10 +42,11 @@ function makeAgent(cwd = '/session/cwd', id = 'session-1') {
   }
 }
 
-function harness({ results = [], shellMode, policy, config, shellRun, get } = {}) {
+function harness({ results = [], shellMode, policy, attachments, config, shellRun, get } = {}) {
   const listeners = new Map()
   const calls = []
   const logs = []
+  const tools = []
   let index = 0
   const shell = {
     ...(shellMode === undefined ? {} : { sandboxMode: shellMode }),
@@ -62,10 +63,19 @@ function harness({ results = [], shellMode, policy, config, shellRun, get } = {}
   }
   const ctx = {
     shell,
+    tools: {
+      register(tool) {
+        tools.push(tool)
+        return () => tools.splice(tools.indexOf(tool), 1)
+      },
+    },
     logger: { warn(message) { logs.push(String(message)) } },
     get(key) {
       if (get) return get(key)
-      return key === 'sandboxPolicy' ? policy : undefined
+      if (key === 'sandboxPolicy') return policy
+      if (key === 'attachments') return attachments
+      if (key === 'tools') return ctx.tools
+      return undefined
     },
     on(event, listener) {
       listeners.set(event, listener)
@@ -79,6 +89,7 @@ function harness({ results = [], shellMode, policy, config, shellRun, get } = {}
     calls,
     logs,
     shell,
+    tools,
   }
 }
 
@@ -345,4 +356,161 @@ test('real POSIX shell validates executable quoting for spaces, apostrophes, and
   assert.deepEqual(decision, { kind: 'allow' })
   assert.equal(h.calls.length, 1)
   assert.equal(h.calls[0].command.startsWith("'") , true)
+})
+
+test('registers read_notebook_output and lists without requesting payload data', async () => {
+  const response = {
+    schema_version: 1,
+    status: 'ok',
+    source: { kind: 'notebook', path: '/session/cwd/book.ipynb', cell_index: 2, mapping: 'direct' },
+    outputs: [{ output_index: 0, output_type: 'stream', available_mime_types: [], name: 'stdout' }],
+  }
+  const policy = { resolve() { return { mode: 'read-only', workspaceRoot: '/session/cwd' } } }
+  const h = harness({ results: [result(0, JSON.stringify(response))], policy, shellMode: 'read-only' })
+  assert.equal(h.tools.length, 1)
+  const tool = h.tools[0]
+  assert.equal(tool.name, 'read_notebook_output')
+  assert.deepEqual(tool.output.schema, {})
+
+  const agent = makeAgent()
+  const signal = new AbortController().signal
+  const value = await tool.execute({ file_path: 'book.ipynb', cell_index: 2 }, { agent, signal })
+  assert.deepEqual(value, response)
+  assert.equal(h.calls.length, 1)
+  assert.equal(h.calls[0].workdir, '/session/cwd')
+  assert.equal(h.calls[0].signal, signal)
+  assert.equal(h.calls[0].stdoutMaxBytes, 32 * 1024 * 1024 + 1024)
+  assert.equal(h.calls[0].command, 'j-cli -j notebook outputs book.ipynb --cell 2')
+  assert.doesNotMatch(h.calls[0].command, /--output|--supported-mime/)
+  assert.deepEqual(tool.output.render({}, value), [{ type: 'text', text: JSON.stringify(response) }])
+  await assert.rejects(
+    tool.execute({ file_path: 'book.ipynb', cell_index: 2, mime_type: 'text/plain' }, { signal }),
+    /invalid arguments/,
+  )
+  assert.equal(h.calls.length, 1)
+})
+
+test('renders raw text, reversible JSON, stream, and error payloads with separate provenance', async () => {
+  const h = harness()
+  const tool = h.tools[0]
+  const source = { kind: 'notebook', path: '/work/book.ipynb', cell_index: 0, output_index: 1, mapping: 'direct' }
+  const cases = [
+    {
+      value: { schema_version: 1, status: 'ok', source, output_type: 'display_data', available_mime_types: ['text/html'], selected: { mime_type: 'text/html', encoding: 'utf-8', data: '<b>raw</b>', bytes: 10 } },
+      expected: '<b>raw</b>',
+    },
+    {
+      value: { schema_version: 1, status: 'ok', source, output_type: 'display_data', available_mime_types: ['application/json'], selected: { mime_type: 'application/json', encoding: 'json', data: { answer: 42 }, bytes: 13 } },
+      expected: '{"answer":42}',
+    },
+    {
+      value: { schema_version: 1, status: 'ok', source, output_type: 'stream', available_mime_types: [], stream: { name: 'stderr', data: 'raw stream\n', bytes: 11 } },
+      expected: 'raw stream\n',
+    },
+    {
+      value: { schema_version: 1, status: 'ok', source, output_type: 'error', available_mime_types: [], error: { ename: 'ValueError', evalue: 'bad', traceback: ['line'] } },
+      expected: '{"ename":"ValueError","evalue":"bad","traceback":["line"]}',
+    },
+  ]
+  for (const { value, expected } of cases) {
+    const blocks = tool.output.render({}, value)
+    assert.equal(blocks[0].type, 'text')
+    assert.equal(blocks[0].text, expected)
+    assert.deepEqual(JSON.parse(blocks[1].text).provenance, source)
+    assert.equal(blocks[1].text.includes(expected), false)
+  }
+})
+
+test('saves an explicitly read raster through the host attachment bridge', async () => {
+  const saved = []
+  const attachments = {
+    imageLimits: { mediaTypes: ['image/png'] },
+    async saveImage(input) {
+      saved.push(input)
+      return {
+        attachmentId: 'sha256:image', mediaType: 'image/png', bytes: input.data.byteLength,
+        width: 1, height: 1,
+      }
+    },
+  }
+  const response = {
+    schema_version: 1,
+    status: 'ok',
+    source: { kind: 'notebook', path: '/work/book.ipynb', cell_index: 0, output_index: 1, mapping: 'direct' },
+    output_type: 'display_data',
+    available_mime_types: ['image/png', 'text/plain'],
+    metadata: {},
+    selected: { mime_type: 'image/png', encoding: 'base64', bytes: 8, data: 'iVBORw0KGgo=' },
+  }
+  const h = harness({ results: [result(0, JSON.stringify(response))], attachments })
+  const value = await h.tools[0].execute({
+    file_path: '/work/book.ipynb', cell_index: 0, output_index: 1, mime_type: 'image/png',
+  }, { signal: new AbortController().signal })
+  assert.match(h.calls[0].command, /--supported-mime image\/png/)
+  assert.equal(saved.length, 1)
+  assert.deepEqual([...saved[0].data], [137, 80, 78, 71, 13, 10, 26, 10])
+  assert.equal(Object.hasOwn(saved[0], 'name'), false)
+  assert.equal(value.selected.encoding, 'attachment')
+  assert.equal(Object.hasOwn(value.selected, 'data'), false)
+  assert.equal(JSON.stringify(value).includes('iVBORw0KGgo='), false)
+  const blocks = h.tools[0].output.render({}, value)
+  assert.deepEqual(blocks[0], { type: 'image', attachment: value.selected.attachment })
+})
+
+test('checks cancellation, timeout, exit, and truncation before parsing stdout', async () => {
+  const encoded = 'iVBORw0KGgo='
+  const scenarios = [
+    [result(0, encoded, '', { aborted: true }), error => error.name === 'AbortError'],
+    [result(0, encoded, '', { timedOut: true }), /timed out/],
+    [result(1, encoded, JSON.stringify({ status: 'error', code: 'OUTPUT_NOT_FOUND', message: 'missing' })), /OUTPUT_NOT_FOUND: missing/],
+    [result(0, encoded, '', { stdout: { text: encoded, truncated: true } }), /trusted stdout budget/],
+  ]
+  for (const [shellResult, expected] of scenarios) {
+    const h = harness({ results: [shellResult] })
+    let caught
+    await assert.rejects(
+      h.tools[0].execute({ file_path: 'book.ipynb', cell_index: 0 }, { signal: new AbortController().signal }),
+      error => {
+        caught = error
+        return typeof expected === 'function' ? expected(error) : expected.test(String(error))
+      },
+    )
+    assert.equal(String(caught).includes(encoded), false)
+  }
+})
+
+test('reads the shared mixed-output fixture through the real CLI protocol', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'jcli dsh output '))
+  const fixture = JSON.parse(readFileSync(new URL('../fixtures/outputs/mixed_outputs.json', import.meta.url), 'utf8'))
+  const notebook = join(root, 'mixed.ipynb')
+  writeFileSync(notebook, JSON.stringify({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {},
+    cells: [{ cell_type: 'code', id: 'mixed', metadata: {}, execution_count: 7, source: ['1 + 1'], outputs: fixture }],
+  }), 'utf8')
+  const executable = process.env.UV_PROJECT_ENVIRONMENT
+    ? join(process.env.UV_PROJECT_ENVIRONMENT, 'bin', 'j-cli')
+    : 'j-cli'
+  const h = harness({
+    config: { executable },
+    shellRun(spec) {
+      const child = spawnSync('/bin/bash', ['-c', spec.command], {
+        cwd: spec.workdir ?? root,
+        encoding: 'utf8',
+      })
+      return result(child.status, child.stdout, child.stderr, { signal: child.signal })
+    },
+  })
+  const tool = h.tools[0]
+  const signal = new AbortController().signal
+  const directory = await tool.execute({ file_path: notebook, cell_index: 0 }, { signal })
+  assert.equal(directory.outputs.length, 4)
+  assert.equal(directory.outputs[1].available_mime_types.includes('image/png'), true)
+
+  const html = await tool.execute({
+    file_path: notebook, cell_index: 0, output_index: 1, mime_type: 'text/html',
+  }, { signal })
+  assert.equal(html.selected.data, '<strong>raw html</strong>')
+  assert.equal(tool.output.render({}, html)[0].text, '<strong>raw html</strong>')
 })
