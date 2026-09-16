@@ -773,6 +773,47 @@ class TestPostSyncFailures:
 # ---------------------------------------------------------------------------
 
 
+class TestPreBaselineBootstrap:
+    def test_pre_bootstraps_untracked_pair_for_following_edit(self, git_repo: Path):
+        py, ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+
+        pre_code, pre_out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+        )
+
+        assert pre_code == 0
+        assert _decision(pre_out) is None
+        from jupyter_jcli.formats import percent
+
+        canonical_py = percent.canonicalize(
+            py.read_text(encoding="utf-8"), include_cell_ids=False
+        )
+        assert pair_baseline.read_baseline(py, strict=True) == canonical_py
+        assert _git(
+            git_repo,
+            "for-each-ref",
+            "refs/jcli/pair-sync/",
+            "--format=%(refname)",
+        ).stdout.strip()
+
+        py.write_text(
+            py.read_text(encoding="utf-8").replace("x = 1", "x = 10"),
+            encoding="utf-8",
+        )
+        post_code, post_out = _invoke(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
+            "pair-drift-guard-post",
+        )
+
+        assert post_code == 0
+        assert "Auto-synced" in _additional_context(post_out)
+        assert [
+            cell.source
+            for cell in nbformat.read(ipynb, as_version=4).cells
+            if cell.source.strip()
+        ] == ["x = 10"]
+
+
 class TestConsecutiveEdits:
     def test_post_context_includes_baseline_cell_summary(self, git_repo: Path):
         py, _ipynb = _make_pair(
