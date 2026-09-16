@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from jupyter_jcli.outputs.contracts import RASTER_MIME_TYPES, SCHEMA_VERSION
 
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RUNS = 50
@@ -62,11 +65,17 @@ def cleanup_outputs(
     retention_days, retention_max_runs = retention_settings(
         days=days, max_runs=max_runs
     )
-    workspace = (Path.cwd() if cwd is None else Path(cwd)).resolve()
-    root = workspace / ".j-cli" / "outputs"
+    workspace = (Path.cwd() if cwd is None else Path(cwd)).expanduser().absolute()
+    cli_dir = workspace / ".j-cli"
+    root = cli_dir / "outputs"
     result = CleanupResult(root=str(root), dry_run=dry_run)
     protected = protected_run_ids or set()
     current_time = time.time() if now is None else now
+    if cli_dir.is_symlink() or (cli_dir.exists() and not cli_dir.is_dir()):
+        result.skipped_runs.append(
+            {"path": str(cli_dir), "reason": ".j-cli is not a real directory"}
+        )
+        return result
     if not root.exists():
         return result
     if root.is_symlink() or not root.is_dir():
@@ -124,17 +133,32 @@ def _inspect_complete_run(root: Path, run_dir: Path) -> tuple[float, set[Path]] 
         outputs = manifest["outputs"]
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return "invalid or state-unknown manifest retained"
-    if manifest.get("status") != "complete" or not isinstance(outputs, list):
-        return "incomplete or state-unknown run retained"
+    source = manifest.get("source")
+    if (
+        manifest.get("status") != "complete"
+        or manifest.get("managed_by") != "jupyter-jcli"
+        or manifest.get("schema_version") != SCHEMA_VERSION
+        or manifest.get("run_id") != run_dir.name
+        or not isinstance(source, dict)
+        or source.get("kind") != "inline"
+        or source.get("run_id") != run_dir.name
+        or not math.isfinite(created_at)
+        or created_at < 0
+        or not isinstance(outputs, list)
+    ):
+        return "unrecognized or state-unknown manifest retained"
 
     known_files = {manifest_path}
     for output in outputs:
         data = output.get("data", {}) if isinstance(output, dict) else {}
         if not isinstance(data, dict):
             continue
-        for reference in data.values():
+        for mime_type in RASTER_MIME_TYPES:
+            reference = data.get(mime_type)
             if not isinstance(reference, dict) or reference.get("type") != "file":
                 continue
+            if reference.get("mime") != mime_type:
+                return "invalid raster payload reference retained"
             path = Path(str(reference.get("path", "")))
             if path.is_symlink() or not path.is_absolute():
                 return "linked or relative payload reference retained"

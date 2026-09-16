@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from jupyter_jcli.outputs.store import persist_inline_outputs
+from jupyter_jcli.outputs.store import OutputStoreError, persist_inline_outputs
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "outputs" / "mixed_outputs.json"
 
@@ -140,4 +141,60 @@ def test_inline_save_failure_reports_executed_without_retry(live_session, monkey
     error = json.loads(result.output)
     assert error["code"] == "OUTPUT_SAVE_FAILED"
     assert "Execution completed" in error["message"]
+    assert ".j-cli/outputs" not in error["message"]
+    assert error["outputs"][0]["type"] == "html"
     execute.assert_called_once()
+
+
+def test_many_short_outputs_are_persisted_and_share_one_summary_budget(tmp_path):
+    raw_outputs = [
+        {"output_type": "stream", "name": "stdout", "text": str(index)}
+        for index in range(30)
+    ]
+
+    stored = persist_inline_outputs(raw_outputs, cwd=tmp_path)
+
+    assert stored is not None
+    assert len(stored.outputs) <= 21
+    notice = stored.outputs[-1]
+    assert notice["type"] == "summary_notice"
+    assert notice["truncated"] is True
+    assert notice["omitted_items"] == 10
+    assert notice["complete_outputs"] == str(stored.manifest_path)
+    manifest = json.loads(stored.manifest_path.read_text(encoding="utf-8"))
+    assert len(manifest["outputs"]) == 30
+
+
+def test_text_budget_is_shared_across_outputs(tmp_path):
+    raw_outputs = [
+        {"output_type": "stream", "name": "stdout", "text": "a" * 3_000},
+        {"output_type": "stream", "name": "stdout", "text": "b" * 3_000},
+    ]
+
+    stored = persist_inline_outputs(raw_outputs, cwd=tmp_path)
+
+    assert stored is not None
+    assert len(stored.outputs[0]["text"]) == 3_000
+    assert stored.outputs[1]["text"].startswith("b" * 900)
+    assert stored.outputs[1]["text"].endswith("...[truncated]")
+    assert stored.outputs[-1]["type"] == "summary_notice"
+    assert stored.outputs[-1]["complete_outputs"] == str(stored.manifest_path)
+
+
+def test_storage_rejects_symlinked_workspace_metadata(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".j-cli").symlink_to(outside, target_is_directory=True)
+    rich = [
+        {
+            "output_type": "display_data",
+            "data": {"text/html": "<b>saved</b>"},
+            "metadata": {},
+        }
+    ]
+
+    with pytest.raises(OutputStoreError) as failure:
+        persist_inline_outputs(rich, cwd=tmp_path)
+
+    assert ".j-cli is not a real directory" in str(failure.value)
+    assert not (outside / "outputs").exists()

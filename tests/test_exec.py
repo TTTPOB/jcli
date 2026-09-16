@@ -702,7 +702,7 @@ class TestExecAutoCreatesIpynb:
         )
         # Pre-create the paired notebook
         nb = nbformat.v4.new_notebook()
-        nb.cells = [nbformat.v4.new_code_cell("print('existing pair')")]
+        nb.cells = [nbformat.v4.new_code_cell('print("existing pair")')]
         nb_path = tmp_path / "existing.ipynb"
         nbformat.write(nb, nb_path)
 

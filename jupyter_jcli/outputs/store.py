@@ -14,8 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jupyter_jcli._enums import OutputType
-from jupyter_jcli.executor import summarize_outputs
+from jupyter_jcli.executor import summarize_outputs, summary_fits
 from jupyter_jcli.outputs.contracts import (
     DEFAULT_TEXT_LIMIT,
     RASTER_MIME_TYPES,
@@ -36,6 +35,10 @@ _IMAGE_SUFFIXES = {
 
 class OutputStoreError(RuntimeError):
     """Raised after execution when complete outputs cannot be persisted."""
+
+    def __init__(self, message: str, outputs: list[dict]) -> None:
+        super().__init__(message)
+        self.outputs = outputs
 
 
 @dataclass(frozen=True)
@@ -58,17 +61,18 @@ def persist_inline_outputs(
     if not _requires_storage(raw_outputs, text_budget=text_budget):
         return None
 
-    effective_cwd = Path.cwd() if cwd is None else Path(cwd)
-    effective_cwd = effective_cwd.resolve()
+    effective_cwd = (Path.cwd() if cwd is None else Path(cwd)).expanduser().absolute()
     run_id = str(uuid_factory())
-    run_dir = effective_cwd / ".j-cli" / "outputs" / run_id
-    manifest_path = run_dir / _MANIFEST_NAME
     try:
+        outputs_root = _safe_outputs_root(effective_cwd)
+        run_dir = outputs_root / run_id
+        manifest_path = run_dir / _MANIFEST_NAME
         run_dir.mkdir(parents=True, exist_ok=False)
         stored_outputs = _write_payloads(raw_outputs, run_dir)
         created_at = float(clock())
         manifest = {
             "schema_version": SCHEMA_VERSION,
+            "managed_by": "jupyter-jcli",
             "status": "complete",
             "run_id": run_id,
             "created_at": created_at,
@@ -86,14 +90,39 @@ def persist_inline_outputs(
             encoding="utf-8",
         )
         os.replace(temporary_manifest, manifest_path)
-        published = StoredOutputs(
-            manifest_path=manifest_path.resolve(),
-            outputs=_summary_outputs(stored_outputs),
-        )
     except Exception as error:
+        try:
+            diagnostics = summarize_outputs(raw_outputs)
+        except Exception:  # noqa: BLE001 - keep the primary persistence failure
+            diagnostics = [
+                {
+                    "type": "summary_notice",
+                    "truncated": True,
+                    "omitted_items": len(raw_outputs),
+                    "message": "Execution output diagnostics could not be summarized.",
+                }
+            ]
         raise OutputStoreError(
-            f"Execution completed, but outputs could not be saved in {run_dir}: {error}"
+            f"Execution completed, but outputs could not be saved: {error}",
+            diagnostics,
         ) from error
+
+    try:
+        summary = _summary_outputs(stored_outputs, str(manifest_path.resolve()))
+    except Exception:  # noqa: BLE001 - published data remains authoritative
+        summary = [
+            {
+                "type": "summary_notice",
+                "truncated": True,
+                "omitted_items": len(raw_outputs),
+                "message": "Execution summary failed; full outputs remain persisted.",
+                "complete_outputs": str(manifest_path.resolve()),
+            }
+        ]
+    published = StoredOutputs(
+        manifest_path=manifest_path.resolve(),
+        outputs=summary,
+    )
 
     try:
         from jupyter_jcli.outputs.cleanup import cleanup_outputs
@@ -163,7 +192,21 @@ def read_stored_output(
     )
 
 
+def _safe_outputs_root(workspace: Path) -> Path:
+    cli_dir = workspace / ".j-cli"
+    outputs_root = cli_dir / "outputs"
+    if cli_dir.is_symlink() or (cli_dir.exists() and not cli_dir.is_dir()):
+        raise OutputStoreError(".j-cli is not a real directory", [])
+    if outputs_root.is_symlink() or (
+        outputs_root.exists() and not outputs_root.is_dir()
+    ):
+        raise OutputStoreError(".j-cli/outputs is not a real directory", [])
+    return outputs_root
+
+
 def _requires_storage(raw_outputs: list[dict], *, text_budget: int) -> bool:
+    if not summary_fits(raw_outputs, text_limit=text_budget):
+        return True
     text_size = 0
     for output in raw_outputs:
         output_type = output.get("output_type")
@@ -196,9 +239,7 @@ def _write_payloads(raw_outputs: list[dict], run_dir: Path) -> list[dict]:
             try:
                 raw = base64.b64decode(encoded, validate=True)
             except (binascii.Error, ValueError) as error:
-                raise OutputStoreError(
-                    f"Invalid base64 data for {mime_type}"
-                ) from error
+                raise ValueError(f"Invalid base64 data for {mime_type}") from error
             image_path = (
                 run_dir / f"output-{output_index}{_IMAGE_SUFFIXES[mime_type]}"
             ).resolve()
@@ -212,31 +253,8 @@ def _write_payloads(raw_outputs: list[dict], run_dir: Path) -> list[dict]:
     return stored_outputs
 
 
-def _summary_outputs(stored_outputs: list[dict]) -> list[dict]:
-    summaries = []
-    for output in stored_outputs:
-        data = output.get("data", {})
-        image = next(
-            (
-                value
-                for mime in RASTER_MIME_TYPES
-                if isinstance(data, dict)
-                and isinstance((value := data.get(mime)), dict)
-                and value.get("type") == "file"
-            ),
-            None,
-        )
-        if image is not None:
-            summaries.append(
-                {
-                    "type": OutputType.IMAGE,
-                    "path": image["path"],
-                    "mime": image["mime"],
-                }
-            )
-        else:
-            summaries.extend(summarize_outputs([output]))
-    return summaries
+def _summary_outputs(stored_outputs: list[dict], manifest_path: str) -> list[dict]:
+    return summarize_outputs(stored_outputs, full_output_location=manifest_path)
 
 
 def _materialize_outputs(manifest: dict[str, Any], manifest_path: Path) -> list[dict]:

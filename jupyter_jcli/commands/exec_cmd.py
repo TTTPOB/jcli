@@ -162,13 +162,30 @@ def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
     from jupyter_jcli.file_execution import (
         CellExecutionFailed,
         NoCodeCellsError,
+        OutputSummaryError,
         TotalExecutionTimeout,
     )
     from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
     from jupyter_jcli.outputs.store import OutputStoreError
 
     if isinstance(error, OutputStoreError):
-        emit_error("OUTPUT_SAVE_FAILED", str(error), ctx.use_json)
+        data = {
+            "status": ResponseStatus.ERROR,
+            "code": "OUTPUT_SAVE_FAILED",
+            "message": str(error),
+            "outputs": error.outputs,
+        }
+        if ctx.use_json:
+            emit(data, use_json=True)
+        else:
+            diagnostic = format_outputs_human(error.outputs)
+            message = f"ERROR [OUTPUT_SAVE_FAILED]: {error}"
+            if diagnostic:
+                message += f"\n{diagnostic}"
+            emit({"_human": message}, use_json=False)
+        raise SystemExit(1)
+    if isinstance(error, OutputSummaryError):
+        emit_error("OUTPUT_SUMMARY_FAILED", str(error), ctx.use_json)
     if isinstance(error, NoCodeCellsError):
         emit_error("PARSE_ERROR", str(error), ctx.use_json)
     if isinstance(error, ExecutionTimeout):
@@ -190,6 +207,8 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
             "outputs": event.outputs,
             "execution_count": event.execution_count,
         }
+        if event.notebook_cell_index is not None:
+            cell_payload["notebook_cell_index"] = event.notebook_cell_index
         data = {"status": event.status, "cell": cell_payload}
         if event.notebook_created:
             data["notebook_created"] = event.notebook_created
@@ -208,6 +227,8 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
         parts.append(f"Notebook created: {event.notebook_created}")
     if event.notebook_updated:
         parts.append(f"Notebook updated: {event.notebook_updated}")
+    if event.notebook_cell_index is not None:
+        parts.append(f"Notebook cell: {event.notebook_cell_index}")
     if event.output_manifest:
         parts.append(f"Outputs saved: {event.output_manifest}")
     emit({"_human": "\n".join(parts)}, use_json=False)

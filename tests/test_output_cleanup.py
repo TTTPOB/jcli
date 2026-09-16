@@ -15,6 +15,7 @@ def _complete_run(workspace: Path, run_id: str, created_at: float) -> Path:
     run_dir.mkdir(parents=True)
     manifest = {
         "schema_version": 1,
+        "managed_by": "jupyter-jcli",
         "status": "complete",
         "run_id": run_id,
         "created_at": created_at,
@@ -108,6 +109,56 @@ def test_show_reports_output_not_found_after_cleanup(tmp_path):
 
     assert result.exit_code == 1
     assert json.loads(result.output)["code"] == "OUTPUT_NOT_FOUND"
+
+
+def test_cleanup_rejects_unmanaged_complete_directory(tmp_path):
+    manifest = _complete_run(tmp_path, "foreign", 0.0)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data.pop("managed_by")
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+
+    result = cleanup_outputs(cwd=tmp_path, days=1, max_runs=1, now=200_000.0)
+
+    assert manifest.is_file()
+    assert "unrecognized" in result.skipped_runs[0]["reason"]
+
+
+def test_application_json_file_shape_does_not_authorize_deletion(tmp_path):
+    external = tmp_path / "external.txt"
+    external.write_text("keep", encoding="utf-8")
+    manifest = _complete_run(tmp_path, "json-shape", 0.0)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["outputs"] = [
+        {
+            "output_type": "execute_result",
+            "data": {
+                "application/json": {
+                    "type": "file",
+                    "path": str(external),
+                    "mime": "application/json",
+                }
+            },
+            "metadata": {},
+            "execution_count": 1,
+        }
+    ]
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+
+    cleanup_outputs(cwd=tmp_path, days=1, max_runs=1, now=200_000.0)
+
+    assert not manifest.parent.exists()
+    assert external.read_text(encoding="utf-8") == "keep"
+
+
+def test_cleanup_rejects_symlinked_jcli_root(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".j-cli").symlink_to(outside, target_is_directory=True)
+
+    result = cleanup_outputs(cwd=tmp_path, days=1, max_runs=1, now=200_000.0)
+
+    assert result.deleted_runs == []
+    assert ".j-cli is not a real directory" in result.skipped_runs[0]["reason"]
 
 
 def test_positive_environment_overrides(monkeypatch):

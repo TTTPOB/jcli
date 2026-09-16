@@ -331,6 +331,7 @@ class TestPyPercentWriteback:
                     live_session["url"],
                     "-t",
                     live_session["token"],
+                    "--json",
                     "exec",
                     live_session["session_id"],
                     "--file",
@@ -339,7 +340,11 @@ class TestPyPercentWriteback:
             )
 
         assert result.exit_code == 1
-        assert "invalid output" in result.output
+        error = json.loads(result.output)
+        assert error["code"] == "OUTPUT_SUMMARY_FAILED"
+        assert "execution completed and raw outputs were saved" in error["message"]
+        assert f"{nb_path} cell 0" in error["message"]
+        assert "invalid output" in error["message"]
         writeback.assert_called_once()
         assert writeback.call_args.args[1][0]["raw_outputs"]
         updated_nb = nbformat.read(nb_path, as_version=4)
@@ -370,6 +375,7 @@ class TestPyPercentWriteback:
                 live_session["url"],
                 "-t",
                 live_session["token"],
+                "--json",
                 "exec",
                 live_session["session_id"],
                 "--file",
@@ -380,6 +386,10 @@ class TestPyPercentWriteback:
         )
 
         assert result.exit_code == 0
+        events = _jsonl_events(result.output)
+        cell = next(event["cell"] for event in events if "cell" in event)
+        assert cell["cell_index"] == 0
+        assert cell["notebook_cell_index"] == 1
         updated_nb = nbformat.read(nb_path, as_version=4)
         assert updated_nb.cells[0].cell_type == "markdown"
         assert any("mapped" in str(output) for output in updated_nb.cells[1].outputs)

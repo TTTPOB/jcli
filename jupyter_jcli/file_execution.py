@@ -30,6 +30,26 @@ class CellExecutionFailed(RuntimeError):
         self.cell_index = cell_index
 
 
+class OutputSummaryError(RuntimeError):
+    """Raised when saved notebook outputs cannot be summarized for transport."""
+
+    def __init__(
+        self,
+        cell_index: int,
+        notebook_path: str,
+        notebook_cell_index: int,
+        error: Exception,
+    ) -> None:
+        super().__init__(
+            "Cell execution completed and raw outputs were saved to "
+            f"{notebook_path} cell {notebook_cell_index}, but the response summary "
+            f"failed: {error}"
+        )
+        self.cell_index = cell_index
+        self.notebook_path = notebook_path
+        self.notebook_cell_index = notebook_cell_index
+
+
 @dataclass(frozen=True)
 class FileCellEvent:
     """Raw and processed results plus persistence metadata for one cell."""
@@ -42,6 +62,7 @@ class FileCellEvent:
     status: ResponseStatus
     notebook_created: str | None = None
     notebook_updated: str | None = None
+    notebook_cell_index: int | None = None
     output_manifest: str | None = None
 
 
@@ -181,6 +202,7 @@ def execute_file(
                 last_notebook_updated = notebook_updated
 
             output_manifest = None
+            notebook_cell_index = notebook_cell_indices.get(cell.index)
             if ipynb_path is None:
                 from jupyter_jcli.outputs.store import persist_inline_outputs
 
@@ -191,7 +213,16 @@ def execute_file(
                 else:
                     outputs = summarize_outputs(raw_outputs)
             else:
-                outputs = summarize_outputs(raw_outputs)
+                assert notebook_cell_index is not None
+                location = f"{ipynb_path}#cell={notebook_cell_index}"
+                try:
+                    outputs = summarize_outputs(
+                        raw_outputs, full_output_location=location
+                    )
+                except Exception as error:
+                    raise OutputSummaryError(
+                        cell.index, ipynb_path, notebook_cell_index, error
+                    ) from error
             event = FileCellEvent(
                 cell_index=cell.index,
                 source_preview=cell.source[:80].replace("\n", " "),
@@ -201,6 +232,7 @@ def execute_file(
                 status=execution_status,
                 notebook_created=notebook_created,
                 notebook_updated=notebook_updated,
+                notebook_cell_index=notebook_cell_index,
                 output_manifest=output_manifest,
             )
             cells_executed += 1
