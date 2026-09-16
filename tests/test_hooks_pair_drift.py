@@ -814,6 +814,89 @@ class TestPreBaselineBootstrap:
         ] == ["x = 10"]
 
 
+class TestPreBaselineBootstrapBoundaries:
+    def test_pre_does_not_overwrite_existing_sticky_baseline(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        from jupyter_jcli.formats import percent
+
+        canonical = percent.canonicalize(
+            py.read_text(encoding="utf-8"), include_cell_ids=False
+        )
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "@150 +0000")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "@150 +0000")
+        assert pair_baseline.write_baseline(py, canonical) is True
+        ref_name = pair_baseline._ref_name("nb.py")
+        ref_before = _git(git_repo, "rev-parse", ref_name).stdout.strip()
+
+        code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) is None
+        assert _git(git_repo, "rev-parse", ref_name).stdout.strip() == ref_before
+        assert pair_baseline.read_baseline(py, strict=True) == canonical
+
+    def test_pre_does_not_create_sticky_ref_when_head_is_baseline(self, git_repo: Path):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+        _git(git_repo, "add", "nb.py")
+        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
+
+        code, out = _invoke({"tool_name": "Edit", "tool_input": {"file_path": str(py)}})
+
+        assert code == 0
+        assert _decision(out) is None
+        assert (
+            _git(
+                git_repo,
+                "for-each-ref",
+                "refs/jcli/pair-sync/",
+                "--format=%(refname)",
+            ).stdout.strip()
+            == ""
+        )
+
+    def test_pre_baseline_persistence_failure_is_visible(self, git_repo: Path):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+
+        with patch("jupyter_jcli.pair_baseline.write_baseline", return_value=False):
+            result = CliRunner().invoke(
+                main,
+                ["_hooks", "pair-drift-guard-pre"],
+                input=json.dumps(
+                    {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+                ),
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 1
+        assert "baseline persistence failed" in (result.stderr or result.output)
+
+    def test_pre_baseline_read_failure_is_not_treated_as_missing(self, git_repo: Path):
+        py, _ipynb = _make_pair(git_repo, ["x = 1"], ["x = 1"])
+
+        with patch(
+            "jupyter_jcli.pair_baseline.read_baseline",
+            side_effect=[None, RuntimeError("git lookup broke")],
+        ):
+            result = CliRunner().invoke(
+                main,
+                ["_hooks", "pair-drift-guard-pre"],
+                input=json.dumps(
+                    {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+                ),
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 1
+        diagnostic = result.stderr or result.output
+        assert "pair baseline bootstrap failed" in diagnostic
+        assert "git lookup broke" in diagnostic
+
+
 class TestConsecutiveEdits:
     def test_post_context_includes_baseline_cell_summary(self, git_repo: Path):
         py, _ipynb = _make_pair(
