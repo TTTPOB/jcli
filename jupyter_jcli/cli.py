@@ -45,6 +45,11 @@ _LAZY_COMMANDS = {
         "Manage kernel specifications.",
         False,
     ),
+    "mcp": (
+        "jupyter_jcli.commands.mcp:mcp",
+        "Serve saved notebook outputs over MCP.",
+        False,
+    ),
     "notebook": (
         "jupyter_jcli.commands.notebook:notebook",
         "Inspect notebook cells.",
