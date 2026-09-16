@@ -189,14 +189,16 @@ def _serialize_mapping(
             py_cell.source_start_line if py_cell is not None else None
         ),
         "source_end_line": py_cell.source_end_line if py_cell is not None else None,
-        "alignment": change.alignment,
-        "change": change.kind,
+        "alignment": change.alignment.value if change.alignment is not None else None,
+        "change": change.kind.value,
         "python_baseline_index": py_change.old_index if py_change is not None else None,
         "notebook_baseline_index": (
             ipynb_change.old_index if ipynb_change is not None else None
         ),
-        "python_change": py_change.kind if py_change is not None else None,
-        "notebook_change": ipynb_change.kind if ipynb_change is not None else None,
+        "python_change": py_change.kind.value if py_change is not None else None,
+        "notebook_change": ipynb_change.kind.value
+        if ipynb_change is not None
+        else None,
     }
 
 

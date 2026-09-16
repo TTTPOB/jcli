@@ -24,7 +24,7 @@ def build_summary_data(
     for cell in parsed.cells:
         cell_data = _summarize_cell(cell)
         if change := changed_current.get(cell.index):
-            cell_data["change"] = change.kind
+            cell_data["change"] = change.kind.value
             if change.old_index is not None:
                 cell_data["old_index"] = change.old_index
         cells.append(cell_data)
@@ -40,7 +40,7 @@ def build_summary_data(
 
 def _serialize_change(change: CellChange) -> dict:
     data = {
-        "kind": change.kind,
+        "kind": change.kind.value,
         "old_index": change.old_index,
         "new_index": change.new_index,
         "current_insertion_index": change.current_insertion_index,

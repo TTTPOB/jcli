@@ -9,7 +9,7 @@ from unittest.mock import patch
 import nbformat
 from click.testing import CliRunner
 
-from jupyter_jcli._enums import CellType
+from jupyter_jcli._enums import AlignmentMethod, CellChangeKind, CellType
 from jupyter_jcli.cli import main
 from jupyter_jcli.diff import CellChange, align_cells, diff_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
@@ -397,9 +397,11 @@ def test_cell_alignment_reports_id_content_and_position_methods():
     by_content = align_cells(_parsed("same"), _parsed("same"))
     by_position = align_cells(_parsed("old"), _parsed("new"))
 
-    assert by_id[0].alignment == "id"
-    assert by_content[0].alignment == "content"
-    assert by_position[0].alignment == "position"
+    assert by_id[0].kind is CellChangeKind.EDITED
+    assert by_content[0].kind is CellChangeKind.EQUAL
+    assert by_id[0].alignment is AlignmentMethod.ID
+    assert by_content[0].alignment is AlignmentMethod.CONTENT
+    assert by_position[0].alignment is AlignmentMethod.POSITION
 
 
 def test_notebook_helpers_import_without_cli_cycle(tmp_path):
@@ -662,9 +664,9 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
     old = _parsed("gone = 1", "value = 1")
     current = _parsed("value = 2", "new = 3")
     changes = [
-        CellChange("edited", 1, 0, old.cells[1], current.cells[0], 0),
-        CellChange("inserted", None, 1, None, current.cells[1], 1),
-        CellChange("deleted", 0, None, old.cells[0], None, 0),
+        CellChange(CellChangeKind.EDITED, 1, 0, old.cells[1], current.cells[0], 0),
+        CellChange(CellChangeKind.INSERTED, None, 1, None, current.cells[1], 1),
+        CellChange(CellChangeKind.DELETED, 0, None, old.cells[0], None, 0),
     ]
 
     data = build_summary_data(current, changes)

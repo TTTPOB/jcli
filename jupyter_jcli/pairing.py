@@ -5,7 +5,7 @@ from pathlib import Path
 
 import nbformat
 
-from jupyter_jcli._enums import CellType, OutputPolicy
+from jupyter_jcli._enums import CellChangeKind, CellType, OutputPolicy
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats.model import Cell
 
@@ -39,10 +39,10 @@ def update_ipynb_sources(
         if cell.cell_id in old_indices_by_id:
             old_index = old_indices_by_id[cell.cell_id]
             kind = (
-                "equal"
+                CellChangeKind.EQUAL
                 if old_cells[old_index].cell_type == cell.cell_type
                 and old_cells[old_index].source == cell.source
-                else "edited"
+                else CellChangeKind.EDITED
             )
             aligned_old_indices[index] = (old_index, kind)
 
@@ -61,7 +61,7 @@ def update_ipynb_sources(
             output_policy == OutputPolicy.CLEAR_ALL
             or (
                 output_policy == OutputPolicy.CLEAR_EDITED
-                and (aligned is None or aligned[1] != "equal")
+                and (aligned is None or aligned[1] != CellChangeKind.EQUAL)
             )
         ):
             new_cell.outputs = []

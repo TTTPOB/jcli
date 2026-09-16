@@ -7,6 +7,7 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from jupyter_jcli._enums import AlignmentMethod, CellChangeKind
 from jupyter_jcli.formats.model import Cell, ParsedFile
 
 _MAX_REPLACE_DP_PRODUCT = 2_500
@@ -27,13 +28,13 @@ _TOKEN_RE = re.compile(r"\w+|[^\w\s]")
 class CellChange:
     """An aligned cell pair or one-sided cell change."""
 
-    kind: str
+    kind: CellChangeKind
     old_index: int | None
     new_index: int | None
     old_cell: Cell | None
     new_cell: Cell | None
     current_insertion_index: int
-    alignment: str | None = None
+    alignment: AlignmentMethod | None = None
 
 
 @dataclass(frozen=True)
@@ -90,8 +91,10 @@ def _align_cells(
         old_cell = old_cells[old_index]
         new_cell = current_cells[new_index]
         kind = _paired_kind(old_cell, new_cell)
-        if include_equal or kind != "equal":
-            alignments.append(_paired_change(kind, old_cell, new_cell, alignment="id"))
+        if include_equal or kind != CellChangeKind.EQUAL:
+            alignments.append(
+                _paired_change(kind, old_cell, new_cell, alignment=AlignmentMethod.ID)
+            )
         old_start = old_index + 1
         new_start = new_index + 1
 
@@ -151,7 +154,12 @@ def _align_cells_by_content(
         if not include_equal:
             return []
         return [
-            _paired_change("equal", old_cell, new_cell, alignment="content")
+            _paired_change(
+                CellChangeKind.EQUAL,
+                old_cell,
+                new_cell,
+                alignment=AlignmentMethod.CONTENT,
+            )
             for old_cell, new_cell in zip(old_cells, current_cells)
         ]
 
@@ -171,10 +179,14 @@ def _align_cells_by_content(
         if len(changed_positions) <= _MAX_LARGE_POSITIONAL_CHANGES:
             return [
                 _paired_change(
-                    "edited" if index in changed_positions else "equal",
+                    CellChangeKind.EDITED
+                    if index in changed_positions
+                    else CellChangeKind.EQUAL,
                     old_cell,
                     new_cell,
-                    alignment="position" if index in changed_positions else "content",
+                    alignment=AlignmentMethod.POSITION
+                    if index in changed_positions
+                    else AlignmentMethod.CONTENT,
                 )
                 for index, (old_cell, new_cell) in enumerate(
                     zip(old_cells, current_cells)
@@ -195,7 +207,12 @@ def _align_cells_by_content(
         if tag == "equal":
             if include_equal:
                 alignments.extend(
-                    _paired_change("equal", old_cell, new_cell, alignment="content")
+                    _paired_change(
+                        CellChangeKind.EQUAL,
+                        old_cell,
+                        new_cell,
+                        alignment=AlignmentMethod.CONTENT,
+                    )
                     for old_cell, new_cell in zip(
                         old_cells[old_start:old_end], current_cells[new_start:new_end]
                     )
@@ -204,7 +221,7 @@ def _align_cells_by_content(
         if tag == "insert":
             alignments.extend(
                 CellChange(
-                    kind="inserted",
+                    kind=CellChangeKind.INSERTED,
                     old_index=None,
                     new_index=cell.index,
                     old_cell=None,
@@ -220,7 +237,7 @@ def _align_cells_by_content(
             )
             alignments.extend(
                 CellChange(
-                    kind="deleted",
+                    kind=CellChangeKind.DELETED,
                     old_index=cell.index,
                     new_index=None,
                     old_cell=cell,
@@ -243,15 +260,17 @@ def _align_cells_by_content(
         )
     if include_equal:
         return alignments
-    return [alignment for alignment in alignments if alignment.kind != "equal"]
+    return [
+        alignment for alignment in alignments if alignment.kind != CellChangeKind.EQUAL
+    ]
 
 
 def _paired_change(
-    kind: str,
+    kind: CellChangeKind,
     old_cell: Cell,
     new_cell: Cell,
     *,
-    alignment: str = "position",
+    alignment: AlignmentMethod = AlignmentMethod.POSITION,
 ) -> CellChange:
     return CellChange(
         kind=kind,
@@ -310,14 +329,16 @@ def _align_replaced_cells(
         )
 
     costs = [[0.0] * (new_count + 1) for _ in range(old_count + 1)]
-    steps = [[""] * (new_count + 1) for _ in range(old_count + 1)]
+    steps: list[list[CellChangeKind | None]] = [
+        [None] * (new_count + 1) for _ in range(old_count + 1)
+    ]
 
     for old_pos in range(1, old_count + 1):
         costs[old_pos][0] = float(old_pos)
-        steps[old_pos][0] = "deleted"
+        steps[old_pos][0] = CellChangeKind.DELETED
     for new_pos in range(1, new_count + 1):
         costs[0][new_pos] = float(new_pos)
-        steps[0][new_pos] = "inserted"
+        steps[0][new_pos] = CellChangeKind.INSERTED
 
     for old_pos in range(1, old_count + 1):
         for new_pos in range(1, new_count + 1):
@@ -330,10 +351,10 @@ def _align_replaced_cells(
                         signatures,
                     ),
                     0,
-                    "edited",
+                    CellChangeKind.EDITED,
                 ),
-                (costs[old_pos - 1][new_pos] + 1.0, 1, "deleted"),
-                (costs[old_pos][new_pos - 1] + 1.0, 2, "inserted"),
+                (costs[old_pos - 1][new_pos] + 1.0, 1, CellChangeKind.DELETED),
+                (costs[old_pos][new_pos - 1] + 1.0, 2, CellChangeKind.INSERTED),
             )
             cost, _, step = min(candidates)
             costs[old_pos][new_pos] = cost
@@ -344,7 +365,7 @@ def _align_replaced_cells(
     new_pos = new_count
     while old_pos or new_pos:
         step = steps[old_pos][new_pos]
-        if step == "edited":
+        if step == CellChangeKind.EDITED:
             old_cell = old_cells[old_pos - 1]
             new_cell = new_cells[new_pos - 1]
             aligned.append(
@@ -352,11 +373,11 @@ def _align_replaced_cells(
             )
             old_pos -= 1
             new_pos -= 1
-        elif step == "deleted":
+        elif step == CellChangeKind.DELETED:
             old_cell = old_cells[old_pos - 1]
             aligned.append(
                 CellChange(
-                    kind="deleted",
+                    kind=CellChangeKind.DELETED,
                     old_index=old_cell.index,
                     new_index=None,
                     old_cell=old_cell,
@@ -373,7 +394,7 @@ def _align_replaced_cells(
             new_cell = new_cells[new_pos - 1]
             aligned.append(
                 CellChange(
-                    kind="inserted",
+                    kind=CellChangeKind.INSERTED,
                     old_index=None,
                     new_index=new_cell.index,
                     old_cell=None,
@@ -436,7 +457,7 @@ def _align_replaced_cells_by_position(
         ):
             changes.extend(
                 CellChange(
-                    kind="inserted",
+                    kind=CellChangeKind.INSERTED,
                     old_index=None,
                     new_index=inserted_cell.index,
                     old_cell=None,
@@ -454,7 +475,7 @@ def _align_replaced_cells_by_position(
         ):
             changes.extend(
                 CellChange(
-                    kind="deleted",
+                    kind=CellChangeKind.DELETED,
                     old_index=deleted_cell.index,
                     new_index=None,
                     old_cell=deleted_cell,
@@ -478,7 +499,7 @@ def _align_replaced_cells_by_position(
     for old_cell in old_cells[old_pos:]:
         changes.append(
             CellChange(
-                kind="deleted",
+                kind=CellChangeKind.DELETED,
                 old_index=old_cell.index,
                 new_index=None,
                 old_cell=old_cell,
@@ -489,7 +510,7 @@ def _align_replaced_cells_by_position(
     for new_cell in new_cells[new_pos:]:
         changes.append(
             CellChange(
-                kind="inserted",
+                kind=CellChangeKind.INSERTED,
                 old_index=None,
                 new_index=new_cell.index,
                 old_cell=None,
@@ -539,10 +560,10 @@ def _best_forward_match(
     )
 
 
-def _paired_kind(old_cell: Cell, new_cell: Cell) -> str:
+def _paired_kind(old_cell: Cell, new_cell: Cell) -> CellChangeKind:
     if old_cell.cell_type == new_cell.cell_type and old_cell.source == new_cell.source:
-        return "equal"
-    return "edited"
+        return CellChangeKind.EQUAL
+    return CellChangeKind.EDITED
 
 
 def _cell_edit_cost(

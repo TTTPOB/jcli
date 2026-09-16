@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from jupyter_jcli._enums import CellType
+from jupyter_jcli._enums import CellChangeKind, CellType
 
 _MAX_CHANGE_OVERVIEW_ITEMS = 12
 _MAX_BOUNDED_METADATA_FIELD_CHARS = 1000
 _MAX_BOUNDED_CELL_LINE_CHARS = 1000
-_CHANGE_MARKERS = {"edited": "~", "inserted": "+", "deleted": "-"}
+_CHANGE_MARKERS = {
+    CellChangeKind.EDITED: "~",
+    CellChangeKind.INSERTED: "+",
+    CellChangeKind.DELETED: "-",
+}
 
 
 def format_summary_human(
@@ -37,11 +41,12 @@ def format_summary_human(
         ]
         lines.append("changes: " + _format_change_overview(changes, kinds))
         lines.append(
-            "legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds)
+            "legend: "
+            + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind.value}" for kind in kinds)
         )
     deleted_by_position: dict[int, list[dict]] = {}
     for change in changes:
-        if change["kind"] == "deleted":
+        if change["kind"] == CellChangeKind.DELETED:
             deleted_by_position.setdefault(
                 change["current_insertion_index"], []
             ).append(change)
@@ -59,13 +64,13 @@ def format_summary_human(
     return "\n".join(lines)
 
 
-def _format_change_overview(changes: list[dict], kinds: list[str]) -> str:
+def _format_change_overview(changes: list[dict], kinds: list[CellChangeKind]) -> str:
     parts = []
     for kind in kinds:
         matching = [change for change in changes if change["kind"] == kind]
         visible = matching[:_MAX_CHANGE_OVERVIEW_ITEMS]
         omitted = len(matching) - len(visible)
-        if kind == "deleted":
+        if kind == CellChangeKind.DELETED:
             locations = ", ".join(
                 f"old:{change['old_index']} at current:{change['current_insertion_index']}"
                 for change in visible
@@ -77,7 +82,7 @@ def _format_change_overview(changes: list[dict], kinds: list[str]) -> str:
             indices = ",".join(str(change["new_index"]) for change in visible)
             if omitted:
                 indices += f",...+{omitted} more"
-            parts.append(f"{kind} current[{indices}]")
+            parts.append(f"{kind.value} current[{indices}]")
     return "; ".join(parts)
 
 
@@ -90,7 +95,7 @@ def _format_summary_human_bounded(
 ) -> str:
     cells = data["cells"]
     changes = data.get("changes", [])
-    deleted = [change for change in changes if change["kind"] == "deleted"]
+    deleted = [change for change in changes if change["kind"] == CellChangeKind.DELETED]
     limit = max(0, max_cells) if max_cells is not None else len(cells) + len(deleted)
 
     current_by_index = {cell["index"]: cell for cell in cells}
@@ -106,11 +111,11 @@ def _format_summary_human_bounded(
     if len(cells) + len(deleted) <= limit:
         for cell in cells:
             add_current(cell["index"])
-        candidates.extend(("deleted", change) for change in deleted)
+        candidates.extend((CellChangeKind.DELETED, change) for change in deleted)
     else:
         for index in changed_indices:
             add_current(index)
-        candidates.extend(("deleted", change) for change in deleted)
+        candidates.extend((CellChangeKind.DELETED, change) for change in deleted)
         anchors = changed_indices + [
             change["current_insertion_index"] for change in deleted
         ]
@@ -132,7 +137,8 @@ def _format_summary_human_bounded(
     if changes:
         lines.append("changes: " + _format_change_overview(changes, kinds))
         lines.append(
-            "legend: " + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind}" for kind in kinds)
+            "legend: "
+            + " | ".join(f"{_CHANGE_MARKERS[kind]} {kind.value}" for kind in kinds)
         )
 
     shown_current = 0
@@ -142,7 +148,7 @@ def _format_summary_human_bounded(
     )
 
     for item_kind, item in selected:
-        if item_kind == "deleted":
+        if item_kind == CellChangeKind.DELETED:
             heading = f"- old:{item['old_index']} at current:{item['current_insertion_index']}"
             raw_line = _format_summary_cell_human(item["old_cell"], heading)
         else:
@@ -153,7 +159,7 @@ def _format_summary_human_bounded(
         line_truncated = line != raw_line
 
         next_current = shown_current + (item_kind == "current")
-        next_deleted = shown_deleted + (item_kind == "deleted")
+        next_deleted = shown_deleted + (item_kind == CellChangeKind.DELETED)
         suffix = _format_bounded_omission(
             data,
             len(cells) - next_current,

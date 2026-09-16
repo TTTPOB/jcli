@@ -34,6 +34,23 @@ class DriftStatus(str, Enum):
     DRIFT_ONLY = "drift_only"
 
 
+class CellChangeKind(str, Enum):
+    """Change classification for an aligned notebook cell."""
+
+    EQUAL = "equal"
+    EDITED = "edited"
+    INSERTED = "inserted"
+    DELETED = "deleted"
+
+
+class AlignmentMethod(str, Enum):
+    """How an old and current notebook cell were paired."""
+
+    ID = "id"
+    CONTENT = "content"
+    POSITION = "position"
+
+
 class CellType(str, Enum):
     """Cell type as stored in .ipynb / py:percent files."""
 
