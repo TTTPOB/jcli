@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jupyter_jcli._enums import CellType, ResponseStatus
-from jupyter_jcli.executor import process_outputs
+from jupyter_jcli.executor import summarize_outputs
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
+from jupyter_jcli.outputs.notebook import resolve_notebook_cell
 from jupyter_jcli.parser import ipynb_path_for_py, parse_cell_spec, parse_file
 
 
@@ -85,6 +86,24 @@ def _prepare_notebook(parsed, file_path: str) -> tuple[str | None, str | None]:
     return ipynb_path, notebook_created
 
 
+def _notebook_cell_indices(
+    file_path: str,
+    selected: list,
+    ipynb_path: str | None,
+    notebook_created: str | None,
+) -> dict[int, int]:
+    """Resolve every write target before any selected cell is executed."""
+    if ipynb_path is None:
+        return {}
+    source_path = Path(file_path)
+    if source_path.suffix == ".ipynb" or notebook_created is not None:
+        return {cell.index: cell.index for cell in selected}
+    return {
+        cell.index: resolve_notebook_cell(source_path, cell.index).notebook_cell_index
+        for cell in selected
+    }
+
+
 def execute_file(
     server_url: str,
     token: str | None,
@@ -113,6 +132,9 @@ def execute_file(
     parsed = parse_file(file_path)
     selected = _select_cells(parsed, cell_spec)
     ipynb_path, notebook_created = _prepare_notebook(parsed, file_path)
+    notebook_cell_indices = _notebook_cell_indices(
+        file_path, selected, ipynb_path, notebook_created
+    )
 
     if writeback is None:
         writeback = write_outputs_to_notebook
@@ -142,12 +164,10 @@ def execute_file(
                 else ResponseStatus.ERROR
             )
             raw_outputs = result.get("outputs", [])
-            outputs = process_outputs(raw_outputs)
 
             cell_result = {
-                "cell_index": cell.index,
+                "cell_index": notebook_cell_indices.get(cell.index, cell.index),
                 "source_preview": cell.source[:80].replace("\n", " "),
-                "outputs": outputs,
                 "raw_outputs": raw_outputs,
                 "execution_count": result.get("execution_count"),
             }
@@ -159,6 +179,7 @@ def execute_file(
                     raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
                 last_notebook_updated = notebook_updated
 
+            outputs = summarize_outputs(raw_outputs)
             event = FileCellEvent(
                 cell_index=cell.index,
                 source_preview=cell.source[:80].replace("\n", " "),

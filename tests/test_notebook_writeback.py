@@ -302,7 +302,7 @@ class TestPyPercentWriteback:
         assert result.exit_code == 1
         assert "Notebook writeback failed" in result.output
 
-    def test_output_processing_failure_prevents_writeback(
+    def test_output_summarizing_failure_happens_after_writeback(
         self, live_session, mock_kernel_connection, tmp_path
     ):
         runner = CliRunner()
@@ -317,7 +317,7 @@ class TestPyPercentWriteback:
 
         with (
             patch(
-                "jupyter_jcli.file_execution.process_outputs",
+                "jupyter_jcli.file_execution.summarize_outputs",
                 side_effect=ValueError("invalid output"),
             ),
             patch(
@@ -340,9 +340,49 @@ class TestPyPercentWriteback:
 
         assert result.exit_code == 1
         assert "invalid output" in result.output
-        writeback.assert_not_called()
+        writeback.assert_called_once()
+        assert writeback.call_args.args[1][0]["raw_outputs"]
         updated_nb = nbformat.read(nb_path, as_version=4)
-        assert updated_nb.cells[0].outputs == []
+        assert updated_nb.cells[0].outputs == []  # mocked writeback records only
+
+    def test_py_cell_maps_to_reordered_notebook_before_execution(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
+        from jupyter_jcli.parser import parse_file
+
+        runner = CliRunner()
+        py_file = tmp_path / "mapped.py"
+        py_file.write_text('# %%\nprint("mapped")\n')
+        cell_id = parse_file(str(py_file)).cells[0].node.id
+
+        nb = nbformat.v4.new_notebook()
+        nb.cells = [
+            nbformat.v4.new_markdown_cell("intro"),
+            nbformat.v4.new_code_cell('print("mapped")', id=cell_id),
+        ]
+        nb_path = tmp_path / "mapped.ipynb"
+        nbformat.write(nb, nb_path)
+
+        result = runner.invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(py_file),
+                "--cell",
+                "0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        updated_nb = nbformat.read(nb_path, as_version=4)
+        assert updated_nb.cells[0].cell_type == "markdown"
+        assert any("mapped" in str(output) for output in updated_nb.cells[1].outputs)
 
     def test_no_writeback_for_plain_script(
         self, live_session, mock_kernel_connection, tmp_path

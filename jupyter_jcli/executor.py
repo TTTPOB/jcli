@@ -9,6 +9,7 @@ from pathlib import Path
 from jupyter_jcli._enums import OutputType
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+_SUMMARY_TEXT_LIMIT = 4_000
 
 
 def strip_ansi(text: str) -> str:
@@ -98,6 +99,82 @@ def process_outputs(raw_outputs: list[dict]) -> list[dict]:
     return results
 
 
+def summarize_outputs(
+    raw_outputs: list[dict], *, text_limit: int = _SUMMARY_TEXT_LIMIT
+) -> list[dict]:
+    """Build a bounded execution summary without writing payload files."""
+    results = []
+    for output in raw_outputs:
+        try:
+            output_type = OutputType(output.get("output_type"))
+        except (ValueError, TypeError):
+            continue
+
+        if output_type == OutputType.STREAM:
+            text = output.get("text", "")
+            if isinstance(text, list):
+                text = "".join(text)
+            results.append(
+                {
+                    "type": OutputType.STREAM,
+                    "name": output.get("name", "stdout"),
+                    "text": _bounded_text(strip_ansi(str(text)), text_limit),
+                }
+            )
+        elif output_type in (OutputType.DISPLAY_DATA, OutputType.EXECUTE_RESULT):
+            data = output.get("data", {})
+            if not isinstance(data, dict):
+                results.append({"type": output_type, "keys": []})
+            elif "image/png" in data:
+                results.append({"type": OutputType.IMAGE, "mime": "image/png"})
+            elif "image/jpeg" in data:
+                results.append({"type": OutputType.IMAGE, "mime": "image/jpeg"})
+            elif "text/html" in data:
+                html = data["text/html"]
+                if isinstance(html, list):
+                    html = "".join(html)
+                results.append(
+                    {
+                        "type": OutputType.HTML,
+                        "html": _bounded_text(str(html), text_limit),
+                    }
+                )
+            elif "text/plain" in data:
+                plain = data["text/plain"]
+                if isinstance(plain, list):
+                    plain = "".join(plain)
+                results.append(
+                    {
+                        "type": OutputType.EXECUTE_RESULT,
+                        "text": _bounded_text(strip_ansi(str(plain)), text_limit),
+                    }
+                )
+            else:
+                results.append({"type": output_type, "keys": list(data.keys())})
+        elif output_type == OutputType.ERROR:
+            traceback = output.get("traceback", [])
+            if isinstance(traceback, list):
+                traceback = [
+                    _bounded_text(strip_ansi(str(line)), text_limit)
+                    for line in traceback
+                ]
+            results.append(
+                {
+                    "type": OutputType.ERROR,
+                    "ename": output.get("ename", ""),
+                    "evalue": _bounded_text(str(output.get("evalue", "")), text_limit),
+                    "traceback": traceback,
+                }
+            )
+    return results
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...[truncated]"
+
+
 def format_outputs_human(outputs: list[dict]) -> str:
     """Format processed outputs for human-readable display."""
     parts = []
@@ -105,7 +182,10 @@ def format_outputs_human(outputs: list[dict]) -> str:
         if o["type"] == OutputType.STREAM or o["type"] == OutputType.EXECUTE_RESULT:
             parts.append(o["text"])
         elif o["type"] == OutputType.IMAGE:
-            parts.append(f"[image saved: {o['path']}]")
+            if "path" in o:
+                parts.append(f"[image saved: {o['path']}]")
+            else:
+                parts.append(f"[image output: {o['mime']}]")
         elif o["type"] == OutputType.HTML:
             parts.append("[HTML output]")
         elif o["type"] == OutputType.ERROR:
