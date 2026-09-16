@@ -31,6 +31,25 @@ def test_unknown_platform_rejected_before_reading_payload(guard):
     assert "typo" in result.output
 
 
+@pytest.mark.parametrize("platform", ["claude", "codex", "dsh"])
+@pytest.mark.parametrize("tool_name, expected_code", [("NotebookEdit", 2), ("Edit", 0)])
+def test_notebook_edit_guard_uses_same_tool_name_check_for_all_formats(
+    platform, tool_name, expected_code
+):
+    result = CliRunner().invoke(
+        main,
+        ["_hooks", "notebook-edit-guard", "--platform", platform],
+        input=json.dumps({"tool_name": tool_name, "tool_input": {}}),
+        catch_exceptions=False,
+    )
+    assert result.exit_code == expected_code
+    if expected_code == 2:
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+    else:
+        assert result.stdout == ""
+
+
 def _invoke(command: str) -> tuple[int, dict | None]:
     """Invoke notebook-exec-guard and parse its optional JSON decision."""
     runner = CliRunner()

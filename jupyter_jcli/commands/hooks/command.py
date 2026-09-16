@@ -1,4 +1,4 @@
-"""jcli _hooks — internal hook handlers for agent harness integration (Claude Code / Codex).
+"""jcli _hooks — internal handlers for Claude Code, Codex, DSH, and OpenCode adapters.
 
 Codex hook schema sources:
   https://developers.openai.com/codex/hooks
@@ -52,7 +52,11 @@ def _platform_option():
         type=click.Choice([p.value for p in HookPlatform]),
         default=HookPlatform.CLAUDE.value,
         callback=lambda _ctx, _param, value: HookPlatform(value),
-        help="Agent platform.",
+        show_default=True,
+        help=(
+            "Hook input format. OpenCode uses claude for bash/edit/write "
+            "and codex for apply_patch."
+        ),
     )
 
 
@@ -468,9 +472,13 @@ def _emit_decision(decision: HookDecision, *, logger=None) -> None:
 )
 @pass_ctx
 def notebook_edit_guard(ctx: CliContext, platform: HookPlatform, debug: bool) -> None:
-    """PreToolUse hook: hard-deny NotebookEdit; redirect to py:percent round-trip."""
-    # Codex has no NotebookEdit tool — this guard only fires on Claude Code.
-    # --platform accepted for interface uniformity; not used for dispatch.
+    """Deny NotebookEdit; redirect to the py:percent round-trip.
+
+    Accepts claude, codex, and dsh input formats for interface consistency.
+    Only Claude setup installs this guard; other integrations guard file edits
+    through pair-drift-guard-pre. The tool_name check is identical for all formats.
+    """
+    # Platform is validated at the CLI boundary; no format-specific dispatch is needed.
     _run_guard(
         "notebook-edit-guard",
         debug,

@@ -15,7 +15,10 @@ from enum import Enum
 
 
 class HookPlatform(str, Enum):
-    """Agent platforms supported by hook entry points."""
+    """Input formats accepted by hook entry points.
+
+    OpenCode adapts its events to the Claude and Codex formats.
+    """
 
     CLAUDE = "claude"
     CODEX = "codex"

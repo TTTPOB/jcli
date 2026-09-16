@@ -303,6 +303,17 @@ The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. I
 
 The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment.
 
+The internal `_hooks --platform` option selects the **hook input format**, not
+all supported integrations. It accepts `claude` (default), `codex`, and `dsh`;
+unknown values are rejected before reading the payload. OpenCode converts
+`bash`, `edit`, and `write` events to the default Claude format and
+`apply_patch` events to the Codex format, so it needs no separate `opencode` value.
+
+`notebook-edit-guard` accepts all three input formats and checks `tool_name`
+for `NotebookEdit` in each. Only Claude setup installs this guard. Codex, DSH,
+and OpenCode integrations protect notebook file edits through
+`pair-drift-guard-pre` instead.
+
 ### `serve-cmd`
 
 Print a copy-pasteable Jupyter launch command that references the token via an environment variable rather than inlining it.
