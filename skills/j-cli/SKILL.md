@@ -1,6 +1,6 @@
 ---
 name: j-cli
-description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, inspect or run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python/R code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, summarize or show notebook source without execution, write execution outputs back to notebooks, inspect kernel variables, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
+description: Use this skill whenever the user wants to execute code on a Jupyter server, manage Jupyter sessions or kernels, inspect or run notebook cells, or interact with Jupyter Lab from the command line. Triggers include mentions of Jupyter, notebooks, kernels, ipynb files, or requests to run Python code on a remote server. Also use when the user wants to check Jupyter server health, create/list/kill sessions, interrupt/restart kernels, summarize or show notebook source without execution, write execution outputs back to notebooks, inspect kernel variables, search notebook content with ripgrep, or edit a notebook by editing its py:percent pair.
 ---
 
 # j-cli — Jupyter CLI for LLM Agents
@@ -40,7 +40,7 @@ j-cli healthcheck
 j-cli kernelspec inspect-file analysis.py
 
 # 3. Create a session with the detected kernel
-j-cli session create --kernel ir --name analysis
+j-cli session create --kernel python3 --name analysis
 
 # 4. Execute inline code (use the session_selector from step 3)
 j-cli exec abc-123 --code "print(1 + 1)"
