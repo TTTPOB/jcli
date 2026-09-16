@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=1.12,<2"]
 test = [
     "pytest>=8",
     "pytest-asyncio",
