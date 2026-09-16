@@ -55,6 +55,11 @@ _LAZY_COMMANDS = {
         "Inspect notebook cells.",
         False,
     ),
+    "output": (
+        "jupyter_jcli.commands.output:output",
+        "Read persisted execution outputs.",
+        False,
+    ),
     "serve-cmd": (
         "jupyter_jcli.commands.serve_cmd:serve_cmd",
         "Print a copy-pasteable Jupyter launch command that references env-var token.",

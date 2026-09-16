@@ -96,12 +96,21 @@ def _exec_code(
             display_mode,
         )
         raw_outputs = result.get("outputs", [])
-        outputs = process_outputs(raw_outputs)
+        from jupyter_jcli.outputs.store import persist_inline_outputs
+
+        stored = persist_inline_outputs(raw_outputs)
+        outputs = stored.outputs if stored is not None else process_outputs(raw_outputs)
+        response = {"status": ResponseStatus.OK, "outputs": outputs}
+        if stored is not None:
+            response["output_manifest"] = str(stored.manifest_path)
 
         if ctx.use_json:
-            emit({"status": ResponseStatus.OK, "outputs": outputs}, use_json=True)
+            emit(response, use_json=True)
         else:
             text = format_outputs_human(outputs)
+            if stored is not None:
+                saved = f"Outputs saved: {stored.manifest_path}"
+                text = f"{text}\n{saved}" if text else saved
             if text:
                 emit({"_human": text}, use_json=False)
 
@@ -156,7 +165,10 @@ def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
         TotalExecutionTimeout,
     )
     from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
+    from jupyter_jcli.outputs.store import OutputStoreError
 
+    if isinstance(error, OutputStoreError):
+        emit_error("OUTPUT_SAVE_FAILED", str(error), ctx.use_json)
     if isinstance(error, NoCodeCellsError):
         emit_error("PARSE_ERROR", str(error), ctx.use_json)
     if isinstance(error, ExecutionTimeout):
@@ -183,6 +195,8 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
             data["notebook_created"] = event.notebook_created
         if event.notebook_updated:
             data["notebook_updated"] = event.notebook_updated
+        if event.output_manifest:
+            data["output_manifest"] = event.output_manifest
         _emit_jsonl(data)
         return
 
@@ -194,6 +208,8 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
         parts.append(f"Notebook created: {event.notebook_created}")
     if event.notebook_updated:
         parts.append(f"Notebook updated: {event.notebook_updated}")
+    if event.output_manifest:
+        parts.append(f"Outputs saved: {event.output_manifest}")
     emit({"_human": "\n".join(parts)}, use_json=False)
 
 

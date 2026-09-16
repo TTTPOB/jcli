@@ -42,6 +42,7 @@ class FileCellEvent:
     status: ResponseStatus
     notebook_created: str | None = None
     notebook_updated: str | None = None
+    output_manifest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -179,7 +180,18 @@ def execute_file(
                     raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
                 last_notebook_updated = notebook_updated
 
-            outputs = summarize_outputs(raw_outputs)
+            output_manifest = None
+            if ipynb_path is None:
+                from jupyter_jcli.outputs.store import persist_inline_outputs
+
+                stored = persist_inline_outputs(raw_outputs)
+                if stored is not None:
+                    outputs = stored.outputs
+                    output_manifest = str(stored.manifest_path)
+                else:
+                    outputs = summarize_outputs(raw_outputs)
+            else:
+                outputs = summarize_outputs(raw_outputs)
             event = FileCellEvent(
                 cell_index=cell.index,
                 source_preview=cell.source[:80].replace("\n", " "),
@@ -189,6 +201,7 @@ def execute_file(
                 status=execution_status,
                 notebook_created=notebook_created,
                 notebook_updated=notebook_updated,
+                output_manifest=output_manifest,
             )
             cells_executed += 1
             if on_cell is not None:
