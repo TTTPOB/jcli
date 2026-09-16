@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,7 +47,7 @@ def outputs(ctx: CliContext, file_path: str, cell_index: int) -> None:
         emit_error(error.code, error.message, ctx.use_json)
     except Exception as error:  # noqa: BLE001 - normalize reader failures for CLI output
         emit_error("NOTEBOOK_OUTPUT_READ_FAILED", str(error), ctx.use_json)
-    emit(data, use_json=ctx.use_json)
+    _emit_output_response(ctx, data)
 
 
 @notebook.command("output")
@@ -60,6 +61,12 @@ def outputs(ctx: CliContext, file_path: str, cell_index: int) -> None:
     "--output", "output_index", required=True, type=int, help="Physical output index"
 )
 @click.option("--mime", "mime_type", default=None, help="Exact MIME representation")
+@click.option(
+    "--supported-mime",
+    "supported_mime_types",
+    multiple=True,
+    help="Adapter-supported MIME type; repeat to provide multiple types",
+)
 @click.option("--offset", default=0, type=int, show_default=True, help="Text offset")
 @click.option(
     "--limit",
@@ -75,6 +82,7 @@ def output_value(
     cell_index: int,
     output_index: int,
     mime_type: str | None,
+    supported_mime_types: tuple[str, ...],
     offset: int,
     limit: int,
 ) -> None:
@@ -85,6 +93,7 @@ def output_value(
             cell_index,
             output_index,
             mime_type=mime_type,
+            supported_mime_types=supported_mime_types or None,
             offset=offset,
             limit=limit,
         )
@@ -92,7 +101,15 @@ def output_value(
         emit_error(error.code, error.message, ctx.use_json)
     except Exception as error:  # noqa: BLE001 - normalize reader failures for CLI output
         emit_error("NOTEBOOK_OUTPUT_READ_FAILED", str(error), ctx.use_json)
-    emit(data, use_json=ctx.use_json)
+    _emit_output_response(ctx, data)
+
+
+def _emit_output_response(ctx: CliContext, data: dict) -> None:
+    """Emit protocol JSON without exceeding its compact-byte accounting."""
+    if ctx.use_json:
+        click.echo(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        return
+    emit(data, use_json=False)
 
 
 @notebook.command("summary")

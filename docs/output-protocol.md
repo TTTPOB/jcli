@@ -48,7 +48,11 @@ j-cli -j notebook outputs analysis.ipynb --cell 4
 j-cli -j notebook output analysis.ipynb --cell 4 --output 1
 j-cli -j notebook output analysis.py --cell 4 --output 2 --mime text/html
 j-cli -j notebook output analysis.ipynb --cell 4 --output 0 --offset 100000 --limit 100000
+j-cli -j notebook output analysis.ipynb --cell 4 --output 1 \
+  --supported-mime image/png --supported-mime text/html
 ```
+
+Adapters should repeat `--supported-mime` for every MIME type they can present. Omitting the option keeps the default core behavior. The option filters automatic selection and explicit `--mime`: an explicitly requested representation excluded by the capability set fails with `MIME_NOT_SUPPORTED` rather than falling back.
 
 The file cell index is always the physical zero-based index in the supplied file. An `.ipynb` is direct. A `.py` cell is mapped only by a unique shared stable ID or a unique, non-conflicting `(cell type, source)` match. Position and similarity guesses are rejected with `CELL_MAPPING_UNRELIABLE`. Reads never synchronize pairs, write baselines, execute cells, or create `.j-cli`.
 
@@ -96,7 +100,7 @@ Every success response includes `schema_version: 1`, `status: "ok"`, and noteboo
 
 Text uses UTF-8 data plus `offset`, `returned_characters`, `total_characters`, `truncated`, and optional `next_offset`. Offsets and limits count Unicode characters. The default page is 100,000 characters. `bytes` is the UTF-8 size of returned text, compact JSON size for a JSON MIME value, or decoded raster size.
 
-The compact serialized response limit is 32 MiB (`MAX_TRANSPORT_BYTES`). Over-limit images and structured JSON fail with `OUTPUT_TOO_LARGE`; they are never silently truncated. Text callers should request a smaller page.
+The compact serialized response limit is 32 MiB (`MAX_TRANSPORT_BYTES`). The JSON CLI uses the same compact UTF-8 serialization counted by the core, so adapters can apply this limit without compensating for pretty-print whitespace. Over-limit images and structured JSON fail with `OUTPUT_TOO_LARGE`; they are never silently truncated. Text callers should request a smaller page.
 
 Protocol fixtures live at `tests/fixtures/outputs/mixed_outputs.json`. They are intended for Python and adapter contract tests.
 

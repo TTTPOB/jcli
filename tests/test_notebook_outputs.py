@@ -232,6 +232,41 @@ def test_notebook_output_cli_returns_exact_html_and_structured_json(tmp_path):
     assert json.loads(json_result.output)["selected"]["data"] == {"answer": 42}
 
 
+def test_notebook_output_cli_honors_repeated_supported_mime_and_compact_json(
+    tmp_path,
+):
+    notebook_path = _write_notebook(
+        tmp_path / "mixed.ipynb", [_code_cell("display()", outputs=_outputs())]
+    )
+    base_args = [
+        "--json",
+        "notebook",
+        "output",
+        str(notebook_path),
+        "--cell",
+        "0",
+        "--output",
+        "1",
+        "--supported-mime",
+        "text/plain",
+        "--supported-mime",
+        "text/html",
+    ]
+    runner = CliRunner()
+
+    automatic = runner.invoke(main, base_args)
+    excluded_explicit = runner.invoke(main, [*base_args, "--mime", "image/png"])
+
+    assert automatic.exit_code == 0
+    data = json.loads(automatic.output)
+    assert data["selected"]["mime_type"] == "text/html"
+    assert automatic.output == (
+        json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n"
+    )
+    assert excluded_explicit.exit_code == 1
+    assert json.loads(excluded_explicit.output)["code"] == "MIME_NOT_SUPPORTED"
+
+
 def test_notebook_output_cli_converts_library_errors_to_structured_errors(tmp_path):
     notebook_path = _write_notebook(tmp_path / "one.ipynb", [_code_cell("x = 1")])
 
