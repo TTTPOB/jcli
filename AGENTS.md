@@ -1,5 +1,13 @@
 when need python, use `uv run python`
 
+## Worktree Validation
+
+- When dependencies are unchanged, reuse the main worktree's existing `.venv`; do not create and populate another environment for each worktree.
+- Run focused tests with `UV_PROJECT_ENVIRONMENT=<main-worktree>/.venv PYTHONPATH=<current-worktree> uv run --no-sync python -m pytest <relevant-tests>`. Ensure imports resolve to the current worktree's source.
+- If pre-commit or Pyrefly cannot find existing dependencies, point the check at the shared environment/site-packages rather than reinstalling them.
+- Do not sync or install dependencies into the shared environment from a worker. Report actual dependency changes to the coordinating agent, which arranges one appropriate validation environment.
+- Run relevant tests once; rerun only after a failure or a change that affects them. The coordinating agent runs the final combined suite. Do not add repeated finishing checks or hash verification.
+
 ## Version Bump Workflow
 
 - `jupyter-jcli` version must have a single source of truth: `[project].version` in `pyproject.toml`.
