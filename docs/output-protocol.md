@@ -2,6 +2,8 @@
 
 The shared Python reader is the source of truth for notebook output indexing, MIME selection, text paging, and transport limits. Adapters should call this API or the JSON CLI instead of parsing `.ipynb` themselves.
 
+This protocol reads saved output. It does not promise that a saved output came from the latest version of the source file, and reading never executes a cell. Callers that require fresh results must execute the relevant source first.
+
 ## Public API
 
 ```python
@@ -54,7 +56,36 @@ j-cli -j notebook output analysis.ipynb --cell 4 --output 1 \
 
 Adapters should repeat `--supported-mime` for every MIME type they can present. Omitting the option keeps the default core behavior. The option filters automatic selection and explicit `--mime`: an explicitly requested representation excluded by the capability set fails with `MIME_NOT_SUPPORTED` rather than falling back.
 
-The file cell index is always the physical zero-based index in the supplied file. An `.ipynb` is direct. A `.py` cell is mapped only by a unique shared stable ID or a unique, non-conflicting `(cell type, source)` match. Position and similarity guesses are rejected with `CELL_MAPPING_UNRELIABLE`. Reads never synchronize pairs, write baselines, execute cells, or create `.j-cli`.
+The file cell index is always the physical zero-based index in the supplied file. An `.ipynb` is direct. A `.py` cell is mapped only by a unique shared stable ID or a unique, non-conflicting `(cell type, source)` match. Position and similarity guesses are rejected with `CELL_MAPPING_UNRELIABLE`. Reads never synchronize pairs, write baselines, execute cells, create caches, or create `.j-cli`. There is no background indexing daemon.
+
+## Saved-output locations
+
+Notebook-backed execution writes outputs to the target `.ipynb` before formatting the command response. Read those outputs with `notebook outputs` / `notebook output`, or with the adapter tool described below. A `.py` request resolves its paired notebook only through the reliable mapping rules above.
+
+Inline execution and plain `.py` execution have no notebook to write. Short text-only results stay inline and create no output directory. Rich output or more than 4,000 text characters is saved under the command's real current working directory:
+
+```text
+<cwd>/.j-cli/outputs/<run-id>/manifest.json
+```
+
+The execution response includes the absolute `output_manifest` path. Raster payloads are files in the same run directory; use `j-cli output show MANIFEST` to list the run, then add `--output INDEX` and optionally `--mime`, `--offset`, or `--limit` to read one output. `.j-cli` is retained workspace data, not a permanent archive. `j-cli setup git` adds `**/.j-cli/` to its managed ignore block.
+
+Completed inline runs are cleaned opportunistically after a new persisted run. The defaults are 7 days and the newest 50 runs; a run is eligible when either limit is exceeded. Configure the limits with `JCLI_OUTPUT_RETENTION_DAYS` and `JCLI_OUTPUT_MAX_RUNS`, or run cleanup explicitly:
+
+```bash
+j-cli output clean --dry-run
+j-cli output clean --days 7 --max-runs 50
+```
+
+Cleanup has no daemon. It deletes only complete, recognized run groups and retains incomplete, unknown, linked, or otherwise uncertain entries.
+
+## Adapter tool
+
+Claude Code, Codex, DSH, and OpenCode expose one tool named `read_notebook_output`. One call either lists a cell's saved outputs (omit `output_index`) or reads one physical output (provide `output_index`); optional `mime_type`, `offset`, and `limit` select a representation or page text. The tool is read-only and does not write a cache.
+
+Claude Code and Codex use the `jcli-notebook-output` stdio MCP server installed by their setup commands and require the `jupyter-jcli[mcp]` extra. Project setup passes the project root explicitly. User setup depends on roots supplied by the MCP client and fails with `ROOTS_REQUIRED` when none are available. Paths outside trusted roots fail instead of being read. Removing any host integration removes only managed configuration and never deletes notebooks or saved output data.
+
+DSH and OpenCode use native adapters with the same one-tool contract. Contract and local adapter tests cover all four integrations; external end-to-end runs in the four host applications are not claimed here and remain a separate integration check. The shared MCP contract tests currently use MCP Python SDK 1.30.0 as a validation version, not as a statement of the minimum supported host version.
 
 ## MIME rules
 
@@ -69,7 +100,7 @@ Without `mime_type`, selection is deterministic:
 
 Adapters may pass `supported_mime_types`; unsupported representations are skipped during automatic selection. An explicit MIME request is exact and fails instead of falling back. Unknown MIME types remain visible in directories.
 
-Raster images use strict base64 decoding and lightweight PNG/JPEG/WebP/GIF signature checks. No imaging dependency is required. Text and HTML are returned unchanged. JSON stays structured and is never truncated into invalid JSON.
+Raster images use strict base64 decoding and lightweight PNG/JPEG/WebP/GIF signature checks. No imaging dependency is required. HTML is returned as original text, JSON stays structured, and SVG is returned as original source text; none of these representations is rasterized. Structured JSON is never truncated into invalid JSON.
 
 ## Envelope and limits
 

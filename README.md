@@ -19,7 +19,11 @@ j-cli --version
 
 Requires Python 3.10+.
 
-Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`.
+Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`. Claude Code and Codex notebook-output integration also needs the optional MCP dependencies:
+
+```bash
+uv tool install 'jupyter-jcli[mcp]'
+```
 
 ## Recommended Workflow
 
@@ -170,6 +174,55 @@ sticky pair baseline exists.
 
 Cell specs are 0-indexed and use the same half-open range syntax as `exec`.
 
+### Saved notebook outputs
+
+Read output already saved in an `.ipynb` without executing a kernel:
+
+```bash
+# list physical outputs for cell 4
+j-cli -j notebook outputs analysis.ipynb --cell 4
+
+# read output 1, or request one exact MIME representation
+j-cli -j notebook output analysis.ipynb --cell 4 --output 1
+j-cli -j notebook output analysis.ipynb --cell 4 --output 1 --mime text/html
+
+# a py:percent path maps to its paired notebook only when the match is reliable
+j-cli -j notebook output analysis.py --cell 4 --output 1
+```
+
+Cell and output indexes are physical, zero-based indexes in the supplied file and saved notebook. For `.py`, j-cli accepts only a unique stable cell ID or a unique non-conflicting `(cell type, source)` match; it never guesses by position or similarity. File-execution JSON keeps `cell_index` as the executed source-file index and reports `notebook_cell_index` when the actual saved `.ipynb` position differs.
+
+These commands read saved state, which may be older than the current source. They do not execute, synchronize pairs, write baselines, create caches, or start a background process. HTML and SVG are returned as original source text, JSON remains structured, and only existing raster MIME data is returned as an image.
+
+### Persisted inline outputs
+
+Inline code and plain Python files have no notebook writeback target. Short text-only results remain inline and do not create `.j-cli`. Rich output or more than 4,000 text characters is saved below the command's real current working directory:
+
+```text
+<cwd>/.j-cli/outputs/<run-id>/manifest.json
+```
+
+The command reports this absolute path as `output_manifest`. Read it later with:
+
+```bash
+j-cli -j output show /absolute/path/to/manifest.json
+j-cli -j output show /absolute/path/to/manifest.json --output 0
+j-cli -j output show /absolute/path/to/manifest.json --output 0 --mime text/html
+```
+
+Persisted output is working data, not a permanent archive. A new persisted run triggers opportunistic cleanup with a 7-day retention limit and a newest-50-run limit; exceeding either makes a complete managed run eligible. There is no cleanup daemon. Preview or override cleanup from the workspace whose `.j-cli` directory should be managed:
+
+```bash
+j-cli output clean --dry-run
+j-cli output clean --days 7 --max-runs 50
+
+# equivalent defaults/overrides for automatic and manual cleanup
+export JCLI_OUTPUT_RETENTION_DAYS=7
+export JCLI_OUTPUT_MAX_RUNS=50
+```
+
+Cleanup retains unrecognized or uncertain entries. `j-cli setup git` adds `**/.j-cli/` to its managed `.gitignore` block. See [output migration](docs/output-migration.md) for the change from temporary image paths and [output protocol](docs/output-protocol.md) for MIME, paging, and transport details.
+
 ### `setup claude`
 
 Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, plus the `jcli-notebook-output` MCP server for reading notebook outputs.
@@ -184,13 +237,13 @@ j-cli setup claude --remove
 j-cli setup claude --project --remove
 ```
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry if it points to another command. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. `--remove` prunes only j-cli managed hooks and the matching managed MCP entry, preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
+The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry if it points to another command. The server exposes one read-only call, `read_notebook_output`, which lists a cell's saved outputs when `output_index` is omitted and reads one output when it is provided. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. A user-scoped server returns `ROOTS_REQUIRED` if the client provides no roots. `--remove` prunes only j-cli managed hooks and the matching managed MCP entry, preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
 
 The notebook-output server requires the optional MCP dependencies. Install them with `uv tool install 'jupyter-jcli[mcp]'` (or the equivalent extras-aware command for your environment). If the extra is missing, `j-cli mcp serve` reports that `jupyter-jcli[mcp]` is required.
 
 ### `setup git`
 
-Install a `pre-commit` hook shim that runs `j-cli _hooks pre-commit-pair-sync` and update `.gitignore` to exclude paired `.ipynb` files.
+Install a `pre-commit` hook shim that runs `j-cli _hooks pre-commit-pair-sync` and update `.gitignore` to exclude paired `.ipynb` files and workspace-local `**/.j-cli/` output data.
 
 ```bash
 j-cli setup git              # default: .githooks/pre-commit + set core.hooksPath
@@ -221,7 +274,7 @@ j-cli setup codex --project --remove
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots. `--remove` prunes only j-cli managed hooks and the matching MCP entry, preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
+The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected. The server exposes the same single `read_notebook_output` call as Claude setup. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots and return `ROOTS_REQUIRED` if none are available. `--remove` prunes only j-cli managed hooks and the matching MCP entry, preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
 
 **What gets installed (4 hooks):**
 
@@ -273,15 +326,19 @@ When both scopes are present, setup warns because DSH could run both adapters.
 Ensure the DSH runtime uses a Node release that supports direct TypeScript
 modules (Node 24.19 is the tested runtime), and ensure its `PATH` resolves the
 updated `j-cli` installation. No compiler or package manager is needed at
-runtime.
+runtime. The native adapter also exposes the single read-only
+`read_notebook_output` tool with the same list-or-read arguments as the
+Claude/Codex MCP integration; it invokes the installed `j-cli` and does not
+require the MCP extra.
 
 Re-running `setup dsh` migrates a managed legacy bridge row in place to the
 native row. An old `.dsh/jcli-hooks.json` (or the global file with the same name)
 is cleaned only of j-cli-managed entries; user entries remain in place. If custom
 entries remain,
 setup warns that the native adapter does not execute those legacy hooks and they
-must be configured separately. `--remove` also understands this old layout and
-never deletes user configuration. See [hook exit codes](docs/hook-exit-codes.md):
+must be configured separately. `--remove` also understands this old layout,
+never deletes user configuration, and does not delete notebooks or saved output
+data. See [hook exit codes](docs/hook-exit-codes.md):
 `0` means allow/success, `2` means an explicit pre-hook refusal, and `1` means
 parse, I/O, Git, synchronization, or baseline failure. Post-hook failures keep
 the tool result and add a diagnostic.
@@ -302,9 +359,9 @@ j-cli setup opencode --user --remove
 
 The installer updates only files carrying the j-cli managed marker. It refuses to overwrite or remove an unrelated `jcli.js`. Avoid installing both project and user copies because OpenCode loads both plugin directories.
 
-The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output.
+The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output. It also exposes the single read-only `read_notebook_output` tool, using OpenCode's normal read permission check and the shared list-or-read contract; it does not require the MCP extra.
 
-The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment.
+The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment. Removing the plugin removes managed integration files only; it does not delete notebooks or saved output data.
 
 The internal `_hooks --platform` option selects the **hook input format**, not
 all supported integrations. It accepts `claude` (default), `codex`, and `dsh`;
@@ -424,9 +481,9 @@ Inline code and file execution default to `--display-mode last_expr`, matching V
 
 **Execution timeout**: Without `--timeout`, j-cli gives each cell a 10-second deadline. An explicit `--timeout` sets one total budget for all selected cells. When the deadline expires during a cell, j-cli interrupts the remote execution, waits for the kernel to report `idle`, and returns `TIMEOUT`. The kernel process, session, and variables created before the interrupted cell remain available. If the interrupt request fails, j-cli returns `INTERRUPT_FAILED`; check `session list --no-vars` before deciding whether to interrupt or restart the kernel.
 
-Human mode is intended for direct reading by people and agents. Use `--json` when a script needs structured output; `j-cli --json exec --file ...` streams one JSON object per completed cell to stdout. A successful run ends with a summary object. A failed run omits the summary and writes its structured error to stderr.
+Human mode is intended for direct reading by people and agents. Use `--json` when a script needs structured output; `j-cli --json exec --file ...` streams one JSON object per completed cell to stdout. A successful run ends with a summary object. A failed run omits the summary and writes its structured error to stderr. Display summaries are bounded by a total budget and a per-entry limit; when entries are omitted, the response reports that omission. Treat the saved notebook or `output_manifest`, not the display summary, as the complete result.
 
-**Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), each completed cell's outputs are automatically written back to the paired `.ipynb`. If `analysis.ipynb` does not yet exist, j-cli creates it automatically before the first cell executes. Plain Python scripts without markers are executed normally without creating a notebook.
+**Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), each completed cell's outputs are automatically written back to the paired `.ipynb` before j-cli formats that cell's response. If later display formatting fails, the diagnostic states that the notebook output was already saved. If `analysis.ipynb` does not yet exist, j-cli creates it automatically before the first cell executes. Plain Python scripts without markers are executed normally without creating a notebook; their rich or oversized output uses `output_manifest` storage instead.
 
 **Convert baseline refresh**: When `j-cli convert` syncs a canonical managed pair (`foo.py` ↔ `foo.ipynb`, or `foo.dummy.py` ↔ `foo.ipynb`) inside a git repo, it also refreshes the sticky pair baseline under `refs/jcli/pair-sync/*`. This lets later drift checks compare against the last successful pair sync instead of falling back to an older `HEAD`.
 

@@ -21,7 +21,7 @@ j-cli setup claude --project  # writes .claude/settings.json       (committed, t
 j-cli setup claude --user     # writes ~/.claude/settings.json     (global, all projects)
 ```
 
-The command is idempotent — re-running updates the hook in place without duplicating it.
+The command is idempotent — re-running updates the hook in place without duplicating it. It also configures the `jcli-notebook-output` MCP server with one read-only `read_notebook_output` tool. Project/local setup passes the project root explicitly; user setup relies on roots from the MCP client and returns `ROOTS_REQUIRED` when none are available. Removing setup removes managed configuration, not saved output data.
 
 **What the hooks install:**
 
@@ -43,7 +43,7 @@ j-cli setup codex --project   # same as default
 j-cli setup codex --user      # writes ~/.codex/hooks.json (global, all projects)
 ```
 
-The command is idempotent — re-running updates the hook in place without duplicating it.
+The command is idempotent — re-running updates the hook in place without duplicating it. It also configures the `jcli-notebook-output` MCP server with the same single `read_notebook_output` tool. Project setup passes an explicit project root; user setup relies on client roots and returns `ROOTS_REQUIRED` when none are available. Removal leaves notebooks and saved output data intact.
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing.
 
@@ -82,7 +82,9 @@ after moving the workspace or changing `DSH_HOME`; DSH's `PATH` must resolve the
 updated `j-cli` installation. The DSH runtime needs direct-TypeScript support
 (Node 24.19 is the tested runtime); no compiler or package manager is required.
 Choose one scope per workspace to avoid duplicate guards; setup warns when both
-managed rows exist.
+managed rows exist. The native adapter exposes one read-only
+`read_notebook_output` tool with the shared list-or-read contract and does not
+require the MCP extra.
 
 Re-running `setup dsh` replaces a managed legacy bridge row in place. It removes
 only j-cli entries from the old `.dsh/jcli-hooks.json` (or global equivalent),
@@ -105,7 +107,7 @@ j-cli setup opencode --project   # same as default
 j-cli setup opencode --user      # writes ~/.config/opencode/plugins/jcli.js
 ```
 
-OpenCode loads the plugin at startup. The plugin applies the execution guards to `bash`, the pair drift guards to `edit`, `write`, and `apply_patch`, and appends post-edit synchronization notices to tool output. Set `JCLI_BIN` before starting OpenCode if `j-cli` is not available on its `PATH`.
+OpenCode loads the plugin at startup. The plugin applies the execution guards to `bash`, the pair drift guards to `edit`, `write`, and `apply_patch`, and appends post-edit synchronization notices to tool output. It also exposes the single read-only `read_notebook_output` tool with the shared list-or-read contract and does not require the MCP extra. Set `JCLI_BIN` before starting OpenCode if `j-cli` is not available on its `PATH`.
 
 Do not install both project and user copies. OpenCode loads both plugin directories and would invoke both copies.
 
@@ -127,11 +129,12 @@ j-cli setup git --include 'a/*' --include 'b/*'   # multiple globs (OR logic)
 - `--project` (default): stores the hook under `.githooks/pre-commit` and sets
   `git config --local core.hooksPath .githooks`
 - `--local`: writes directly to `.git/hooks/pre-commit`; does not touch `core.hooksPath`
-- Injects a managed block into `.gitignore` so `*.ipynb` files are never accidentally committed:
+- Injects a managed block into `.gitignore` so paired notebooks and workspace output data are not accidentally committed:
 
 ```
 # >>> jcli managed (git hooks) >>>
 *.ipynb
+**/.j-cli/
 # <<< jcli managed (git hooks) <<<
 ```
 
@@ -200,7 +203,7 @@ uv tool install jupyter-jcli
 j-cli --version
 ```
 
-Note: the PyPI package name is `jupyter-jcli`, the binary name is `j-cli`.
+Note: the PyPI package name is `jupyter-jcli`, the binary name is `j-cli`. Claude Code or Codex notebook-output MCP integration requires `uv tool install 'jupyter-jcli[mcp]'` instead.
 
 ## Connection
 
@@ -455,16 +458,46 @@ j-cli -j exec <session_selector> --file notebook.ipynb --cell 0:3
 
 A successful file run ends with the summary object. If a cell fails, stdout ends with that cell's `status: "error"` event, j-cli omits the summary, and it writes the structured `EXECUTION_ERROR` object to stderr.
 
-When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you think you are a machine (coding agent); JSON/JSONL mode is for scripts or tools that need to parse output programmatically like jq.
+When you are an LLM/agent reading the output yourself, prefer the default human mode. Do not use `--json` just because you think you are a machine (coding agent); JSON/JSONL mode is for scripts or tools that need to parse output programmatically like jq. Display summaries have total and per-entry limits; if a response reports omitted entries, use the saved notebook or `output_manifest` as the complete result.
+
+## Reading Saved Output
+
+For notebook-backed execution, j-cli saves the output to `.ipynb` before formatting the response. Read it without executing again:
+
+```bash
+# omit --output to list physical outputs first
+j-cli -j notebook outputs analysis.ipynb --cell 4
+j-cli -j notebook output analysis.ipynb --cell 4 --output 1
+j-cli -j notebook output analysis.ipynb --cell 4 --output 1 --mime text/html
+
+# a py:percent path resolves to its paired notebook only through a reliable match
+j-cli -j notebook output analysis.py --cell 4 --output 1
+```
+
+Indexes are zero-based and physical. File-execution JSON uses `cell_index` for the executed source-file position and `notebook_cell_index` for the actual saved notebook position when different. A `.py` cell maps only by a unique stable ID or unique, non-conflicting cell type and source; positional and similarity guesses fail.
+
+Saved output may be older than the current source. Reading does not execute, synchronize pairs, write a baseline, create a cache, or start a daemon. HTML and SVG remain original source text, JSON remains structured, and only existing raster MIME representations are images.
+
+Claude Code, Codex, DSH, and OpenCode expose the same single `read_notebook_output` call. Omit `output_index` to list and provide it to read, with optional `mime_type`, `offset`, and `limit`. Prefer this tool inside a configured host; use the CLI directly otherwise.
+
+Inline code and plain `.py` files have no notebook target. Short text-only results stay inline and create no `.j-cli`; rich output or more than 4,000 text characters is stored under the real cwd and returned as an absolute `output_manifest`:
+
+```bash
+j-cli -j output show /absolute/path/to/manifest.json
+j-cli -j output show /absolute/path/to/manifest.json --output 0
+j-cli output clean --dry-run --days 7 --max-runs 50
+```
+
+The default cleanup limits are 7 days and the newest 50 runs. Override them with `JCLI_OUTPUT_RETENTION_DAYS` and `JCLI_OUTPUT_MAX_RUNS`. Cleanup is opportunistic or explicit, never a background daemon, and `.j-cli` is working data rather than permanent archival storage.
 
 ## Notebook Writeback
 
-When executing from a file, j-cli automatically writes each completed cell's outputs back to the paired `.ipynb`:
+When executing from a file, j-cli automatically writes each completed cell's outputs back to the paired `.ipynb` before formatting that cell's display response. If display formatting then fails, the diagnostic states that the notebook output was already saved:
 
 - `notebook.ipynb` → outputs written back to itself
 - `analysis.py` (py:percent) → outputs written to `analysis.ipynb`; **created automatically if it does not exist**
 - `analysis.dummy.py` (py:percent) → outputs written to `analysis.ipynb`; created automatically if absent
-- `script.py` (plain, no `# %%` markers or front matter) → outputs printed to stdout only, no `.ipynb` created
+- `script.py` (plain, no `# %%` markers or front matter) → short text stays inline; rich or oversized output gets an `output_manifest`; no `.ipynb` created
 
 A py:percent file is one that has at least one `# %%` cell marker or a `# ---` YAML front matter block. Plain scripts without these markers are not treated as notebooks.
 
@@ -599,5 +632,5 @@ All errors exit with code 1.
 - Use `--cell` to run specific cells instead of entire notebooks when debugging.
 - If execution hangs, use `kernel interrupt` followed by retry.
 - If kernel state is corrupted, use `kernel restart` (this clears all variables).
-- Images in execution output are automatically extracted to temp files with paths included in the output.
+- For notebook-backed images, use `read_notebook_output` or `j-cli notebook output`; for inline/plain-script rich output, follow the returned `output_manifest` path.
 - Clean up sessions with `session kill` when done to free server resources.
