@@ -339,10 +339,13 @@ def _load_settings(path: Path, use_json: bool) -> dict:
         text = path.read_text(encoding="utf-8").strip()
         if not text:
             return {}
-        return json.loads(text)
+        settings = json.loads(text)
     except json.JSONDecodeError as exc:
         emit_error("SETTINGS_INVALID", f"{path}: {exc}", use_json)
         raise SystemExit(1) from exc
+    if not isinstance(settings, dict):
+        emit_error("SETTINGS_INVALID", f"{path}: expected a JSON object", use_json)
+    return settings
 
 
 def _merge_hook(settings: dict, block_desc: dict, platform: str) -> None:

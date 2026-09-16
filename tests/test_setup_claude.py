@@ -14,6 +14,36 @@ from jupyter_jcli.commands.setup.common import Scope
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "platform, relative_path",
+    [("claude", ".claude/settings.json"), ("codex", ".codex/hooks.json")],
+)
+@pytest.mark.parametrize("contents", ["[]", "null", '"text"', "42", "true"])
+@pytest.mark.parametrize("use_json", [False, True])
+def test_settings_must_be_json_object(
+    tmp_path, monkeypatch, platform, relative_path, contents, use_json
+):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(contents, encoding="utf-8")
+    if platform == "codex":
+        (path.parent / "config.toml").write_text(
+            "[features]\ncodex_hooks = true\n", encoding="utf-8"
+        )
+    args = (["--json"] if use_json else []) + ["setup", platform, "--project"]
+
+    result = CliRunner().invoke(main, args, catch_exceptions=False)
+
+    assert result.exit_code == 1
+    if use_json:
+        assert json.loads(result.output)["code"] == "SETTINGS_INVALID"
+    else:
+        assert "ERROR [SETTINGS_INVALID]" in result.output
+    assert "expected a JSON object" in result.output
+    assert path.read_text(encoding="utf-8") == contents
+
+
 class TestScopeEnum:
     def test_members_exist(self):
         assert Scope.USER == "user"
