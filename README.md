@@ -206,12 +206,13 @@ j-cli setup git --local --remove
 
 ### `setup codex`
 
-Install Codex hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, redirecting Codex to use j-cli instead.
+Install Codex hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, plus the `jcli-notebook-output` MCP server for reading notebook outputs.
 
 ```bash
-j-cli setup codex             # writes .codex/hooks.json (default)
+j-cli setup codex             # writes .codex/hooks.json + .codex/config.toml
 j-cli setup codex --project   # same as default
-j-cli setup codex --user      # writes ~/.codex/hooks.json (global, all projects)
+j-cli setup codex --local     # alias for --project (Codex has no local layer)
+j-cli setup codex --user      # writes under ~/.codex (global, all projects)
 
 # remove all j-cli managed hooks from the target file
 j-cli setup codex --remove
@@ -220,7 +221,7 @@ j-cli setup codex --project --remove
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. `--remove` prunes only j-cli managed entries, preserving any unrelated user hooks.
+The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots. `--remove` prunes only j-cli managed hooks and the matching MCP entry, preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
 
 **What gets installed (4 hooks):**
 

@@ -3,9 +3,20 @@
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.setup import mcp as setup_mcp
+
+
+@pytest.fixture(autouse=True)
+def _isolate_codex_mcp(monkeypatch):
+    """Keep legacy hook tests from invoking the real Codex CLI."""
+    monkeypatch.setattr(
+        "jupyter_jcli.commands.setup.hooks.manage_codex_mcp",
+        lambda *args, **kwargs: "unchanged",
+    )
 
 
 def _invoke(runner: CliRunner, args: list[str]):
@@ -226,3 +237,206 @@ class TestCodexJsonOutput:
         assert result.exit_code == 0
         data = json.loads(result.stdout)
         assert data["status"] == "ok"
+
+
+class TestCodexMcp:
+    def test_project_install_targets_project_config_with_explicit_root(
+        self, tmp_path, monkeypatch
+    ):
+        calls = []
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda command, cwd, config_dir, use_json: calls.append(
+                (command, cwd, config_dir, use_json)
+            ),
+        )
+
+        assert (
+            setup_mcp.manage_codex_mcp("project", tmp_path, False, False) == "installed"
+        )
+        assert calls == [
+            (
+                [
+                    "codex",
+                    "mcp",
+                    "add",
+                    "jcli-notebook-output",
+                    "--",
+                    "j-cli",
+                    "mcp",
+                    "serve",
+                    "--root",
+                    str(tmp_path),
+                ],
+                tmp_path,
+                tmp_path / ".codex",
+                False,
+            )
+        ]
+
+    def test_project_install_is_idempotent_and_preserves_toml(
+        self, tmp_path, monkeypatch
+    ):
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        original = f"""# keep this comment
+[features]
+codex_hooks = true
+
+[mcp_servers.other]
+command = "other-server"
+
+[mcp_servers.jcli-notebook-output]
+command = "j-cli"
+args = ["mcp", "serve", "--root", "{tmp_path}"]
+"""
+        config = config_dir / "config.toml"
+        config.write_text(original, encoding="utf-8")
+        monkeypatch.setattr(
+            setup_mcp,
+            "_read_codex_entry",
+            lambda *args: {
+                "type": "stdio",
+                "command": "j-cli",
+                "args": ["mcp", "serve", "--root", str(tmp_path)],
+                "env": None,
+            },
+        )
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda *args, **kwargs: pytest.fail("Codex CLI should not be called"),
+        )
+
+        assert (
+            setup_mcp.manage_codex_mcp("project", tmp_path, False, False) == "unchanged"
+        )
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_same_name_with_other_command_is_rejected(self, tmp_path, monkeypatch):
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        config = config_dir / "config.toml"
+        original = """[mcp_servers.jcli-notebook-output]
+command = "unrelated-server"
+args = []
+"""
+        config.write_text(original, encoding="utf-8")
+        monkeypatch.setattr(
+            setup_mcp,
+            "_read_codex_entry",
+            lambda *args: {"command": "unrelated-server", "args": []},
+        )
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda *args, **kwargs: pytest.fail("Codex CLI should not be called"),
+        )
+
+        with pytest.raises(SystemExit):
+            setup_mcp.manage_codex_mcp("project", tmp_path, False, False)
+
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_remove_owned_entry_uses_target_config(self, tmp_path, monkeypatch):
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        config = config_dir / "config.toml"
+        original = f"""# user comment
+[mcp_servers.other]
+command = "keep-me"
+
+[mcp_servers.jcli-notebook-output]
+command = "j-cli"
+args = ["mcp", "serve", "--root", "{tmp_path}"]
+"""
+        config.write_text(original, encoding="utf-8")
+        calls = []
+        monkeypatch.setattr(
+            setup_mcp,
+            "_read_codex_entry",
+            lambda *args: {
+                "type": "stdio",
+                "command": "j-cli",
+                "args": ["mcp", "serve", "--root", str(tmp_path)],
+            },
+        )
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda command, cwd, target, use_json: calls.append((command, cwd, target)),
+        )
+
+        assert setup_mcp.manage_codex_mcp("project", tmp_path, True, False) == "removed"
+        assert calls == [
+            (
+                ["codex", "mcp", "remove", "jcli-notebook-output"],
+                tmp_path,
+                config_dir,
+            )
+        ]
+        # j-cli itself never rewrites TOML; Codex CLI owns the mutation.
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_lookup_uses_structured_codex_output_in_target_home(
+        self, tmp_path, monkeypatch
+    ):
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        (config_dir / "config.toml").write_text("# existing\n", encoding="utf-8")
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs))
+            return setup_mcp.subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "name": "jcli-notebook-output",
+                        "transport": {
+                            "type": "stdio",
+                            "command": "j-cli",
+                            "args": ["mcp", "serve"],
+                            "env": None,
+                        },
+                    }
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr(setup_mcp.subprocess, "run", fake_run)
+
+        entry = setup_mcp._read_codex_entry(config_dir, tmp_path, False)
+
+        assert entry["command"] == "j-cli"
+        command, kwargs = calls[0]
+        assert command == [
+            "codex",
+            "mcp",
+            "get",
+            "jcli-notebook-output",
+            "--json",
+        ]
+        assert kwargs["env"]["CODEX_HOME"] == str(config_dir)
+        assert kwargs["cwd"] == tmp_path
+
+    def test_user_scope_does_not_bind_setup_cwd(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        calls = []
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda command, cwd, config_dir, use_json: calls.append(
+                (command, config_dir)
+            ),
+        )
+
+        setup_mcp.manage_codex_mcp("user", tmp_path, False, False)
+
+        command, config_dir = calls[0]
+        assert command[-3:] == ["j-cli", "mcp", "serve"]
+        assert "--root" not in command
+        assert config_dir == home / ".codex"

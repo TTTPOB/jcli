@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,54 @@ def manage_claude_mcp(
         *expected_args,
     ]
     _run_claude(command, root, use_json)
+    return "installed"
+
+
+def manage_codex_mcp(
+    scope: str, project_root: Path, remove: bool, use_json: bool
+) -> str:
+    """Install or remove the managed Codex MCP entry in the selected config."""
+    resolved_scope = Scope(scope)
+    root = project_root.resolve()
+    config_dir = (
+        Path.home() / ".codex" if resolved_scope == Scope.USER else root / ".codex"
+    )
+    expected_args = _expected_args(resolved_scope, root)
+    entry = _read_codex_entry(config_dir, root, use_json)
+    scope_label = "user" if resolved_scope == Scope.USER else "project"
+
+    if entry is not None and not _is_managed_entry(entry, expected_args):
+        emit_error(
+            "MCP_NAME_CONFLICT",
+            f"Codex MCP server {_MCP_NAME!r} already exists in {scope_label} scope "
+            "with a different command; remove or rename it before retrying.",
+            use_json,
+        )
+
+    if remove:
+        if entry is None:
+            return "noop"
+        _run_codex(["codex", "mcp", "remove", _MCP_NAME], root, config_dir, use_json)
+        return "removed"
+
+    if entry is not None:
+        return "unchanged"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    _run_codex(
+        [
+            "codex",
+            "mcp",
+            "add",
+            _MCP_NAME,
+            "--",
+            _MCP_COMMAND,
+            *expected_args,
+        ],
+        root,
+        config_dir,
+        use_json,
+    )
     return "installed"
 
 
@@ -148,6 +197,49 @@ def _load_json(path: Path, use_json: bool) -> dict[str, Any]:
     return value
 
 
+def _read_codex_entry(config_dir: Path, cwd: Path, use_json: bool) -> object | None:
+    if not (config_dir / "config.toml").exists():
+        return None
+    env = {**os.environ, "CODEX_HOME": str(config_dir)}
+    try:
+        result = subprocess.run(
+            ["codex", "mcp", "get", _MCP_NAME, "--json"],
+            cwd=cwd,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        emit_error(
+            "CODEX_CLI_NOT_FOUND",
+            "Codex CLI was not found; install it before running setup codex.",
+            use_json,
+        )
+    except OSError as exc:
+        emit_error("MCP_SETUP_FAILED", f"Could not run Codex CLI: {exc}", use_json)
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if "No MCP server named" in detail:
+            return None
+        emit_error(
+            "MCP_CONFIG_INVALID", detail or "Codex could not read config", use_json
+        )
+    try:
+        entry = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        emit_error(
+            "MCP_CONFIG_INVALID", f"Codex returned invalid JSON: {exc}", use_json
+        )
+    if not isinstance(entry, dict):
+        emit_error(
+            "MCP_CONFIG_INVALID", "Codex returned a non-object MCP entry", use_json
+        )
+    transport = entry.get("transport")
+    return transport if isinstance(transport, dict) else entry
+
+
 def _run_claude(command: list[str], cwd: Path, use_json: bool) -> None:
     try:
         result = subprocess.run(
@@ -174,6 +266,38 @@ def _run_claude(command: list[str], cwd: Path, use_json: bool) -> None:
             emit_error(
                 "MCP_NAME_CONFLICT",
                 f"Claude MCP server {_MCP_NAME!r} already exists but its managed "
+                f"configuration could not be verified: {detail}",
+                use_json,
+            )
+        emit_error("MCP_SETUP_FAILED", detail, use_json)
+
+
+def _run_codex(command: list[str], cwd: Path, config_dir: Path, use_json: bool) -> None:
+    env = {**os.environ, "CODEX_HOME": str(config_dir)}
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        emit_error(
+            "CODEX_CLI_NOT_FOUND",
+            "Codex CLI was not found; install it before running setup codex.",
+            use_json,
+        )
+    except OSError as exc:
+        emit_error("MCP_SETUP_FAILED", f"Could not run Codex CLI: {exc}", use_json)
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or "unknown Codex CLI error"
+        if "already exists" in detail:
+            emit_error(
+                "MCP_NAME_CONFLICT",
+                f"Codex MCP server {_MCP_NAME!r} already exists but its managed "
                 f"configuration could not be verified: {detail}",
                 use_json,
             )

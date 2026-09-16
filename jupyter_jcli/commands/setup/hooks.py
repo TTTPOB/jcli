@@ -11,7 +11,7 @@ from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
 from .common import Scope
-from .mcp import manage_claude_mcp
+from .mcp import manage_claude_mcp, manage_codex_mcp
 
 # ---------------------------------------------------------------------------
 # Managed hook blocks
@@ -177,7 +177,7 @@ def claude(ctx: CliContext, scope: str, remove: bool):
 )
 @pass_ctx
 def codex(ctx: CliContext, scope: str, remove: bool):
-    """Install Codex hooks: notebook-exec-guard, python-run-guard, pair-drift-guard-pre, and pair-drift-guard-post.
+    """Install Codex guards and the notebook-output MCP server.
 
     notebook-edit-guard is not installed (Codex has no NotebookEdit tool).
 
@@ -188,9 +188,14 @@ def codex(ctx: CliContext, scope: str, remove: bool):
     path = _resolve_codex_path(scope)
     if Scope(scope) == Scope.LOCAL:
         click.echo(
-            "Note: Codex has no hooks.local.json layer; --local writes to ./.codex/hooks.json",
+            "Note: Codex has no local config layer; --local is an alias for --project "
+            "and writes ./.codex/hooks.json plus ./.codex/config.toml",
             err=True,
         )
+    # Validate existing hook JSON before asking Codex CLI to mutate MCP state.
+    if path.exists():
+        _load_settings(path, ctx.use_json)
+    manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
     _install_or_remove("codex", path, remove, ctx)
 
 
