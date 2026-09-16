@@ -6,6 +6,7 @@ from unittest.mock import patch
 import nbformat
 
 from jupyter_jcli.diff import check_drift
+from jupyter_jcli.formats import percent
 from tests.helpers import make_ipynb_text, make_py_text
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ class TestCheckDrift:
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
+        assert result.baseline_seed_text is None
 
     def test_new_cell_gets_id_written_to_both_sides(self, tmp_path):
         notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
@@ -150,11 +152,14 @@ class TestCheckDrift:
         assert any(c.source == "z = 3" for c in result.merged_cells)
 
     def test_no_git_base_sources_equal_is_in_sync(self, tmp_path):
-        """No git base + equal content -> in_sync."""
+        """No git base + equal content -> in_sync with a canonical seed."""
         py, ipynb = _write_pair(tmp_path, ["x = 1"], ["x = 1"])
         with self._patch_git(None):
             result = check_drift(py, ipynb)
         assert result.status == "in_sync"
+        assert result.baseline_seed_text == percent.canonicalize(
+            py.read_text(encoding="utf-8"), include_cell_ids=False
+        )
 
     def test_no_git_base_different_content_is_drift_only(self, tmp_path):
         """No git base + any content difference -> DRIFT_ONLY (no side wins)."""

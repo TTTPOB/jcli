@@ -35,6 +35,13 @@ class DriftResult:
     status: DriftStatus
     """One of: DriftStatus.IN_SYNC | MERGED | CONFLICT | DRIFT_ONLY."""
 
+    baseline_seed_text: str | None = None
+    """Canonical py text safe to persist when no baseline exists and both sides are IN_SYNC.
+
+    This is None for every other result, including IN_SYNC pairs with an existing
+    baseline.
+    """
+
     py_needs_update: bool = False
     """True when the .py file should be rewritten with merged_py_cells."""
 
@@ -113,7 +120,10 @@ def check_drift(
 
     if base_raw is None:
         if ours_text == theirs_text:
-            return DriftResult(status=DriftStatus.IN_SYNC)
+            return DriftResult(
+                status=DriftStatus.IN_SYNC,
+                baseline_seed_text=ours_text,
+            )
         return DriftResult(
             status=DriftStatus.DRIFT_ONLY,
             diff_text=render_no_baseline_diff(ours_text, theirs_text),
