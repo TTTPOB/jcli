@@ -434,6 +434,13 @@ test('registers read_notebook_output and lists without requesting payload data',
       ],
     }),
   }])
+  assert.deepEqual(tool.output.render({}, { ...response, outputs: [] }), [{
+    type: 'text',
+    text: JSON.stringify({
+      provenance: { path: '/session/cwd/book.ipynb', cell: 2 },
+      outputs: [],
+    }),
+  }])
   await assert.rejects(
     tool.execute({ file_path: 'book.ipynb', cell_index: 2, mime_type: 'text/plain' }, { signal }),
     /invalid arguments/,
@@ -480,6 +487,24 @@ test('renders raw text, reversible JSON, stream, and error payloads with separat
     assert.equal(blocks[1].text.includes('schema_version'), false)
     assert.equal(blocks[1].text.includes('requested_path'), false)
   }
+
+  const complete = tool.output.render({}, {
+    schema_version: 1,
+    status: 'ok',
+    source,
+    output_type: 'display_data',
+    available_mime_types: ['text/plain'],
+    selected: {
+      mime_type: 'text/plain', encoding: 'utf-8', data: 'complete', bytes: 8,
+      offset: 0, returned_characters: 8, total_characters: 8, truncated: false,
+    },
+  })
+  assert.deepEqual(JSON.parse(complete[1].text), {
+    provenance: { path: '/work/book.ipynb', cell: 0, output: 1 },
+    output: { type: 'display_data', mime: 'text/plain' },
+  })
+  assert.equal(Object.hasOwn(JSON.parse(complete[1].text).output, 'page'), false)
+  assert.equal(Object.hasOwn(JSON.parse(complete[1].text).output, 'available'), false)
 })
 
 test('projects mapped provenance, multiple MIME choices, and protocol paging facts', () => {

@@ -7,6 +7,7 @@ from difflib import SequenceMatcher as RealSequenceMatcher
 from unittest.mock import patch
 
 import nbformat
+import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli._enums import AlignmentMethod, CellChangeKind, CellType
@@ -103,6 +104,50 @@ def test_summary_extracts_python_ast_fields_and_non_code_previews(tmp_path):
     assert raw["type"] == "raw"
     assert raw["full_text"] == "raw payload"
     assert "preview" not in raw
+
+
+@pytest.mark.parametrize(
+    ("cell_type", "source", "source_field"),
+    [
+        pytest.param(CellType.MARKDOWN, "m" * 120, "full_text", id="markdown-120"),
+        pytest.param(CellType.MARKDOWN, "m" * 121, "preview", id="markdown-121"),
+        pytest.param(
+            CellType.MARKDOWN,
+            "heading\n" + "long paragraph " * 10,
+            "preview",
+            id="markdown-long-multiline",
+        ),
+        pytest.param(CellType.RAW, "raw payload", "full_text", id="raw-short"),
+    ],
+)
+def test_summary_source_fields_are_exclusive_across_non_code_cells(
+    cell_type, source, source_field
+):
+    parsed = ParsedFile(
+        kernel_name="python3",
+        cells=[Cell(index=0, cell_type=cell_type, source=source)],
+    )
+
+    data = build_summary_data(parsed)
+    cell = data["cells"][0]
+    normal = format_summary_human(data)
+    bounded = format_summary_human(data, max_cells=1, max_chars=8_000)
+
+    assert normal == bounded
+    assert source_field in cell
+    assert {"full_text", "preview"}.intersection(cell) == {source_field}
+    assert all(
+        field not in cell
+        for field in ("source", "source_preview", "first_line", "first_nonempty_line")
+    )
+    if source_field == "full_text":
+        assert cell["full_text"] == source
+        assert "preview_truncated" not in cell
+        assert f"full_text={source!r}" in normal
+    else:
+        assert cell["preview"] == source[:120]
+        assert cell["preview_truncated"] is True
+        assert f"preview={source[:120]!r} [truncated]" in normal
 
 
 def test_summary_falls_back_to_preview_when_python_ast_cannot_parse(tmp_path):
