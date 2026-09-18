@@ -149,7 +149,7 @@ def _exec_file(
         if ctx.use_json:
             summary_data = {"cells_executed": summary.cells_executed}
             if summary.notebook_updated:
-                summary_data["notebook_updated"] = summary.notebook_updated
+                summary_data["notebook_updated"] = True
             _emit_jsonl({"status": ResponseStatus.OK, "summary": summary_data})
 
     except SystemExit:
@@ -207,13 +207,16 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
             "outputs": event.outputs,
             "execution_count": event.execution_count,
         }
-        if event.notebook_cell_index is not None:
+        if (
+            event.notebook_cell_index is not None
+            and event.notebook_cell_index != event.cell_index
+        ):
             cell_payload["notebook_cell_index"] = event.notebook_cell_index
         data = {"status": event.status, "cell": cell_payload}
         if event.notebook_created:
             data["notebook_created"] = event.notebook_created
         if event.notebook_updated:
-            data["notebook_updated"] = event.notebook_updated
+            data["notebook_updated"] = True
         if event.output_manifest:
             data["output_manifest"] = event.output_manifest
         _emit_jsonl(data)
@@ -226,8 +229,11 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
     if event.notebook_created:
         parts.append(f"Notebook created: {event.notebook_created}")
     if event.notebook_updated:
-        parts.append(f"Notebook updated: {event.notebook_updated}")
-    if event.notebook_cell_index is not None:
+        parts.append("Notebook updated")
+    if (
+        event.notebook_cell_index is not None
+        and event.notebook_cell_index != event.cell_index
+    ):
         parts.append(f"Notebook cell: {event.notebook_cell_index}")
     if event.output_manifest:
         parts.append(f"Outputs saved: {event.output_manifest}")

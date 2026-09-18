@@ -65,6 +65,8 @@ class TestPyPercentWriteback:
         assert result.exit_code == 0
         assert "hello writeback" in result.output
         assert "Notebook updated" in result.output
+        assert str(nb_path) not in result.output
+        assert "Notebook cell:" not in result.output
 
         updated_nb = nbformat.read(nb_path, as_version=4)
         cell0 = updated_nb.cells[0]
@@ -126,8 +128,9 @@ class TestPyPercentWriteback:
         cell_events = [event for event in events if "cell" in event]
         summary = next(event["summary"] for event in events if "summary" in event)
         assert len(cell_events) == 3
-        assert all(event["notebook_updated"] == str(nb_path) for event in cell_events)
-        assert summary["notebook_updated"] == str(nb_path)
+        assert all(event["notebook_updated"] is True for event in cell_events)
+        assert summary["notebook_updated"] is True
+        assert all("notebook_cell_index" not in event["cell"] for event in cell_events)
 
         updated_nb = nbformat.read(nb_path, as_version=4)
         assert any("20" in str(o) for o in updated_nb.cells[1].outputs)
@@ -495,7 +498,7 @@ class TestIpynbWriteback:
         assert result.exit_code == 0
         events = _jsonl_events(result.output)
         cell_event = next(event for event in events if "cell" in event)
-        assert cell_event["notebook_updated"] == str(nb_path)
+        assert cell_event["notebook_updated"] is True
 
         updated_nb = nbformat.read(nb_path, as_version=4)
         outputs = updated_nb.cells[0].outputs
