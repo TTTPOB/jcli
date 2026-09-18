@@ -245,6 +245,7 @@ class TestIpynbToPy:
 
         assert result.exit_code == 0
         assert py.exists()
+        assert result.output.strip() == f"Wrote {py}"
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,10 @@ class TestAssignIds:
         assert "Generated (1): 2" in result.output
         assert ipynb.read_bytes() == original_notebook
 
-    def test_generates_missing_ids_without_pair_and_preserves_existing(self, tmp_path):
+    def test_generates_missing_ids_without_pair_and_preserves_existing(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
         py = tmp_path / "standalone.py"
         py.write_text(
             '# %% id="existing"\nx = 1\n\n# %%\ny = 2\n',
@@ -290,10 +294,12 @@ class TestAssignIds:
         assert cells[0].cell_id == "existing"
         assert cells[1].cell_id is not None
         assert cells[1].cell_id != "existing"
+        assert "Assigned IDs to 1 cells in standalone.py" in result.output
         assert "Generated (1): 1" in result.output
         assert "paired notebook" not in result.output
 
-    def test_all_ids_present_is_noop(self, tmp_path):
+    def test_all_ids_present_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         py = tmp_path / "complete.py"
         original = '# %% id="first"\nx = 1\n\n# %% id="second"\ny = 2\n'
         py.write_text(original, encoding="utf-8")
@@ -301,7 +307,7 @@ class TestAssignIds:
         result = _invoke("convert", "assign-ids", str(py))
 
         assert result.exit_code == 0
-        assert "All 2 cells already have IDs" in result.output
+        assert result.output.strip() == "All 2 cells already have IDs in complete.py"
         assert py.read_text(encoding="utf-8") == original
 
     def test_rejects_plain_python(self, tmp_path):
@@ -359,7 +365,8 @@ class TestPyToIpynbCreate:
         assert notebook.cells[1].id != "existing"
         assert py.read_text(encoding="utf-8") == source_text
 
-    def test_creates_new_ipynb(self, tmp_path):
+    def test_creates_new_ipynb(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         py = tmp_path / "script.py"
         py.write_text(
             "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
@@ -371,6 +378,7 @@ class TestPyToIpynbCreate:
         result = _invoke("convert", "py-to-ipynb", str(py))
         assert result.exit_code == 0
         assert ipynb.exists()
+        assert result.output.strip() == "Wrote script.ipynb"
 
         nb = nbformat.read(str(ipynb), as_version=4)
         sources = [c.source for c in nb.cells]
@@ -451,7 +459,10 @@ class TestPyToIpynbUpdate:
         assert "Cells without IDs (1): 1" in result.output
         assert ipynb.read_bytes() == original_bytes
 
-    def test_allow_mixed_cell_ids_updates_and_preserves_outputs(self, tmp_path):
+    def test_allow_mixed_cell_ids_updates_and_preserves_outputs(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
         notebook = _make_ipynb([("code", "x = 1", ["x\n"]), ("code", "y = 2", ["y\n"])])
         first_id, second_id = (cell.id for cell in notebook.cells)
         ipynb = tmp_path / "script.ipynb"
@@ -471,6 +482,7 @@ class TestPyToIpynbUpdate:
         )
 
         assert result.exit_code == 0
+        assert result.output.strip() == "Updated script.ipynb"
         updated = nbformat.read(str(ipynb), as_version=4)
         assert [cell.source for cell in updated.cells] == ["x = 10", "y = 20"]
         assert [cell.id for cell in updated.cells] == [first_id, second_id]

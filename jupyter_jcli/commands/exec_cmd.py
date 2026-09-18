@@ -9,6 +9,7 @@ import click
 
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
+from jupyter_jcli.commands._display import display_path
 from jupyter_jcli.executor import format_outputs_human, process_outputs
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 from jupyter_jcli.output import emit, emit_error
@@ -227,7 +228,7 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
     if text:
         parts.append(text)
     if event.notebook_created:
-        parts.append(f"Notebook created: {event.notebook_created}")
+        parts.append(f"Notebook created: {display_path(event.notebook_created)}")
     if event.notebook_updated:
         parts.append("Notebook updated")
     if (

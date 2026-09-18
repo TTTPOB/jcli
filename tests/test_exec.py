@@ -553,11 +553,12 @@ class TestExecAutoCreatesIpynb:
     """
 
     def test_percent_marker_creates_ipynb(
-        self, live_session, mock_kernel_connection, tmp_path
+        self, live_session, mock_kernel_connection, tmp_path, monkeypatch
     ):
         """py:percent file with # %% marker auto-creates .ipynb with outputs."""
         import nbformat
 
+        monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         script = tmp_path / "new.py"
         script.write_text(
@@ -588,7 +589,8 @@ class TestExecAutoCreatesIpynb:
         assert result.exit_code == 0
         assert "auto created" in result.output
         assert expected_nb.exists(), "paired .ipynb should have been created"
-        assert "Notebook created" in result.output
+        assert "Notebook created: new.ipynb" in result.output
+        assert str(expected_nb) not in result.output
 
         nb = nbformat.read(str(expected_nb), as_version=4)
         assert len(nb.cells) == 2
