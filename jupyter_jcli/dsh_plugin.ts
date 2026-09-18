@@ -608,23 +608,77 @@ async function saveSelectedImage(
   }
 }
 
-function renderMetadata(value: Record<string, any>): string {
-  const { source, selected, stream, error: _error, outputs: _outputs, ...response } = value
-  const output = {
-    ...response,
-    ...(isRecord(selected)
-      ? { selected: Object.fromEntries(Object.entries(selected).filter(([key]) => key !== 'data' && key !== 'attachment')) }
-      : {}),
-    ...(isRecord(stream)
-      ? { stream: Object.fromEntries(Object.entries(stream).filter(([key]) => key !== 'data')) }
-      : {}),
+function outputProvenance(source: unknown, includeOutput: boolean): Record<string, any> {
+  if (!isRecord(source)) return {}
+  const provenance: Record<string, any> = {
+    path: source.path,
+    cell: source.cell_index,
   }
-  return JSON.stringify({ provenance: source, output })
+  if (includeOutput) provenance.output = source.output_index
+  if (typeof source.mapping === 'string' && source.mapping !== 'direct') {
+    provenance.requested = {
+      path: source.requested_path,
+      cell: source.requested_cell_index,
+      mapping: source.mapping,
+    }
+  }
+  return provenance
+}
+
+function outputPage(payload: unknown): Record<string, any> | undefined {
+  if (!isRecord(payload) || payload.truncated !== true) return undefined
+  return {
+    offset: payload.offset,
+    returned: payload.returned_characters,
+    total: payload.total_characters,
+    ...(payload.next_offset === undefined ? {} : { next_offset: payload.next_offset }),
+  }
+}
+
+function renderMetadata(value: Record<string, any>): string {
+  const selected = isRecord(value.selected) ? value.selected : undefined
+  const stream = isRecord(value.stream) ? value.stream : undefined
+  const available = Array.isArray(value.available_mime_types)
+    ? value.available_mime_types
+    : []
+  const page = outputPage(selected ?? stream)
+  const output = {
+    type: value.output_type,
+    ...(selected === undefined ? {} : { mime: selected.mime_type }),
+    ...(available.length > 1 ? { available } : {}),
+    ...(stream === undefined ? {} : { name: stream.name }),
+    ...(page === undefined ? {} : { page }),
+  }
+  return JSON.stringify({
+    provenance: outputProvenance(value.source, true),
+    output,
+  })
+}
+
+function renderDirectory(value: Record<string, any>): string {
+  const outputs = Array.isArray(value.outputs)
+    ? value.outputs.map((entry: unknown) => {
+        if (!isRecord(entry)) return entry
+        return {
+          index: entry.output_index,
+          type: entry.output_type,
+          mime: Array.isArray(entry.available_mime_types) ? entry.available_mime_types : [],
+          ...(entry.output_type === 'stream' ? { name: entry.name } : {}),
+          ...(entry.output_type === 'error'
+            ? { ename: entry.ename, evalue: entry.evalue }
+            : {}),
+        }
+      })
+    : []
+  return JSON.stringify({
+    provenance: outputProvenance(value.source, false),
+    outputs,
+  })
 }
 
 function renderOutput(_args: OutputToolArgs, value: Record<string, any>): ContentBlock[] {
   if (Array.isArray(value.outputs)) {
-    return [{ type: 'text', text: JSON.stringify(value) }]
+    return [{ type: 'text', text: renderDirectory(value) }]
   }
   const metadata = { type: 'text' as const, text: renderMetadata(value) }
   if (isRecord(value.selected)) {

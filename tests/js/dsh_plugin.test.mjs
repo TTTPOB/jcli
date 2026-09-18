@@ -363,7 +363,11 @@ test('registers read_notebook_output and lists without requesting payload data',
     schema_version: 1,
     status: 'ok',
     source: { kind: 'notebook', path: '/session/cwd/book.ipynb', cell_index: 2, mapping: 'direct' },
-    outputs: [{ output_index: 0, output_type: 'stream', available_mime_types: [], name: 'stdout' }],
+    outputs: [
+      { output_index: 0, output_type: 'stream', available_mime_types: [], name: 'stdout' },
+      { output_index: 1, output_type: 'display_data', available_mime_types: ['text/plain'], metadata: {} },
+      { output_index: 2, output_type: 'error', available_mime_types: [], ename: 'ValueError', evalue: 'bad' },
+    ],
   }
   const policy = { resolve() { return { mode: 'read-only', workspaceRoot: '/session/cwd' } } }
   const h = harness({ results: [result(0, JSON.stringify(response))], policy, shellMode: 'read-only' })
@@ -382,7 +386,17 @@ test('registers read_notebook_output and lists without requesting payload data',
   assert.equal(h.calls[0].stdoutMaxBytes, 32 * 1024 * 1024 + 1024)
   assert.equal(h.calls[0].command, 'j-cli -j notebook outputs book.ipynb --cell 2')
   assert.doesNotMatch(h.calls[0].command, /--output|--supported-mime/)
-  assert.deepEqual(tool.output.render({}, value), [{ type: 'text', text: JSON.stringify(response) }])
+  assert.deepEqual(tool.output.render({}, value), [{
+    type: 'text',
+    text: JSON.stringify({
+      provenance: { path: '/session/cwd/book.ipynb', cell: 2 },
+      outputs: [
+        { index: 0, type: 'stream', mime: [], name: 'stdout' },
+        { index: 1, type: 'display_data', mime: ['text/plain'] },
+        { index: 2, type: 'error', mime: [], ename: 'ValueError', evalue: 'bad' },
+      ],
+    }),
+  }])
   await assert.rejects(
     tool.execute({ file_path: 'book.ipynb', cell_index: 2, mime_type: 'text/plain' }, { signal }),
     /invalid arguments/,
@@ -393,7 +407,11 @@ test('registers read_notebook_output and lists without requesting payload data',
 test('renders raw text, reversible JSON, stream, and error payloads with separate provenance', async () => {
   const h = harness()
   const tool = h.tools[0]
-  const source = { kind: 'notebook', path: '/work/book.ipynb', cell_index: 0, output_index: 1, mapping: 'direct' }
+  const source = {
+    kind: 'notebook', path: '/work/book.ipynb', cell_index: 0, output_index: 1,
+    requested_path: '/work/book.ipynb', requested_cell_index: 0, mapping: 'direct',
+    cell_id: 'cell-id', execution_count: 7,
+  }
   const cases = [
     {
       value: { schema_version: 1, status: 'ok', source, output_type: 'display_data', available_mime_types: ['text/html'], selected: { mime_type: 'text/html', encoding: 'utf-8', data: '<b>raw</b>', bytes: 10 } },
@@ -416,9 +434,58 @@ test('renders raw text, reversible JSON, stream, and error payloads with separat
     const blocks = tool.output.render({}, value)
     assert.equal(blocks[0].type, 'text')
     assert.equal(blocks[0].text, expected)
-    assert.deepEqual(JSON.parse(blocks[1].text).provenance, source)
+    const metadata = JSON.parse(blocks[1].text)
+    assert.deepEqual(metadata.provenance, { path: '/work/book.ipynb', cell: 0, output: 1 })
+    assert.equal(metadata.output.type, value.output_type)
+    if (value.selected) assert.equal(metadata.output.mime, value.selected.mime_type)
+    if (value.stream) assert.equal(metadata.output.name, 'stderr')
     assert.equal(blocks[1].text.includes(expected), false)
+    assert.equal(blocks[1].text.includes('schema_version'), false)
+    assert.equal(blocks[1].text.includes('requested_path'), false)
   }
+})
+
+test('projects mapped provenance, multiple MIME choices, and protocol paging facts', () => {
+  const tool = harness().tools[0]
+  const source = {
+    kind: 'notebook', path: '/work/book.ipynb', cell_index: 4, output_index: 2,
+    requested_path: '/work/book.py', requested_cell_index: 3, mapping: 'cell-id',
+  }
+  const base = {
+    schema_version: 1,
+    status: 'ok',
+    source,
+    output_type: 'display_data',
+    available_mime_types: ['text/plain', 'text/html'],
+  }
+  const first = tool.output.render({}, {
+    ...base,
+    selected: {
+      mime_type: 'text/plain', encoding: 'utf-8', data: '😀a', bytes: 5,
+      offset: 0, returned_characters: 2, total_characters: 5, truncated: true, next_offset: 2,
+    },
+  })
+  const last = tool.output.render({}, {
+    ...base,
+    selected: {
+      mime_type: 'text/plain', encoding: 'utf-8', data: 'xyz', bytes: 3,
+      offset: 2, returned_characters: 3, total_characters: 5, truncated: true,
+    },
+  })
+
+  assert.deepEqual(JSON.parse(first[1].text), {
+    provenance: {
+      path: '/work/book.ipynb', cell: 4, output: 2,
+      requested: { path: '/work/book.py', cell: 3, mapping: 'cell-id' },
+    },
+    output: {
+      type: 'display_data', mime: 'text/plain', available: ['text/plain', 'text/html'],
+      page: { offset: 0, returned: 2, total: 5, next_offset: 2 },
+    },
+  })
+  assert.deepEqual(JSON.parse(last[1].text).output.page, {
+    offset: 2, returned: 3, total: 5,
+  })
 })
 
 test('saves an explicitly read raster through the host attachment bridge', async () => {
@@ -455,6 +522,12 @@ test('saves an explicitly read raster through the host attachment bridge', async
   assert.equal(JSON.stringify(value).includes('iVBORw0KGgo='), false)
   const blocks = h.tools[0].output.render({}, value)
   assert.deepEqual(blocks[0], { type: 'image', attachment: value.selected.attachment })
+  assert.deepEqual(JSON.parse(blocks[1].text), {
+    provenance: { path: '/work/book.ipynb', cell: 0, output: 1 },
+    output: {
+      type: 'display_data', mime: 'image/png', available: ['image/png', 'text/plain'],
+    },
+  })
 })
 
 test('checks cancellation, timeout, exit, and truncation before parsing stdout', async () => {
