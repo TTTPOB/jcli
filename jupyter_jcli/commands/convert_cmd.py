@@ -140,7 +140,7 @@ def py_to_ipynb(
 ) -> None:
     """Convert a py:percent file to .ipynb format.
 
-    If out.ipynb already exists, only cell sources are updated. Outputs are
+    If out.ipynb already exists, shared pair state is updated while outputs are
     handled according to --outputs. Otherwise a new notebook is created.
     """
     parsed = percent.load(in_py)

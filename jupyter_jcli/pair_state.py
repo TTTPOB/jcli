@@ -107,15 +107,16 @@ def metadata_with_local_fields(current: dict, shared: dict[str, Any]) -> dict[st
         if key in current and not (kernel_changed and key == "widgets"):
             result[key] = deepcopy(current[key])
     current_language = current.get("language_info")
+    target_language = result.get("language_info")
     if (
         not kernel_changed
         and isinstance(current_language, dict)
         and "version" in current_language
+        and isinstance(target_language, dict)
+        and isinstance(target_language.get("name"), str)
+        and target_language["name"]
     ):
-        language = result.setdefault("language_info", {})
-        if not isinstance(language, dict):
-            raise ValueError("metadata.language_info must be a mapping")
-        language["version"] = deepcopy(current_language["version"])
+        target_language["version"] = deepcopy(current_language["version"])
     return result
 
 

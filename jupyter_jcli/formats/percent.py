@@ -1,5 +1,6 @@
 """Parser, emitter, and canonicalizer for the py:percent format."""
 
+import math
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -191,8 +192,12 @@ def dumps(
     parts: list[str] = []
     cells = parsed.cells
     if parsed.front_matter_raw is not None:
-        parts.append(parsed.front_matter_raw.rstrip("\r\n"))
-        parts.append("\n\n" if cells else "\n")
+        front_matter = _front_matter_for_metadata(
+            parsed.front_matter_raw, parsed.notebook.metadata
+        )
+        if front_matter is not None:
+            parts.append(front_matter.rstrip("\r\n"))
+            parts.append("\n\n" if cells else "\n")
     elif parsed.notebook.metadata:
         parts.append(_dump_front_matter_document({"jupyter": parsed.notebook.metadata}))
         parts.append("\n" if cells else "")
@@ -244,14 +249,31 @@ def update_front_matter_metadata(
     """Replace the structured jupyter subtree and retain other header fields."""
     if front_matter is None:
         return None
-    document = _load_front_matter_document(
-        "".join(front_matter.splitlines(keepends=True)[1:-1])
-    )
+    document = _front_matter_document(front_matter)
     if metadata:
         document["jupyter"] = deepcopy(metadata)
     else:
         document.pop("jupyter", None)
     return _dump_front_matter_document(document)
+
+
+def _front_matter_for_metadata(front_matter: str, metadata: dict) -> str | None:
+    """Keep an unchanged raw template or update its authoritative metadata."""
+    document = _front_matter_document(front_matter)
+    current = document.get("jupyter", {})
+    if current is None:
+        current = {}
+    if not isinstance(current, dict):
+        raise TypeError("front matter jupyter field must be a mapping")
+    if current == metadata:
+        return front_matter
+    return update_front_matter_metadata(front_matter, metadata)
+
+
+def _front_matter_document(front_matter: str) -> dict:
+    return _load_front_matter_document(
+        "".join(front_matter.splitlines(keepends=True)[1:-1])
+    )
 
 
 def _load_front_matter_document(commented_yaml: str) -> dict:
@@ -281,12 +303,19 @@ def _dump_front_matter_document(document: dict) -> str:
 
 def _to_plain(value):
     if isinstance(value, dict):
-        return {str(key): _to_plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+        result = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("metadata mapping keys must be strings")
+            result[key] = _to_plain(item)
+        return result
+    if isinstance(value, list):
         return [_to_plain(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("metadata numbers must be finite")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    raise ValueError(f"metadata value is not YAML-compatible: {type(value).__name__}")
+    raise TypeError(f"metadata value is not JSON-compatible: {type(value).__name__}")
 
 
 def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:

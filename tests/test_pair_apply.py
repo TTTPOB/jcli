@@ -1,6 +1,7 @@
 """Tests for applying shared state to both pair representations."""
 
 import nbformat
+import pytest
 
 from jupyter_jcli.formats import percent
 from jupyter_jcli.formats.model import Cell
@@ -137,3 +138,32 @@ def test_notebook_apply_preserves_runtime_version_when_kernel_is_unchanged(tmp_p
     updated = nbformat.read(str(path), as_version=4)
     assert updated.metadata["kernelspec"]["display_name"] == "New"
     assert updated.metadata["language_info"]["version"] == "3.12"
+    nbformat.validate(updated)
+
+
+def test_notebook_apply_drops_version_when_language_descriptor_is_deleted(tmp_path):
+    path = tmp_path / "nb.ipynb"
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+    nb.metadata["language_info"] = {"name": "python", "version": "3.12"}
+    nbformat.write(nb, str(path))
+
+    apply_pair_state_to_ipynb(path, _state({}))
+
+    updated = nbformat.read(str(path), as_version=4)
+    assert "language_info" not in updated.metadata
+    nbformat.validate(updated)
+
+
+def test_invalid_notebook_candidate_is_not_written(tmp_path):
+    path = tmp_path / "nb.ipynb"
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+    nbformat.write(nb, str(path))
+    before = path.read_bytes()
+
+    with pytest.raises(Exception, match="language_info"):
+        apply_pair_state_to_ipynb(
+            path,
+            _state({"language_info": {"version": "3.12"}}),
+        )
+
+    assert path.read_bytes() == before

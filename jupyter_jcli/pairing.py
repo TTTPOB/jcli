@@ -176,13 +176,10 @@ def _persist_pair_baseline(py_path: Path, text: str, *, strict: bool) -> bool:
 def python_text_for_state(template: ParsedFile, state: PairState) -> str:
     """Apply shared state while retaining Python-local header metadata."""
     metadata = metadata_with_local_fields(template.notebook.metadata, state.metadata)
-    front_matter = percent.update_front_matter_metadata(
-        template.front_matter_raw, metadata
-    )
     parsed = ParsedFile(
         cells=[deepcopy(cell) for cell in state.cells],
         source_path=template.source_path,
-        front_matter_raw=front_matter,
+        front_matter_raw=template.front_matter_raw,
     )
     parsed.notebook.metadata = metadata
     return percent.dumps(
@@ -219,11 +216,12 @@ def apply_pair_state_to_ipynb(
         nb = nbformat.read(str(ipynb_path), as_version=4)
         nb.cells = _updated_cells(nb.cells, state.cells, output_policy=output_policy)
         nb.metadata = metadata_with_local_fields(nb.metadata, state.metadata)
-        nbformat.write(nb, str(ipynb_path))
     else:
         parsed = ParsedFile(cells=[deepcopy(cell) for cell in state.cells])
         parsed.notebook.metadata = deepcopy(state.metadata)
-        ipynb.dump(parsed, ipynb_path)
+        nb = ipynb.to_node(parsed)
+    nbformat.validate(nb)
+    ipynb_path.write_text(nbformat.writes(nb), encoding="utf-8")
     return before != ipynb_path.read_bytes()
 
 

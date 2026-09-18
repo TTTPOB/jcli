@@ -61,23 +61,23 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
             f"Pre-existing conflict between `{py_path.name}` and `{ipynb_path.name}` "
             f"at {scope} — both sides have been edited (e.g. by a human "
             "user in JupyterLab and via py:percent) since the last commit of `.py`, "
-            "and the edits collide on the same cell(s). This drift existed before "
+            "and the edits collide in shared pair state. This drift existed before "
             "your tool call.\n\n"
             f"Before resolving, run `git diff -- {py_path.name}` to see what changed "
             f"on the `.py` side, and open `{ipynb_path.name}` (or jupyter-lab) to "
             "inspect the other side. Then pick a direction:\n"
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # takes ipynb's cells; discards .py's edits\n"
+            "   # takes ipynb shared state; discards .py's conflicting edits\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # takes .py's cells; discards ipynb's edits"
+            "   # takes .py shared state; discards ipynb's conflicting edits"
             + _diff_section(result.diff_text, py_path.name)
         )
 
     if isinstance(result, DriftOnly):
         return (
             f"`{py_path.name}` is not yet committed, so jcli has no baseline to "
-            f"auto-merge the pair. Current sources of `{py_path.name}` and "
-            f"`{ipynb_path.name}` differ. This state existed before your tool call.\n\n"
+            f"auto-merge the pair. Current shared state of `{py_path.name}` and "
+            f"`{ipynb_path.name}` differs. This state existed before your tool call.\n\n"
             "This usually happens right after creating a new notebook (common "
             "`j-cli exec` flow: create `.py`, exec to generate `.ipynb` with outputs; "
             "the two can drift in whitespace/cell count before the first commit).\n\n"
@@ -91,7 +91,7 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
             "   # overwrites .py\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # overwrites .ipynb sources (outputs preserved)"
+            "   # overwrites .ipynb shared state (outputs preserved)"
             + _diff_section(result.diff_text, py_path.name)
         )
 
@@ -251,9 +251,9 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
             f"Run `git diff -- {py_path.name}` to see the `.py` side, open "
             f"`{other.name}` to inspect the other side, then pick a direction:\n"
             f"  j-cli convert ipynb-to-py {ipynb_path.name} {py_path.name}"
-            "   # take ipynb; discard .py edits on those cells\n"
+            "   # take ipynb shared state; discard conflicting .py edits\n"
             f"  j-cli convert py-to-ipynb {py_path.name} {ipynb_path.name}"
-            "   # take .py; discard ipynb edits on those cells"
+            "   # take .py shared state; discard conflicting ipynb edits"
             + _diff_section(result.diff_text, py_path.name)
         )
         return _post_drift_notice(drift_reason)

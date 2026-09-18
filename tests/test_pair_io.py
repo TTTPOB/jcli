@@ -366,6 +366,38 @@ class TestEmitPyPercent:
         assert parsed2.front_matter_raw == fmr
         assert parsed2.kernel_name == "ir"
 
+    def test_mutated_metadata_overrides_raw_header_on_dump(self):
+        parsed = parse_py_percent_text(
+            "# ---\n# project: keep\n# jupyter:\n#   kernelspec:\n"
+            "#     name: old\n# ---\n\n# %%\nx = 1\n"
+        )
+        parsed.kernel_name = "new"
+
+        text = emit_py_percent(parsed, include_cell_ids=False)
+
+        assert parse_py_percent_text(text).kernel_name == "new"
+        assert "project: keep" in text
+        assert "name: old" not in text
+
+    def test_cell_only_dump_preserves_raw_header_bytes(self):
+        raw = (
+            "# ---\n# project: keep  # comment\n# jupyter: {kernelspec: {name: env}}\n"
+            "# ---\n"
+        )
+        parsed = parse_py_percent_text(raw + "\n# %%\nx = 1\n")
+        parsed.cells[0].node.source = "x = 2"
+
+        text = emit_py_percent(parsed, include_cell_ids=False)
+
+        assert text.startswith(raw + "\n")
+
+    def test_metadata_rejects_non_string_mapping_keys(self):
+        parsed = _parsed(None, ("code", "x = 1"))
+        parsed.notebook.metadata = {1: "invalid"}
+
+        with pytest.raises(TypeError, match="keys must be strings"):
+            emit_py_percent(parsed)
+
     def test_synthesized_header_from_kernel_name(self):
         parsed = _parsed("python3", ("code", "x = 1"))
         text = emit_py_percent(parsed)

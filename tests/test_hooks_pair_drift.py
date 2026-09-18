@@ -949,7 +949,9 @@ class TestConsecutiveEdits:
         _git(git_repo, "commit", "-m", "init", env=_git_env(100))
 
         py.write_text(
-            "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
+            "# ---\n# jupyter:\n#   kernelspec:\n"
+            "#     display_name: Python 3\n#     language: python\n"
+            "#     name: python3\n# ---\n\n"
             "# %%\nnew = 0\n\n# %%\nx = 10\n\n# %%\ny = 2\n",
             encoding="utf-8",
         )
