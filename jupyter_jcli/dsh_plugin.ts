@@ -250,12 +250,17 @@ function structuredDeny(stdout: string): string | undefined {
   return reason.length === 0 ? GENERIC_DENY_REASON : reason
 }
 
-function structuredContext(stdout: string, maxChars: number): string | undefined {
+function structuredContextText(stdout: string): string | undefined {
   const parsed = structuredOutput(stdout)
   const output = parsed?.hookSpecificOutput
   if (!isRecord(output) || typeof output.additionalContext !== 'string') return undefined
   const context = output.additionalContext.trim()
-  return context.length === 0 ? undefined : clipped(context, maxChars)
+  return context.length === 0 ? undefined : context
+}
+
+function structuredContext(stdout: string, maxChars: number): string | undefined {
+  const context = structuredContextText(stdout)
+  return context === undefined ? undefined : clipped(context, maxChars)
 }
 
 function resultStatus(result: ShellRunResult): string {
@@ -276,10 +281,23 @@ function failureDiagnostic(
   const stderr = result === undefined ? '' : outputText(result.stderr).trim()
   const stdout = result === undefined ? '' : outputText(result.stdout).trim()
   const detail = thrown === undefined ? '' : errorText(thrown)
+  const context = structuredContextText(stdout)
+  const repeatedDiagnostic = context === undefined ? '' : `${guard}: ${context}`
+  let independentStderr = stderr
+  if (repeatedDiagnostic && stderr === repeatedDiagnostic) {
+    independentStderr = ''
+  } else if (repeatedDiagnostic && stderr.endsWith(`\n${repeatedDiagnostic}`)) {
+    independentStderr = stderr.slice(0, -(repeatedDiagnostic.length + 1)).trimEnd()
+  }
+
   const pieces = [`jcli-dsh: ${guard} failed (${status})`]
-  if (stderr) pieces.push(`stderr: ${stderr}`)
+  if (independentStderr) pieces.push(`stderr: ${independentStderr}`)
   if (detail) pieces.push(`error: ${detail}`)
-  if (stdout) pieces.push(`stdout: ${stdout}`)
+  if (context !== undefined && independentStderr !== stderr) {
+    pieces.push(context)
+  } else if (stdout) {
+    pieces.push(`stdout: ${stdout}`)
+  }
   return clipped(pieces.join('; '), maxChars)
 }
 

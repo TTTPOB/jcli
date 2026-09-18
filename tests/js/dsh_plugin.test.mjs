@@ -322,6 +322,43 @@ test('post failures never block and prepend bounded real process diagnostics', a
   assert.equal(textOf(decision.additionalContexts[0]).length <= 100, true)
 })
 
+test('post hook failures deduplicate structured context from matching stderr', async () => {
+  const contextText = 'Paired notebook drift detected after edit. Run `j-cli convert` to reconcile.'
+  const stdout = JSON.stringify({ hookSpecificOutput: { additionalContext: contextText } })
+  const stderr = `pair-drift-guard-post: ${contextText}`
+  const h = harness({ results: [result(1, stdout, stderr)] })
+
+  const decision = await h.post(
+    exec('edit', { file_path: 'x.py' }),
+    {},
+    async () => ({ kind: 'accept' }),
+  )
+  const diagnostic = textOf(decision.additionalContexts[0])
+
+  assert.match(diagnostic, /exit code 1/)
+  assert.equal(diagnostic.split(contextText).length - 1, 1)
+  assert.equal(diagnostic.includes('hookSpecificOutput'), false)
+  assert.equal(diagnostic.includes('pair-drift-guard-post: Paired'), false)
+})
+
+test('post hook failure deduplication preserves independent stderr', async () => {
+  const contextText = 'Paired notebook drift detected after edit.'
+  const stdout = JSON.stringify({ hookSpecificOutput: { additionalContext: contextText } })
+  const stderr = `independent warning\npair-drift-guard-post: ${contextText}`
+  const h = harness({ results: [result(1, stdout, stderr)] })
+
+  const decision = await h.post(
+    exec('write', { file_path: 'x.py', content: 'x' }),
+    {},
+    async () => ({ kind: 'accept' }),
+  )
+  const diagnostic = textOf(decision.additionalContexts[0])
+
+  assert.match(diagnostic, /exit code 1/)
+  assert.match(diagnostic, /independent warning/)
+  assert.equal(diagnostic.split(contextText).length - 1, 1)
+})
+
 test('post guard exceptions still delegate downstream', async () => {
   const h = harness({ results: [new Error('post executor failure')] })
   const downstream = { kind: 'accept', content: [{ type: 'text', text: 'tool result' }] }
