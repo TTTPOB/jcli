@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, TypeAlias
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli.formats import ipynb, percent
-from jupyter_jcli.pair_state import KernelConflict, PairState, merge_kernel
+from jupyter_jcli.pair_state import MetadataConflict, PairState, merge_metadata
 
 from .merge import merge_three_way
 from .render import locate_conflict_cells, render_no_baseline_diff
@@ -93,9 +93,21 @@ class Conflict(_DriftResult):
 
     conflict_indices: list[int]
     diff_text: str
-    kernel_conflict: KernelConflict | None = None
+    metadata_conflicts: list[MetadataConflict] = field(default_factory=list)
 
     _status: ClassVar[DriftStatus] = DriftStatus.CONFLICT
+
+    @property
+    def kernel_conflict(self) -> MetadataConflict | None:
+        """Return the atomic kernel conflict, when present."""
+        return next(
+            (
+                conflict
+                for conflict in self.metadata_conflicts
+                if conflict.path == ("kernel",)
+            ),
+            None,
+        )
 
 
 @dataclass(frozen=True)
@@ -155,11 +167,9 @@ def check_drift(
     ours = PairState.from_parsed(
         percent.loads(ours_text), include_cell_ids=include_cell_ids
     )
-    ours.kernel_info = PairState.from_parsed(ours_source).kernel_info
     theirs = PairState.from_parsed(
         percent.loads(theirs_text), include_cell_ids=include_cell_ids
     )
-    theirs.kernel_info = PairState.from_parsed(notebook_source).kernel_info
 
     base_raw = (
         _get_git_base_text_strict(py_path)
@@ -184,17 +194,19 @@ def check_drift(
         percent.loads(base_text), include_cell_ids=include_cell_ids
     )
     cell_merge = merge_three_way(base.cell_text(), ours.cell_text(), theirs.cell_text())
-    kernel_merge = merge_kernel(base, ours, theirs)
+    merged_metadata, metadata_conflicts = merge_metadata(
+        base.metadata, ours.metadata, theirs.metadata
+    )
 
-    if cell_merge.has_conflict or isinstance(kernel_merge, KernelConflict):
-        diff_parts = []
-        if isinstance(kernel_merge, KernelConflict):
-            diff_parts.append(
-                "Kernel conflict:\n"
-                f"  base: {kernel_merge.base!r}\n"
-                f"  py: {kernel_merge.py!r}\n"
-                f"  notebook: {kernel_merge.notebook!r}\n"
-            )
+    if cell_merge.has_conflict or metadata_conflicts:
+        diff_parts = [
+            "Metadata conflict at "
+            f"{conflict.display_path}:\n"
+            f"  base: {conflict.base!r}\n"
+            f"  py: {conflict.py!r}\n"
+            f"  notebook: {conflict.notebook!r}\n"
+            for conflict in metadata_conflicts
+        ]
         if cell_merge.has_conflict:
             diff_parts.append(cell_merge.text)
         return Conflict(
@@ -204,16 +216,13 @@ def check_drift(
                 if cell_merge.has_conflict
                 else []
             ),
-            kernel_conflict=(
-                kernel_merge if isinstance(kernel_merge, KernelConflict) else None
-            ),
+            metadata_conflicts=metadata_conflicts,
         )
 
-    kernel_name, kernel_info = kernel_merge
+    assert merged_metadata is not None
     merged = PairState(
         cells=percent.loads(cell_merge.text).cells,
-        kernel_name=kernel_name,
-        kernel_info=kernel_info,
+        metadata=merged_metadata,
         include_cell_ids=include_cell_ids,
     )
     py_needs = merged != ours or py_ids_need_writeback

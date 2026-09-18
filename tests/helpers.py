@@ -8,6 +8,8 @@ def make_py_text(*sources: str, kernel: str = "python3") -> str:
         "# ---\n",
         "# jupyter:\n",
         "#   kernelspec:\n",
+        f"#     display_name: {kernel}\n",
+        "#     language: python\n",
         f"#     name: {kernel}\n",
         "# ---\n",
         "\n",

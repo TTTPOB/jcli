@@ -3,33 +3,24 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from jupyter_jcli.formats import percent
 from jupyter_jcli.formats.model import Cell, ParsedFile
 
-
-@dataclass(frozen=True)
-class KernelInfo:
-    """Kernel identity plus optional descriptive fields from its source."""
-
-    name: str
-    display_name: str | None = None
-    language: str | None = None
+# These paths are local/runtime state, not pair-shared notebook configuration.
+_EXCLUDED_TOP_LEVEL = frozenset({"widgets", "jupytext", "vscode", "colab"})
+_KERNEL_METADATA_KEYS = frozenset({"kernelspec", "language_info"})
+_MISSING = object()
 
 
 @dataclass(eq=False)
 class PairState:
-    """The state shared by a Python file and its paired notebook.
-
-    Cell metadata, outputs, execution counts, and descriptive kernelspec fields are
-    deliberately excluded from equality. ``kernel_info`` only supplies a template
-    when a changed kernel must be written to the other representation.
-    """
+    """Cell sources and explicitly projected notebook-level metadata."""
 
     cells: list[Cell]
-    kernel_name: str | None
-    kernel_info: KernelInfo | None = field(default=None, compare=False)
+    metadata: dict[str, Any]
     include_cell_ids: bool = True
 
     @classmethod
@@ -37,24 +28,20 @@ class PairState:
         cls, parsed: ParsedFile, *, include_cell_ids: bool = True
     ) -> PairState:
         """Project a parsed representation onto pair-shared semantics."""
-        info = (
-            KernelInfo(
-                parsed.kernel_name,
-                parsed.kernel_display_name,
-                parsed.kernel_language,
-            )
-            if parsed.kernel_name is not None
-            else None
-        )
         return cls(
             cells=[deepcopy(cell) for cell in parsed.cells],
-            kernel_name=parsed.kernel_name,
-            kernel_info=info,
+            metadata=project_shared_metadata(parsed.notebook.metadata),
             include_cell_ids=include_cell_ids,
         )
 
+    @property
+    def kernel_name(self) -> str | None:
+        """Return the shared kernelspec name, when representable as text."""
+        value = self.metadata.get("kernelspec", {}).get("name")
+        return str(value) if value is not None else None
+
     def cell_text(self) -> str:
-        """Return deterministic kernel-free canonical text for cell merging."""
+        """Return deterministic metadata-free canonical text for cell merging."""
         parsed = ParsedFile(cells=[deepcopy(cell) for cell in self.cells])
         return percent.dumps(
             parsed,
@@ -64,10 +51,8 @@ class PairState:
 
     def canonical_text(self) -> str:
         """Return deterministic baseline text for the complete shared state."""
-        parsed = ParsedFile(
-            kernel_name=self.kernel_name,
-            cells=[deepcopy(cell) for cell in self.cells],
-        )
+        parsed = ParsedFile(cells=[deepcopy(cell) for cell in self.cells])
+        parsed.notebook.metadata = deepcopy(self.metadata)
         return percent.dumps(
             parsed,
             include_cell_ids=self.include_cell_ids,
@@ -77,33 +62,146 @@ class PairState:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PairState):
             return NotImplemented
-        return (
-            self.kernel_name == other.kernel_name
-            and self.cell_text() == other.cell_text()
-        )
+        return self.metadata == other.metadata and self.cell_text() == other.cell_text()
 
 
 @dataclass(frozen=True)
-class KernelConflict:
-    """A three-way conflict between kernel identities."""
+class MetadataConflict:
+    """A three-way conflict at one shared metadata path."""
 
-    base: str | None
-    py: str | None
-    notebook: str | None
+    path: tuple[str, ...]
+    base: object
+    py: object
+    notebook: object
+
+    @property
+    def display_path(self) -> str:
+        return "metadata." + ".".join(self.path)
 
 
-def merge_kernel(
-    base: PairState, py: PairState, notebook: PairState
-) -> tuple[str | None, KernelInfo | None] | KernelConflict:
-    """Merge kernel identity by value, preserving the winning description."""
-    ours = py.kernel_name
-    theirs = notebook.kernel_name
-    ancestor = base.kernel_name
+def project_shared_metadata(metadata: dict) -> dict[str, Any]:
+    """Remove the centralized set of local/runtime metadata paths."""
+    projected = {
+        str(key): deepcopy(value)
+        for key, value in metadata.items()
+        if key not in _EXCLUDED_TOP_LEVEL
+    }
+    language_info = projected.get("language_info")
+    if isinstance(language_info, dict):
+        language_info.pop("version", None)
+        if not language_info:
+            projected.pop("language_info", None)
+    return projected
 
-    if ours == theirs:
-        return ours, py.kernel_info or notebook.kernel_info
-    if ours == ancestor:
-        return theirs, notebook.kernel_info
-    if theirs == ancestor:
-        return ours, py.kernel_info
-    return KernelConflict(base=ancestor, py=ours, notebook=theirs)
+
+def metadata_with_local_fields(current: dict, shared: dict[str, Any]) -> dict[str, Any]:
+    """Overlay shared metadata while retaining valid representation-local fields."""
+    result = deepcopy(shared)
+    old_kernel = project_shared_metadata(current).get("kernelspec", {})
+    new_kernel = shared.get("kernelspec", {})
+    old_name = old_kernel.get("name") if isinstance(old_kernel, dict) else None
+    new_name = new_kernel.get("name") if isinstance(new_kernel, dict) else None
+    kernel_changed = old_name != new_name
+
+    for key in _EXCLUDED_TOP_LEVEL:
+        if key in current and not (kernel_changed and key == "widgets"):
+            result[key] = deepcopy(current[key])
+    current_language = current.get("language_info")
+    if (
+        not kernel_changed
+        and isinstance(current_language, dict)
+        and "version" in current_language
+    ):
+        language = result.setdefault("language_info", {})
+        if not isinstance(language, dict):
+            raise ValueError("metadata.language_info must be a mapping")
+        language["version"] = deepcopy(current_language["version"])
+    return result
+
+
+def merge_metadata(
+    base: dict[str, Any], py: dict[str, Any], notebook: dict[str, Any]
+) -> tuple[dict[str, Any] | None, list[MetadataConflict]]:
+    """Three-way merge shared metadata with one atomic kernel configuration."""
+    base = deepcopy(base)
+    py = deepcopy(py)
+    notebook = deepcopy(notebook)
+    conflicts: list[MetadataConflict] = []
+    merged: dict[str, Any] = {}
+
+    base_kernel = {key: base.pop(key) for key in _KERNEL_METADATA_KEYS if key in base}
+    py_kernel = {key: py.pop(key) for key in _KERNEL_METADATA_KEYS if key in py}
+    nb_kernel = {
+        key: notebook.pop(key) for key in _KERNEL_METADATA_KEYS if key in notebook
+    }
+    kernel = _merge_atomic(("kernel",), base_kernel, py_kernel, nb_kernel, conflicts)
+    if kernel is not _MISSING:
+        merged.update(kernel)
+
+    ordinary = _merge_value((), base, py, notebook, conflicts)
+    if ordinary is not _MISSING:
+        merged.update(ordinary)
+    return (None if conflicts else merged), conflicts
+
+
+def _copy_value(value):
+    return _MISSING if value is _MISSING else deepcopy(value)
+
+
+def _merge_atomic(path, base, py, notebook, conflicts):
+    if py == notebook:
+        return _copy_value(py)
+    if py == base:
+        return _copy_value(notebook)
+    if notebook == base:
+        return _copy_value(py)
+    conflicts.append(
+        MetadataConflict(
+            path=path,
+            base=_display_value(base),
+            py=_display_value(py),
+            notebook=_display_value(notebook),
+        )
+    )
+    return _MISSING
+
+
+def _merge_value(path, base, py, notebook, conflicts):
+    if py == notebook:
+        return _copy_value(py)
+    if py == base:
+        return _copy_value(notebook)
+    if notebook == base:
+        return _copy_value(py)
+    if all(
+        value is _MISSING or isinstance(value, dict) for value in (base, py, notebook)
+    ):
+        merged = {}
+        keys = set()
+        for value in (base, py, notebook):
+            if isinstance(value, dict):
+                keys.update(value)
+        for key in sorted(keys, key=str):
+            value = _merge_value(
+                (*path, str(key)),
+                base.get(key, _MISSING) if isinstance(base, dict) else _MISSING,
+                py.get(key, _MISSING) if isinstance(py, dict) else _MISSING,
+                notebook.get(key, _MISSING) if isinstance(notebook, dict) else _MISSING,
+                conflicts,
+            )
+            if value is not _MISSING:
+                merged[key] = value
+        return merged
+    conflicts.append(
+        MetadataConflict(
+            path=path,
+            base=_display_value(base),
+            py=_display_value(py),
+            notebook=_display_value(notebook),
+        )
+    )
+    return _MISSING
+
+
+def _display_value(value):
+    return "<missing>" if value is _MISSING else deepcopy(value)

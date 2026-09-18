@@ -27,6 +27,8 @@ def make_py_text_with_ids(cells: list[tuple[str | None, str]]) -> str:
         "# ---\n",
         "# jupyter:\n",
         "#   kernelspec:\n",
+        "#     display_name: python3\n",
+        "#     language: python\n",
         "#     name: python3\n",
         "# ---\n\n",
     ]
@@ -34,6 +36,12 @@ def make_py_text_with_ids(cells: list[tuple[str | None, str]]) -> str:
         id_option = f' id="{cell_id}"' if cell_id is not None else ""
         lines.append(f"# %%{id_option}\n{source}\n\n")
     return "".join(lines)
+
+
+def _py_with_metadata(metadata: dict, source: str = "x = 1") -> str:
+    parsed = percent.loads(f"# %%\n{source}\n")
+    parsed.notebook.metadata = metadata
+    return percent.dumps(parsed, include_cell_ids=False, assign_missing_ids=False)
 
 
 def _write_pair(
@@ -287,3 +295,69 @@ class TestCheckDrift:
         assert not hasattr(result, "diff_text")
         assert not hasattr(result, "conflict_indices")
         assert not hasattr(result, "baseline")
+
+    def test_same_name_language_and_display_changes_are_shared(self, tmp_path):
+        base_metadata = {
+            "kernelspec": {
+                "name": "env",
+                "display_name": "Old",
+                "language": "python",
+            }
+        }
+        py = tmp_path / "nb.py"
+        ipynb_path = tmp_path / "nb.ipynb"
+        base = _py_with_metadata(base_metadata)
+        py.write_text(base, encoding="utf-8")
+        notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+        notebook.metadata["kernelspec"] = {
+            "name": "env",
+            "display_name": "New",
+            "language": "julia",
+        }
+        nbformat.write(notebook, str(ipynb_path))
+
+        with self._patch_git(base):
+            result = check_drift(py, ipynb_path)
+
+        assert isinstance(result, Merged)
+        assert result.py_needs_update is True
+        assert (
+            result.target_state.metadata["kernelspec"]
+            == notebook.metadata["kernelspec"]
+        )
+
+    def test_metadata_same_path_conflict_is_structured(self, tmp_path):
+        base = _py_with_metadata({"custom": {"value": "base"}})
+        py = tmp_path / "nb.py"
+        ipynb_path = tmp_path / "nb.ipynb"
+        py.write_text(_py_with_metadata({"custom": {"value": "py"}}), encoding="utf-8")
+        notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+        notebook.metadata["custom"] = {"value": "notebook"}
+        nbformat.write(notebook, str(ipynb_path))
+
+        with self._patch_git(base):
+            result = check_drift(py, ipynb_path)
+
+        assert isinstance(result, Conflict)
+        assert result.conflict_indices == []
+        assert result.metadata_conflicts[0].display_path == "metadata.custom.value"
+        assert "base: 'base'" in result.diff_text
+        assert "py: 'py'" in result.diff_text
+        assert "notebook: 'notebook'" in result.diff_text
+
+    def test_excluded_metadata_changes_do_not_drift(self, tmp_path):
+        metadata = {"kernelspec": {"name": "env", "display_name": "Env"}}
+        base = _py_with_metadata(metadata)
+        py = tmp_path / "nb.py"
+        ipynb_path = tmp_path / "nb.ipynb"
+        py.write_text(base, encoding="utf-8")
+        notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+        notebook.metadata.update(metadata)
+        notebook.metadata["widgets"] = {"state": "local"}
+        notebook.metadata["language_info"] = {"version": "3.12"}
+        nbformat.write(notebook, str(ipynb_path))
+
+        with self._patch_git(base):
+            result = check_drift(py, ipynb_path)
+
+        assert isinstance(result, InSync)

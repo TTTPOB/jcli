@@ -1,8 +1,11 @@
 """Parser, emitter, and canonicalizer for the py:percent format."""
 
 import re
+from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
+
+import yaml
 
 from jupyter_jcli._enums import CellType
 from jupyter_jcli.formats.ipython_magics import transform_ipython_magics
@@ -31,9 +34,7 @@ def _without_trailing_blank_lines(source: str) -> str:
 def loads(text: str, *, source_path: str = "") -> ParsedFile:
     """Parse py:percent text into the shared document model."""
     lines = text.splitlines(keepends=True)
-    kernel_name = None
-    kernel_display_name = None
-    kernel_language = None
+    notebook_metadata: dict = {}
     front_matter_raw: str | None = None
     content_start = 0
 
@@ -42,17 +43,18 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
             if line.strip() == "# ---":
                 front_matter = "".join(lines[1:i])
                 front_matter_raw = "".join(lines[0 : i + 1])
-                match = re.search(r"^#\s+name:\s*(\S+)", front_matter, re.MULTILINE)
-                if match:
-                    kernel_name = match.group(1)
-                match = re.search(
-                    r"^#\s+display_name:\s*(.+?)\s*$", front_matter, re.MULTILINE
-                )
-                if match:
-                    kernel_display_name = match.group(1)
-                match = re.search(r"^#\s+language:\s*(\S+)", front_matter, re.MULTILINE)
-                if match:
-                    kernel_language = match.group(1)
+                document = _load_front_matter_document(front_matter)
+                raw_metadata = document.get("jupyter", {})
+                if raw_metadata is None:
+                    raw_metadata = {}
+                if not isinstance(raw_metadata, dict):
+                    raise ValueError("front matter jupyter field must be a mapping")
+                notebook_metadata = deepcopy(raw_metadata)
+                kernelspec = notebook_metadata.get("kernelspec", {})
+                if kernelspec is None:
+                    kernelspec = {}
+                if not isinstance(kernelspec, dict):
+                    raise ValueError("metadata.kernelspec must be a mapping")
                 content_start = i + 1
                 break
 
@@ -162,16 +164,15 @@ def loads(text: str, *, source_path: str = "") -> ParsedFile:
             cell.source_start_line = None
             cell.source_end_line = None
 
-    return ParsedFile(
-        kernel_name=kernel_name,
+    parsed = ParsedFile(
         cells=cells,
         source_path=source_path,
         front_matter_raw=front_matter_raw,
         is_py_percent=is_py_percent,
-        kernel_display_name=kernel_display_name,
-        kernel_language=kernel_language,
         stable_cell_ids=stable_cell_ids,
     )
+    parsed.notebook.metadata.update(notebook_metadata)
+    return parsed
 
 
 def load(path: str | Path) -> ParsedFile:
@@ -192,19 +193,9 @@ def dumps(
     if parsed.front_matter_raw is not None:
         parts.append(parsed.front_matter_raw.rstrip("\r\n"))
         parts.append("\n\n" if cells else "\n")
-    elif parsed.kernel_name is not None:
-        parts.extend(["# ---\n", "# jupyter:\n", "#   kernelspec:\n"])
-        if parsed.kernel_display_name is not None:
-            parts.append(f"#     display_name: {parsed.kernel_display_name}\n")
-        if parsed.kernel_language is not None:
-            parts.append(f"#     language: {parsed.kernel_language}\n")
-        parts.extend(
-            [
-                f"#     name: {parsed.kernel_name}\n",
-                "# ---\n",
-                "\n" if cells else "",
-            ]
-        )
+    elif parsed.notebook.metadata:
+        parts.append(_dump_front_matter_document({"jupyter": parsed.notebook.metadata}))
+        parts.append("\n" if cells else "")
 
     emitted_ids: set[str] = set()
     for index, cell in enumerate(cells):
@@ -247,55 +238,55 @@ def dump(parsed: ParsedFile, path: str | Path) -> None:
     Path(path).write_text(dumps(parsed), encoding="utf-8")
 
 
-def update_front_matter_kernel(
-    front_matter: str | None,
-    *,
-    name: str | None,
-    display_name: str | None = None,
-    language: str | None = None,
+def update_front_matter_metadata(
+    front_matter: str | None, metadata: dict
 ) -> str | None:
-    """Update only managed kernelspec fields in an existing raw header."""
+    """Replace the structured jupyter subtree and retain other header fields."""
     if front_matter is None:
         return None
-
-    lines = front_matter.splitlines(keepends=True)
-    start = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if line.rstrip() == "#   kernelspec:"
-        ),
-        None,
+    document = _load_front_matter_document(
+        "".join(front_matter.splitlines(keepends=True)[1:-1])
     )
-    if start is None:
-        if name is None:
-            return front_matter
-        insertion = ["#   kernelspec:\n"]
-        values = (
-            ("display_name", display_name),
-            ("language", language),
-            ("name", name),
-        )
-        insertion.extend(f"#     {key}: {value}\n" for key, value in values if value)
-        end = max(0, len(lines) - 1)
-        lines[end:end] = insertion
-        return "".join(lines)
+    if metadata:
+        document["jupyter"] = deepcopy(metadata)
+    else:
+        document.pop("jupyter", None)
+    return _dump_front_matter_document(document)
 
-    end = start + 1
-    while end < len(lines) and (
-        lines[end].startswith("#     ") or not lines[end].strip("# \t\r\n")
-    ):
-        end += 1
-    managed = {"display_name", "language", "name"}
-    retained = []
-    for line in lines[start + 1 : end]:
-        match = re.match(r"^#     ([A-Za-z_][\w-]*):", line)
-        if match is None or match.group(1) not in managed:
-            retained.append(line)
-    values = (("display_name", display_name), ("language", language), ("name", name))
-    retained.extend(f"#     {key}: {value}\n" for key, value in values if value)
-    lines[start + 1 : end] = retained
-    return "".join(lines)
+
+def _load_front_matter_document(commented_yaml: str) -> dict:
+    lines = []
+    for line in commented_yaml.splitlines():
+        if not line.startswith("#"):
+            raise ValueError("front matter lines must be comments")
+        lines.append(line[2:] if line.startswith("# ") else line[1:])
+    loaded = yaml.safe_load("\n".join(lines)) if lines else {}
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise TypeError("front matter must be a mapping")
+    return loaded
+
+
+def _dump_front_matter_document(document: dict) -> str:
+    yaml_text = yaml.safe_dump(
+        _to_plain(document),
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=True,
+    )
+    body = "".join(f"# {line}\n" if line else "#\n" for line in yaml_text.splitlines())
+    return f"# ---\n{body}# ---\n"
+
+
+def _to_plain(value):
+    if isinstance(value, dict):
+        return {str(key): _to_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_plain(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError(f"metadata value is not YAML-compatible: {type(value).__name__}")
 
 
 def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:
@@ -304,8 +295,6 @@ def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:
     if not parsed.is_py_percent:
         return text
     parsed.front_matter_raw = None
-    parsed.kernel_display_name = None
-    parsed.kernel_language = None
     return dumps(
         parsed,
         include_cell_ids=include_cell_ids is not False,
