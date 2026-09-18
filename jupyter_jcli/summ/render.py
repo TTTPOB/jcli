@@ -225,11 +225,13 @@ def _format_bounded_omission(
 
 def _format_summary_cell_human(cell: dict, heading: str) -> str:
     cell_type = CellType(cell["type"])
-    parts = [f"{heading} [{cell_type.value}] [{cell['line_count']}L]"]
+    line_count = cell["line_count"]
+    line_label = "line" if line_count == 1 else "lines"
+    parts = [f"{heading} [{cell_type.value}] [{line_count} {line_label}]"]
     if "source_start_line" in cell:
         parts.append(f"[L{cell['source_start_line']}-{cell['source_end_line']}]")
-    if "source" in cell:
-        parts.append(f"source={cell['source']!r}")
+    if "full_text" in cell:
+        parts.append(f"full_text={cell['full_text']!r}")
         return " ".join(parts)
     if cell_type == CellType.CODE:
         for field in ("imports", "defines", "writes", "calls"):
@@ -239,10 +241,8 @@ def _format_summary_cell_human(cell: dict, heading: str) -> str:
             if cell[f"{field}_truncated"]:
                 values += " [truncated]"
             parts.append(f"{field}={values}")
-    elif cell_type == CellType.MARKDOWN:
-        parts.append(f"first_line={cell['first_nonempty_line']!r}")
-    preview = repr(cell["source_preview"])
-    if cell["source_preview_truncated"]:
+    preview = repr(cell["preview"])
+    if cell["preview_truncated"]:
         preview += " [truncated]"
     parts.append(f"preview={preview}")
     return " ".join(parts)

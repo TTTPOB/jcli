@@ -80,7 +80,9 @@ def test_summary_extracts_python_ast_fields_and_non_code_previews(tmp_path):
     assert code["line_count"] == 10
     assert code["source_start_line"] == 8
     assert code["source_end_line"] == 17
-    assert code["source_preview"] == "import os"
+    assert code["preview"].startswith("import os\nfrom pkg")
+    assert code["preview_truncated"] is True
+    assert "full_text" not in code
     assert code["imports"] == ["os", "pkg.item as alias"]
     assert code["defines"] == ["Model", "build"]
     assert code["writes"] == ["data", "row", "total"]
@@ -93,17 +95,20 @@ def test_summary_extracts_python_ast_fields_and_non_code_previews(tmp_path):
 
     markdown = data["cells"][1]
     assert markdown["type"] == "markdown"
-    assert markdown["first_nonempty_line"] == "# Report title"
-    assert markdown["source_preview"] == "# Report title"
+    assert markdown["full_text"] == "\n# Report title\nMore text"
+    assert "preview" not in markdown
+    assert "first_nonempty_line" not in markdown
 
     raw = data["cells"][2]
     assert raw["type"] == "raw"
-    assert raw["source_preview"] == "raw payload"
+    assert raw["full_text"] == "raw payload"
+    assert "preview" not in raw
 
 
 def test_summary_falls_back_to_preview_when_python_ast_cannot_parse(tmp_path):
     path = tmp_path / "magic.py"
-    path.write_text("# %%\n%matplotlib inline\nplot(values)\n", encoding="utf-8")
+    source = "%matplotlib inline\nplot(values)\n" + "# padding\n" * 20
+    path.write_text(f"# %%\n{source}", encoding="utf-8")
 
     result = CliRunner().invoke(main, ["--json", "notebook", "summary", str(path)])
 
@@ -111,7 +116,8 @@ def test_summary_falls_back_to_preview_when_python_ast_cannot_parse(tmp_path):
     cell = json.loads(result.output)["cells"][0]
     assert cell["ast_parsed"] is False
     assert cell["imports"] == []
-    assert cell["source_preview"] == "%matplotlib inline"
+    assert cell["preview"] == source[:120]
+    assert cell["preview_truncated"] is True
 
 
 def test_summary_marks_truncated_ast_fields(tmp_path):
@@ -151,7 +157,8 @@ def test_summary_bounds_many_unique_writes_and_calls(tmp_path):
 def test_summary_formats_relative_imports_without_an_extra_dot(tmp_path):
     path = tmp_path / "relative.py"
     path.write_text(
-        "from . import sibling\nfrom .. import parent\nfrom .package import child\n",
+        "from . import sibling\nfrom .. import parent\nfrom .package import child\n"
+        + "# padding\n" * 10,
         encoding="utf-8",
     )
 
@@ -173,12 +180,12 @@ def test_summary_human_includes_notebook_metadata_and_cells(tmp_path):
 
     assert result.exit_code == 0
     assert f"path={path} cells=4 kernel=python3" in result.output
-    assert "0 [code] [10L] [L8-17]" in result.output
+    assert "0 [code] [10 lines] [L8-17]" in result.output
     assert (
-        "1 [markdown] [3L] [L20-22] source='\\n# Report title\\nMore text'"
-        in result.output
+        "1 [markdown] [3 lines] [L20-22] "
+        "full_text='\\n# Report title\\nMore text'" in result.output
     )
-    assert "2 [raw] [1L]" in result.output
+    assert "2 [raw] [1 line]" in result.output
 
 
 def test_summary_human_omits_empty_code_categories(tmp_path):
@@ -206,11 +213,34 @@ def test_summary_shows_full_source_for_short_cell(tmp_path):
     human_result = CliRunner().invoke(main, ["notebook", "summary", str(path)])
 
     assert json_result.exit_code == 0
-    assert json.loads(json_result.output)["cells"][0]["source"] == source
+    cell = json.loads(json_result.output)["cells"][0]
+    assert cell["full_text"] == source
+    assert "preview" not in cell
+    assert "source" not in cell
+    assert "ast_parsed" not in cell
     assert human_result.exit_code == 0
-    assert f"source={source!r}" in human_result.output
+    assert f"full_text={source!r}" in human_result.output
     assert "writes=" not in human_result.output
     assert "calls=" not in human_result.output
+
+
+def test_summary_preserves_empty_trailing_newline_and_long_single_line_text():
+    sources = ["", "first\nsecond\n", "x" * 121]
+    data = build_summary_data(_parsed(*sources))
+    human = format_summary_human(data)
+
+    assert data["cells"][0]["line_count"] == 0
+    assert data["cells"][0]["full_text"] == ""
+    assert data["cells"][1]["line_count"] == 2
+    assert data["cells"][1]["full_text"] == "first\nsecond\n"
+    assert data["cells"][2]["line_count"] == 1
+    assert data["cells"][2]["preview"] == "x" * 120
+    assert data["cells"][2]["preview_truncated"] is True
+    assert "full_text" not in data["cells"][2]
+    assert "0 [code] [0 lines] full_text=''" in human
+    assert "1 [code] [2 lines] full_text='first\\nsecond\\n'" in human
+    assert "2 [code] [1 line]" in human
+    assert "[truncated]" in human
 
 
 def test_show_returns_one_cell_and_full_source_json(tmp_path):
@@ -674,7 +704,7 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
 
     assert data["changes"][2]["old_index"] == 0
     assert data["changes"][2]["current_insertion_index"] == 0
-    assert data["changes"][2]["old_cell"]["writes"] == ["gone"]
+    assert data["changes"][2]["old_cell"]["full_text"] == "gone = 1"
     assert (
         "changes: edited current[0]; inserted current[1]; deleted [old:0 at current:0]"
         in human
@@ -683,7 +713,7 @@ def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
     assert "~ 0 [code]" in human
     assert "+ 1 [code]" in human
     assert "- old:0 at current:0 [code]" in human
-    assert "source='gone = 1'" in human
+    assert "full_text='gone = 1'" in human
 
 
 def test_bounded_summary_keeps_changed_cell_at_end_and_reports_omissions():
