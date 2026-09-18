@@ -20,19 +20,20 @@ The design favors:
 - a small parser and emitter with no runtime dependency on Jupytext or IPython;
 - explicit handling of drift when both sides of a pair have changed.
 
-The format conversion is intentionally lossy outside the source, cell type,
-kernel identity, and output fields described below.
+The pair projection intentionally excludes cell metadata, outputs, execution
+counts, and the explicit local/runtime notebook metadata paths described below.
 
 ## Core Model
 
 Both `.py` and `.ipynb` inputs become a `ParsedFile` containing ordered `Cell`
-objects. A cell carries an index, type, source, and optional source line range.
-A parsed file carries kernel identity, pair information, raw front matter, and
-the `is_py_percent` classification.
+objects and notebook-level metadata. A cell carries an index, type, source, and
+optional source line range. A parsed Python file also retains raw front matter
+and the `is_py_percent` classification.
 
-The common model gives conversion, execution, drift checks, and notebook
-summaries one representation. It does not model arbitrary notebook or cell
-metadata.
+Pair synchronization projects this representation into a `PairState`. The
+shared state contains cell type/source/stable-ID semantics and notebook-level
+metadata after explicit local/runtime exclusions. Cell metadata, outputs, and
+execution counts remain representation-local and are not shared.
 
 ## Format Recognition
 
@@ -47,15 +48,12 @@ executing a py:percent file can create a paired notebook, while executing a
 plain script cannot.
 
 Front matter must start on the first line and have a closing `# ---` delimiter.
-The parser preserves the complete raw block for a py-to-py round trip. It does
-not parse general YAML. It extracts only these kernelspec fields from commented
-lines:
-
-- `name`;
-- `display_name`;
-- `language`.
-
-An unclosed block does not count as front matter.
+The parser uses YAML to read the `jupyter` mapping as notebook metadata and keeps
+the raw block as a formatting template. Fields outside `jupyter` are Python
+header data: synchronization preserves them but does not copy them into notebook
+metadata. When shared metadata changes, the emitter structurally replaces the
+`jupyter` subtree, so stale raw text cannot override the target state. An
+unclosed block does not count as front matter.
 
 ## Cells and Markers
 
@@ -151,14 +149,10 @@ claiming that direct Python execution has notebook semantics.
 
 ### Notebook to Python
 
-`ipynb-to-py` reads cell type, source, stable cell ID, and the notebook
-kernelspec. The emitter writes py:percent text, omits execution outputs, and
-synthesizes a minimal commented kernelspec block when the notebook declares a
-kernel name.
-Raw front matter preservation applies to py:percent parse-and-emit paths, not
-to notebook input.
-
-Notebook metadata outside kernelspec and all cell metadata are omitted.
+`ipynb-to-py` reads cell type, source, stable cell ID, and shared notebook
+metadata. The emitter writes the metadata under the commented `jupyter` mapping
+and omits execution outputs and cell metadata. Raw front matter preservation
+applies to py:percent parse-and-emit paths, not to notebook input.
 
 ### Python to Notebook
 
@@ -169,17 +163,17 @@ The command leaves a file unchanged when every cell already has an ID and
 rejects plain Python without py:percent markers or front matter.
 
 When the target notebook does not exist, `py-to-ipynb` creates one from the
-parsed cells. It writes kernelspec metadata when a kernel name is available;
-missing display name and language values default to the kernel name and
-`python`.
+parsed cells and shared metadata. A kernelspec with a name but no display name
+uses the name as the minimal nbformat-compatible display fallback. j-cli does
+not infer a language or consult locally installed kernels.
 
 `py-to-ipynb` accepts files where all cells have persistent IDs or where no
 cells have persistent IDs.
 
-When the target exists, j-cli replaces its cell list from the parsed cells.
-Notebook-level metadata remains in place. Aligned cells reuse old notebook cell
-objects, preserving their IDs, metadata, outputs, and execution counts according
-to the output policy.
+When the target exists, j-cli applies the same target `PairState` to both
+representations. Shared notebook metadata is replaced, including deletions.
+Aligned cells reuse old notebook cell objects, preserving their IDs, cell
+metadata, outputs, and execution counts according to the output policy.
 
 Canonical pair conversions refresh the pair baseline. Conversions to an
 explicit noncanonical output path act as exports and do not refresh it.
@@ -209,18 +203,34 @@ New cells without a matching ID or content anchor do not inherit old metadata.
 
 ## Canonical Text and Drift
 
-Drift comparison first converts both sides to canonical py:percent text. The
-canonicalizer parses and re-emits cells, normalizes markers and spacing,
-removes trailing cell blank lines, preserves empty cells, writes one blank line
-between cells and one final newline, and synthesizes front matter from the
-kernel name only. It removes raw front matter, display name, and language from
-comparison so equivalent kernel identities do not create metadata-only drift.
-Plain scripts pass through unchanged.
+Drift comparison projects both sides to `PairState`. Its deterministic baseline
+encoding sorts metadata keys, so YAML key order and header layout do not create
+drift. Shared metadata value changes do create drift, including changes to
+`kernelspec.display_name`, `kernelspec.language`, custom fields, explicit nulls,
+and deletions. Cell canonicalization still normalizes markers and spacing,
+removes trailing blank lines, and preserves empty cells. Plain scripts pass
+through the standalone canonicalizer unchanged.
+
+The shared metadata projection excludes exactly these local/runtime paths:
+
+- `metadata.language_info.version`;
+- `metadata.widgets`;
+- `metadata.jupytext`;
+- `metadata.vscode`;
+- `metadata.colab`.
+
+Each representation retains its own excluded values. When the kernelspec name
+changes, j-cli drops the old `language_info.version` and notebook widget state
+instead of attaching stale runtime data to the new kernel. Other metadata is
+shared by default. The complete `kernelspec` plus shared `language_info` form one
+atomic kernel configuration during merge; this prevents a name from one branch
+being combined with a language description from another branch.
 
 Canonicalization preserves the presence or absence of IDs in legacy text. When
-an ID-enabled tracked file contains new cells without IDs, drift synchronization
-assigns IDs once and requests Python writeback. For a legacy Python file, drift
-comparison suppresses notebook IDs and keeps the previous content-based form.
+an ID-enabled tracked file contains new cells without IDs, synchronization
+reuses aligned notebook IDs where possible, assigns remaining IDs once, and
+writes them to both sides. For a legacy Python file, drift comparison suppresses
+notebook IDs and keeps the previous content-based form.
 
 For a canonical pair in a Git worktree, j-cli obtains the Python baseline from
 the newer of:
@@ -228,10 +238,12 @@ the newer of:
 - the Python file in `HEAD`;
 - a sticky baseline under `refs/jcli/pair-sync/` written by a successful sync.
 
-j-cli then performs a diff3 text merge with canonical baseline text, current
-Python text, and current notebook text emitted as py:percent. Text merging
-preserves insertions and deletions better than position-only cell merging. A
-successful result is parsed back into cells before either side is updated.
+j-cli performs the established diff3 text merge only on kernel-free canonical
+cell text. Shared metadata uses a recursive mapping three-way merge; missing and
+explicit null are distinct, while lists and scalar values merge as whole values.
+Metadata conflicts report their path and base/Python/notebook values. The atomic
+kernel configuration reports a dedicated `metadata.kernel` conflict. A
+conflict-free result is one complete target `PairState`.
 Reading a baseline does not modify Git refs. An existing sticky baseline wins
 when its timestamp equals the Python file's latest commit in `HEAD`. A strictly
 newer commit makes the sticky baseline eligible for explicit garbage collection;
@@ -239,13 +251,17 @@ reading alone leaves the ref in place. Switching to an older `HEAD` can therefor
 select that retained sticky baseline again. The pre-edit hook bootstraps a missing
 baseline from the canonical in-sync result without rereading either source.
 
-Without a baseline, equal canonical text is in sync. Different text reports
-drift and does not choose a winning side. A conflicting three-way merge returns
-diff3 conflict text and the cell indices that contain conflict markers.
+Without a baseline, equal shared state is in sync. Different state reports
+drift and does not choose a winning side. Conflicts distinguish cell indices
+from structured metadata paths.
 
-The merge operates on canonical text, not independently on cell objects. Git
-refs support synchronization state, but they do not add files to the user's
-normal branch history.
+Conversion, pre/post edit hooks, and pre-commit use one synchronization flow:
+select a target state, apply it with the requested output policy, re-read both
+projections, require convergence, and only then store the deterministic shared
+state baseline. Reports reflect actual byte changes. A second synchronization
+is therefore idempotent. Canonical exports to non-pair paths do not advance the
+managed pair baseline. Git refs support synchronization state but do not add
+files to normal branch history.
 
 ## Execution and Writeback
 
