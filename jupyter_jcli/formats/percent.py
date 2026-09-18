@@ -247,6 +247,57 @@ def dump(parsed: ParsedFile, path: str | Path) -> None:
     Path(path).write_text(dumps(parsed), encoding="utf-8")
 
 
+def update_front_matter_kernel(
+    front_matter: str | None,
+    *,
+    name: str | None,
+    display_name: str | None = None,
+    language: str | None = None,
+) -> str | None:
+    """Update only managed kernelspec fields in an existing raw header."""
+    if front_matter is None:
+        return None
+
+    lines = front_matter.splitlines(keepends=True)
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.rstrip() == "#   kernelspec:"
+        ),
+        None,
+    )
+    if start is None:
+        if name is None:
+            return front_matter
+        insertion = ["#   kernelspec:\n"]
+        values = (
+            ("display_name", display_name),
+            ("language", language),
+            ("name", name),
+        )
+        insertion.extend(f"#     {key}: {value}\n" for key, value in values if value)
+        end = max(0, len(lines) - 1)
+        lines[end:end] = insertion
+        return "".join(lines)
+
+    end = start + 1
+    while end < len(lines) and (
+        lines[end].startswith("#     ") or not lines[end].strip("# \t\r\n")
+    ):
+        end += 1
+    managed = {"display_name", "language", "name"}
+    retained = []
+    for line in lines[start + 1 : end]:
+        match = re.match(r"^#     ([A-Za-z_][\w-]*):", line)
+        if match is None or match.group(1) not in managed:
+            retained.append(line)
+    values = (("display_name", display_name), ("language", language), ("name", name))
+    retained.extend(f"#     {key}: {value}\n" for key, value in values if value)
+    lines[start + 1 : end] = retained
+    return "".join(lines)
+
+
 def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:
     """Normalize py:percent text through a parser and emitter round trip."""
     parsed = loads(text)

@@ -34,7 +34,6 @@ def to_node(parsed: ParsedFile) -> nbformat.NotebookNode:
     if parsed.kernel_name:
         kernelspec = notebook.metadata.setdefault("kernelspec", {})
         kernelspec.setdefault("display_name", parsed.kernel_name)
-        kernelspec.setdefault("language", "python")
     return notebook
 
 
