@@ -9,7 +9,7 @@ from typing import ClassVar, TypeAlias
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus, MergeMode
 from jupyter_jcli.formats import ipynb, percent
-from jupyter_jcli.formats.model import Cell
+from jupyter_jcli.pair_state import KernelConflict, PairState, merge_kernel
 
 from .merge import merge_three_way
 from .render import locate_conflict_cells, render_no_baseline_diff
@@ -69,9 +69,9 @@ class InSync(_DriftResult):
 
 @dataclass(frozen=True)
 class Merged(_DriftResult):
-    """The two sources were reconciled by a conflict-free three-way merge."""
+    """The two sources were reconciled to one complete shared state."""
 
-    merged_cells: list[Cell]
+    target_state: PairState
     py_needs_update: bool
     ipynb_needs_update: bool
     merge_mode: MergeMode = MergeMode.THREE_WAY
@@ -81,13 +81,19 @@ class Merged(_DriftResult):
     def __post_init__(self) -> None:
         object.__setattr__(self, "merge_mode", MergeMode(self.merge_mode))
 
+    @property
+    def merged_cells(self):
+        """Temporary bridge for callers migrated in the synchronization commit."""
+        return self.target_state.cells
+
 
 @dataclass(frozen=True)
 class Conflict(_DriftResult):
-    """A three-way merge found cell-level conflicts."""
+    """A three-way merge found cell and/or kernel conflicts."""
 
     conflict_indices: list[int]
     diff_text: str
+    kernel_conflict: KernelConflict | None = None
 
     _status: ClassVar[DriftStatus] = DriftStatus.CONFLICT
 
@@ -130,8 +136,8 @@ def check_drift(
     Raises any exception encountered; callers decide how to report it.
     """
     ours_raw = py_path.read_text(encoding="utf-8")
-    ours_parsed = percent.loads(ours_raw)
-    include_cell_ids = bool(ours_parsed.stable_cell_ids)
+    ours_source = percent.loads(ours_raw)
+    include_cell_ids = bool(ours_source.stable_cell_ids)
     ours_preserved = percent.canonicalize(
         ours_raw,
         include_cell_ids=None if include_cell_ids else False,
@@ -141,10 +147,19 @@ def check_drift(
         include_cell_ids=include_cell_ids,
     )
     py_ids_need_writeback = ours_text != ours_preserved
+    notebook_source = ipynb.load(ipynb_path)
     theirs_text = percent.canonicalize(
-        percent.dumps(ipynb.load(ipynb_path), include_cell_ids=include_cell_ids),
+        percent.dumps(notebook_source, include_cell_ids=include_cell_ids),
         include_cell_ids=None if include_cell_ids else False,
     )
+    ours = PairState.from_parsed(
+        percent.loads(ours_text), include_cell_ids=include_cell_ids
+    )
+    ours.kernel_info = PairState.from_parsed(ours_source).kernel_info
+    theirs = PairState.from_parsed(
+        percent.loads(theirs_text), include_cell_ids=include_cell_ids
+    )
+    theirs.kernel_info = PairState.from_parsed(notebook_source).kernel_info
 
     base_raw = (
         _get_git_base_text_strict(py_path)
@@ -153,31 +168,61 @@ def check_drift(
     )
 
     if base_raw is None:
-        if ours_text == theirs_text:
-            return InSync(baseline=BaselineMissing(seed_text=ours_text))
-        return DriftOnly(diff_text=render_no_baseline_diff(ours_text, theirs_text))
+        if ours == theirs:
+            return InSync(baseline=BaselineMissing(seed_text=ours.canonical_text()))
+        return DriftOnly(
+            diff_text=render_no_baseline_diff(
+                ours.canonical_text(), theirs.canonical_text()
+            )
+        )
 
     base_text = percent.canonicalize(
         base_raw,
         include_cell_ids=None if include_cell_ids else False,
     )
-    merge = merge_three_way(base_text, ours_text, theirs_text)
+    base = PairState.from_parsed(
+        percent.loads(base_text), include_cell_ids=include_cell_ids
+    )
+    cell_merge = merge_three_way(base.cell_text(), ours.cell_text(), theirs.cell_text())
+    kernel_merge = merge_kernel(base, ours, theirs)
 
-    py_needs = merge.text != ours_text or py_ids_need_writeback
-    ipynb_needs = merge.text != theirs_text
-
-    if not merge.has_conflict:
-        if not py_needs and not ipynb_needs:
-            return InSync(baseline=BaselineAvailable())
-        merged_cells = percent.loads(merge.text).cells
-        return Merged(
-            merge_mode=MergeMode.THREE_WAY,
-            merged_cells=merged_cells,
-            py_needs_update=py_needs,
-            ipynb_needs_update=ipynb_needs,
+    if cell_merge.has_conflict or isinstance(kernel_merge, KernelConflict):
+        diff_parts = []
+        if isinstance(kernel_merge, KernelConflict):
+            diff_parts.append(
+                "Kernel conflict:\n"
+                f"  base: {kernel_merge.base!r}\n"
+                f"  py: {kernel_merge.py!r}\n"
+                f"  notebook: {kernel_merge.notebook!r}\n"
+            )
+        if cell_merge.has_conflict:
+            diff_parts.append(cell_merge.text)
+        return Conflict(
+            diff_text="\n".join(diff_parts),
+            conflict_indices=(
+                locate_conflict_cells(cell_merge.text)
+                if cell_merge.has_conflict
+                else []
+            ),
+            kernel_conflict=(
+                kernel_merge if isinstance(kernel_merge, KernelConflict) else None
+            ),
         )
 
-    return Conflict(
-        diff_text=merge.text,
-        conflict_indices=locate_conflict_cells(merge.text),
+    kernel_name, kernel_info = kernel_merge
+    merged = PairState(
+        cells=percent.loads(cell_merge.text).cells,
+        kernel_name=kernel_name,
+        kernel_info=kernel_info,
+        include_cell_ids=include_cell_ids,
+    )
+    py_needs = merged != ours or py_ids_need_writeback
+    ipynb_needs = merged != theirs
+    if not py_needs and not ipynb_needs:
+        return InSync(baseline=BaselineAvailable())
+    return Merged(
+        merge_mode=MergeMode.THREE_WAY,
+        target_state=merged,
+        py_needs_update=py_needs,
+        ipynb_needs_update=ipynb_needs,
     )
