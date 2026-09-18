@@ -23,6 +23,7 @@ from jupyter_jcli.diff import (
     InSync,
     Merged,
 )
+from jupyter_jcli.pair_state import PairState
 
 # ---------------------------------------------------------------------------
 # DriftStatus
@@ -50,7 +51,7 @@ class TestDriftStatus:
     def test_concrete_results_expose_fixed_read_only_status(self):
         results = [
             (InSync(BaselineAvailable()), DriftStatus.IN_SYNC),
-            (Merged([], False, False), DriftStatus.MERGED),
+            (Merged(PairState([], {}), False, False), DriftStatus.MERGED),
             (Conflict([], ""), DriftStatus.CONFLICT),
             (DriftOnly(""), DriftStatus.DRIFT_ONLY),
         ]
@@ -66,7 +67,7 @@ class TestDriftStatus:
         ]
         assert [field.name for field in dataclasses.fields(InSync)] == ["baseline"]
         assert [field.name for field in dataclasses.fields(Merged)] == [
-            "merged_cells",
+            "target_state",
             "py_needs_update",
             "ipynb_needs_update",
             "merge_mode",
@@ -74,6 +75,7 @@ class TestDriftStatus:
         assert [field.name for field in dataclasses.fields(Conflict)] == [
             "conflict_indices",
             "diff_text",
+            "metadata_conflicts",
         ]
         assert [field.name for field in dataclasses.fields(DriftOnly)] == ["diff_text"]
 
@@ -113,16 +115,16 @@ class TestMergeMode:
         assert MergeMode("three_way") is MergeMode.THREE_WAY
 
     def test_merged_defaults_to_three_way(self):
-        r = Merged([], False, False)
+        r = Merged(PairState([], {}), False, False)
         assert r.merge_mode is MergeMode.THREE_WAY
 
     def test_merged_coerces_merge_mode(self):
-        r = Merged([], False, False, merge_mode="three_way")
+        r = Merged(PairState([], {}), False, False, merge_mode="three_way")
         assert r.merge_mode is MergeMode.THREE_WAY
 
     def test_merged_rejects_invalid_merge_mode(self):
         with pytest.raises(ValueError):
-            Merged([], False, False, merge_mode="bogus")
+            Merged(PairState([], {}), False, False, merge_mode="bogus")
 
 
 # ---------------------------------------------------------------------------

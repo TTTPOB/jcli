@@ -4,12 +4,11 @@ from pathlib import Path
 
 import click
 
-from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import OutputPolicy
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
-from jupyter_jcli.pairing import update_ipynb_sources
+from jupyter_jcli.pairing import synchronize_pair
 from jupyter_jcli.parser import find_paired_ipynb, ipynb_path_for_py
 
 
@@ -23,15 +22,6 @@ def _is_canonical_pair(py_path: Path, ipynb_path: Path) -> bool:
     return ipynb_path_for_py(py_path).resolve(strict=False) == ipynb_path.resolve(
         strict=False
     )
-
-
-def _refresh_pair_baseline(py_path: Path) -> None:
-    """Best-effort baseline refresh after a successful canonical pair sync."""
-    try:
-        canonical_text = percent.canonicalize(py_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError):
-        return
-    pair_baseline.write_baseline(py_path, canonical_text)
 
 
 def _reject_mixed_cell_ids(parsed: ParsedFile) -> None:
@@ -56,13 +46,14 @@ def _reject_mixed_cell_ids(parsed: ParsedFile) -> None:
 @click.argument("out_py", metavar="<out.py>", type=click.Path(dir_okay=False))
 def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     """Convert a .ipynb file to py:percent format."""
-    parsed = ipynb.load(in_ipynb)
-    text = percent.dumps(parsed)
     in_ipynb_path = Path(in_ipynb)
     out_py_path = Path(out_py)
-    out_py_path.write_text(text, encoding="utf-8")
-    if _is_canonical_pair(out_py_path, in_ipynb_path):
-        _refresh_pair_baseline(out_py_path)
+    synchronize_pair(
+        out_py_path,
+        in_ipynb_path,
+        authoritative="ipynb",
+        persist_baseline=_is_canonical_pair(out_py_path, in_ipynb_path),
+    )
     click.echo(f"Wrote {out_py}")
 
 
@@ -165,17 +156,12 @@ def py_to_ipynb(
 
     out_path = Path(out_ipynb)
 
-    if out_path.exists():
-        # Update existing notebook sources only
-        update_ipynb_sources(
-            out_path, parsed.cells, output_policy=OutputPolicy(output_policy)
-        )
-        if _is_canonical_pair(in_py_path, out_path):
-            _refresh_pair_baseline(in_py_path)
-        click.echo(f"Updated {out_ipynb}")
-    else:
-        # Create a new notebook
-        ipynb.dump(parsed, out_path)
-        if _is_canonical_pair(in_py_path, out_path):
-            _refresh_pair_baseline(in_py_path)
-        click.echo(f"Wrote {out_ipynb}")
+    existed = out_path.exists()
+    synchronize_pair(
+        in_py_path,
+        out_path,
+        authoritative="py",
+        output_policy=OutputPolicy(output_policy),
+        persist_baseline=_is_canonical_pair(in_py_path, out_path),
+    )
+    click.echo(f"{'Updated' if existed else 'Wrote'} {out_ipynb}")

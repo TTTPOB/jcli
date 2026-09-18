@@ -1,7 +1,9 @@
 """Synchronization operations for py:percent and notebook pairs."""
 
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import nbformat
 
@@ -10,6 +12,165 @@ from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.pair_state import PairState, metadata_with_local_fields
+
+
+@dataclass(frozen=True)
+class PairSyncResult:
+    """Outcome of one shared synchronization execution."""
+
+    state: PairState | None
+    drift: object | None
+    py_changed: bool = False
+    ipynb_changed: bool = False
+    baseline_written: bool = False
+
+
+def synchronize_pair(
+    py_path: Path,
+    ipynb_path: Path,
+    *,
+    authoritative: Literal["py", "ipynb"] | None = None,
+    output_policy: OutputPolicy = OutputPolicy.PRESERVE,
+    strict_baseline: bool = False,
+    persist_baseline: bool = True,
+    protected_path: Path | None = None,
+) -> PairSyncResult:
+    """Select, apply, verify, and baseline one target pair state."""
+    from jupyter_jcli.diff import (
+        BaselineMissing,
+        Conflict,
+        DriftOnly,
+        InSync,
+        Merged,
+        check_drift,
+    )
+
+    if authoritative == "py":
+        parsed = percent.load(py_path)
+        include_ids = bool(parsed.stable_cell_ids)
+        missing_ids = include_ids and any(cell.cell_id is None for cell in parsed.cells)
+        if missing_ids and ipynb_path.exists():
+            paired = ipynb.load(ipynb_path)
+            used_ids = set(parsed.stable_cell_ids)
+            for alignment in align_cells(paired, parsed):
+                old_cell = alignment.old_cell
+                new_cell = alignment.new_cell
+                if (
+                    old_cell is None
+                    or new_cell is None
+                    or new_cell.cell_id is not None
+                    or old_cell.cell_id is None
+                    or old_cell.cell_id in used_ids
+                ):
+                    continue
+                new_cell.node.id = old_cell.cell_id
+                parsed.stable_cell_ids.add(old_cell.cell_id)
+                used_ids.add(old_cell.cell_id)
+        if missing_ids:
+            percent.dumps(parsed, include_cell_ids=True, assign_missing_ids=True)
+        metadata_changed = _ensure_valid_kernelspec(parsed)
+        state = PairState.from_parsed(parsed, include_cell_ids=include_ids)
+        py_needs = missing_ids or metadata_changed
+        ipynb_needs = True
+        drift = None
+        should_persist = True
+    elif authoritative == "ipynb":
+        parsed = ipynb.load(ipynb_path)
+        include_ids = bool(parsed.cells) and all(
+            cell.cell_id is not None for cell in parsed.cells
+        )
+        state = PairState.from_parsed(parsed, include_cell_ids=include_ids)
+        py_needs = True
+        ipynb_needs = False
+        drift = None
+        should_persist = True
+    else:
+        drift = check_drift(py_path, ipynb_path, strict_baseline=strict_baseline)
+        if isinstance(drift, (Conflict, DriftOnly)):
+            return PairSyncResult(state=None, drift=drift)
+        if isinstance(drift, InSync):
+            parsed = percent.load(py_path)
+            state = PairState.from_parsed(
+                parsed, include_cell_ids=bool(parsed.stable_cell_ids)
+            )
+            py_needs = ipynb_needs = False
+            should_persist = isinstance(drift.baseline, BaselineMissing)
+        elif isinstance(drift, Merged):
+            state = drift.target_state
+            py_needs = drift.py_needs_update
+            ipynb_needs = drift.ipynb_needs_update
+            should_persist = True
+        else:  # pragma: no cover - closed result union
+            raise TypeError(f"Unsupported drift result: {type(drift).__name__}")
+
+    both_need_update = py_needs and ipynb_needs
+    if protected_path == py_path and py_needs and not both_need_update:
+        raise RuntimeError("edited Python source requires a canonical update")
+    if protected_path == ipynb_path and ipynb_needs and not both_need_update:
+        raise RuntimeError("edited notebook source requires a canonical update")
+
+    py_changed = apply_pair_state_to_python(py_path, state) if py_needs else False
+    ipynb_changed = (
+        apply_pair_state_to_ipynb(ipynb_path, state, output_policy=output_policy)
+        if ipynb_needs
+        else False
+    )
+
+    py_state = PairState.from_parsed(
+        percent.load(py_path), include_cell_ids=state.include_cell_ids
+    )
+    nb_state = PairState.from_parsed(
+        ipynb.load(ipynb_path), include_cell_ids=state.include_cell_ids
+    )
+    if py_state != state or nb_state != state:
+        raise RuntimeError("pair writeback did not converge to the target state")
+
+    baseline_written = False
+    if persist_baseline and should_persist:
+        baseline_written = _persist_pair_baseline(
+            py_path, state.canonical_text(), strict=strict_baseline
+        )
+    return PairSyncResult(
+        state=state,
+        drift=drift,
+        py_changed=py_changed,
+        ipynb_changed=ipynb_changed,
+        baseline_written=baseline_written,
+    )
+
+
+def _ensure_valid_kernelspec(parsed: ParsedFile) -> bool:
+    kernelspec = parsed.notebook.metadata.get("kernelspec")
+    if kernelspec is None:
+        return False
+    if not isinstance(kernelspec, dict):
+        raise TypeError("metadata.kernelspec must be a mapping")
+    name = kernelspec.get("name")
+    if name is None:
+        raise ValueError("metadata.kernelspec.name is required")
+    if "display_name" in kernelspec:
+        return False
+    kernelspec["display_name"] = str(name)
+    return True
+
+
+def _persist_pair_baseline(py_path: Path, text: str, *, strict: bool) -> bool:
+    from jupyter_jcli import pair_baseline
+    from jupyter_jcli.gitutil import resolve_git_root
+
+    root_result = resolve_git_root(py_path.parent)
+    if root_result.error is not None:
+        if strict:
+            raise RuntimeError(f"baseline Git lookup failed: {root_result.error}")
+        return False
+    if root_result.root is None:
+        return False
+    written = pair_baseline.write_baseline(py_path, text)
+    if strict and not written:
+        raise RuntimeError(
+            "pair synchronized but baseline persistence failed; baseline was not advanced"
+        )
+    return written
 
 
 def python_text_for_state(template: ParsedFile, state: PairState) -> str:

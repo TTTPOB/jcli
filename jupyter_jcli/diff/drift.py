@@ -81,11 +81,6 @@ class Merged(_DriftResult):
     def __post_init__(self) -> None:
         object.__setattr__(self, "merge_mode", MergeMode(self.merge_mode))
 
-    @property
-    def merged_cells(self):
-        """Temporary bridge for callers migrated in the synchronization commit."""
-        return self.target_state.cells
-
 
 @dataclass(frozen=True)
 class Conflict(_DriftResult):

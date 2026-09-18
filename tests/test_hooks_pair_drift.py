@@ -93,6 +93,8 @@ def _make_pair(
         "# ---\n",
         "# jupyter:\n",
         "#   kernelspec:\n",
+        "#     display_name: Python 3\n",
+        "#     language: python\n",
         "#     name: python3\n",
         "# ---\n\n",
     ]
@@ -274,12 +276,15 @@ class TestNoDrift:
                 return_value=InSync(BaselineMissing(seed_text="")),
             ),
             patch(
-                "jupyter_jcli.commands.hooks.pair_drift._persist_baseline_for_hook"
+                "jupyter_jcli.pairing._persist_pair_baseline", return_value=True
             ) as persist,
         ):
             assert _run_pre_drift_check(py) is None
 
-        persist.assert_called_once_with(py, "")
+        persist.assert_called_once()
+        assert persist.call_args.args[0] == py
+        assert "name: python3" in persist.call_args.args[1]
+        assert persist.call_args.kwargs == {"strict": True}
 
 
 # ---------------------------------------------------------------------------
@@ -693,7 +698,7 @@ class TestPostSyncFailures:
                 side_effect=lambda p: base_py if p.suffix == ".py" else None,
             ),
             patch(
-                "jupyter_jcli.pairing.update_ipynb_sources",
+                "jupyter_jcli.pairing.apply_pair_state_to_ipynb",
                 side_effect=OSError("EROFS"),
             ),
         ):
@@ -709,7 +714,7 @@ class TestPostSyncFailures:
 
         assert result.exit_code == 1
         assert result.stdout == ""
-        assert "source file was modified" in (result.stderr or result.output)
+        assert "pair drift check failed" in (result.stderr or result.output)
         assert "EROFS" in (result.stderr or result.output)
 
     def test_partial_write_does_not_advance_baseline(self, git_repo: Path):
@@ -732,7 +737,7 @@ class TestPostSyncFailures:
                 side_effect=lambda p: base_py if p.suffix == ".py" else None,
             ),
             patch(
-                "jupyter_jcli.pairing.update_ipynb_sources",
+                "jupyter_jcli.pairing.apply_pair_state_to_ipynb",
                 side_effect=OSError("readonly notebook"),
             ),
         ):

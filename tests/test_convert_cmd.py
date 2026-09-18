@@ -357,7 +357,11 @@ class TestPyToIpynbCreate:
         assert notebook.cells[0].id == "existing"
         assert notebook.cells[1].id
         assert notebook.cells[1].id != "existing"
-        assert py.read_text(encoding="utf-8") == source_text
+        parsed = parse_py_percent(str(py))
+        assert [cell.cell_id for cell in parsed.cells] == [
+            notebook.cells[0].id,
+            notebook.cells[1].id,
+        ]
 
     def test_creates_new_ipynb(self, tmp_path):
         py = tmp_path / "script.py"

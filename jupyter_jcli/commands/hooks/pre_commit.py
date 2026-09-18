@@ -8,10 +8,7 @@ from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 from jupyter_jcli.gitutil import resolve_git_root
 
 from .decision import HookOutcome
-from .pair_drift import (
-    _diff_section,
-    _prepare_merged_py,
-)
+from .pair_drift import _diff_section, _format_conflicts
 
 
 def _run_git_add(repo_root, path) -> None:
@@ -95,7 +92,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
 
     updated_py: list[str] = []
     updated_ipynb: list[str] = []
-    conflicts: list[tuple[str, str, list[int], str]] = []
+    conflicts: list[tuple[str, str, str, str]] = []
     drifts: list[tuple[str, str, str]] = []
 
     for rel_path in staged_py_rel:
@@ -109,12 +106,15 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
         # Initial sync: .py missing on disk but .ipynb exists
         if not py_path.exists() and ipynb_path.exists():
             try:
-                from jupyter_jcli.formats import ipynb, percent
+                from jupyter_jcli.pairing import synchronize_pair
 
-                parsed_nb = ipynb.load(ipynb_path)
-                py_text = percent.dumps(parsed_nb)
                 py_path.parent.mkdir(parents=True, exist_ok=True)
-                py_path.write_text(py_text, encoding="utf-8")
+                synchronize_pair(
+                    py_path,
+                    ipynb_path,
+                    authoritative="ipynb",
+                    strict_baseline=True,
+                )
                 _run_git_add(repo_root, py_path)
             except Exception as exc:  # noqa: BLE001
                 return HookOutcome.failure(
@@ -133,9 +133,10 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
 
         # Drift check (fail-closed for decode/format errors)
         try:
-            from jupyter_jcli.diff import check_drift
+            from jupyter_jcli.pairing import synchronize_pair
 
-            result = check_drift(py_path, ipynb_path, strict_baseline=True)
+            sync = synchronize_pair(py_path, ipynb_path, strict_baseline=True)
+            result = sync.drift
         except Exception as exc:  # noqa: BLE001
             return HookOutcome.failure(
                 f"error checking {py_path.name}/{ipynb_path.name}: {exc}"
@@ -145,30 +146,20 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
             continue
 
         if isinstance(result, Merged):
-            if result.py_needs_update:
+            if sync.py_changed:
                 try:
-                    merged_text, _ = _prepare_merged_py(py_path, result.merged_cells)
-                    py_path.write_text(merged_text, encoding="utf-8")
                     _run_git_add(repo_root, py_path)
                 except Exception as exc:  # noqa: BLE001
                     return HookOutcome.failure(
-                        f"could not synchronize {py_path.name}: {exc}"
+                        f"could not stage synchronized {py_path.name}: {exc}"
                     )
                 updated_py.append(rel_path)
-            if result.ipynb_needs_update:
+            if sync.ipynb_changed:
                 try:
-                    from jupyter_jcli.pairing import update_ipynb_sources
-
-                    update_ipynb_sources(ipynb_path, result.merged_cells)
-                    try:
-                        ipynb_rel = str(ipynb_path.relative_to(repo_root))
-                    except ValueError:
-                        ipynb_rel = str(ipynb_path)
-                    updated_ipynb.append(ipynb_rel)
-                except Exception as exc:  # noqa: BLE001
-                    return HookOutcome.failure(
-                        f"could not synchronize {ipynb_path.name}: {exc}"
-                    )
+                    ipynb_rel = str(ipynb_path.relative_to(repo_root))
+                except ValueError:
+                    ipynb_rel = str(ipynb_path)
+                updated_ipynb.append(ipynb_rel)
             continue
 
         if isinstance(result, Conflict):
@@ -177,7 +168,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
             except ValueError:
                 ipynb_rel = str(ipynb_path)
             conflicts.append(
-                (rel_path, ipynb_rel, result.conflict_indices, result.diff_text)
+                (rel_path, ipynb_rel, _format_conflicts(result), result.diff_text)
             )
             continue
 
@@ -197,10 +188,9 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
             "resolve manually or pick a side via j-cli convert:",
             file=sys.stderr,
         )
-        for py_rel, ipynb_rel, indices, diff_text in conflicts:
-            idx_str = ", ".join(str(i) for i in indices)
+        for py_rel, ipynb_rel, scope, diff_text in conflicts:
             print(
-                f"  {py_rel} ↔ {ipynb_rel}  [conflict cells: {idx_str}]",
+                f"  {py_rel} ↔ {ipynb_rel}  [conflict: {scope}]",
                 file=sys.stderr,
             )
             if diff_text:

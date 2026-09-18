@@ -103,8 +103,8 @@ class TestCheckDrift:
         assert isinstance(result, Merged)
         assert result.py_needs_update is True
         assert result.ipynb_needs_update is True
-        assert result.merged_cells[0].cell_id == existing_id
-        assert result.merged_cells[1].cell_id is not None
+        assert result.target_state.cells[0].cell_id == existing_id
+        assert result.target_state.cells[1].cell_id is not None
 
     def test_commented_magic_is_in_sync_with_notebook_magic(self, tmp_path):
         py, ipynb = _write_pair(
@@ -127,7 +127,7 @@ class TestCheckDrift:
         assert isinstance(result, Merged)
         assert result.ipynb_needs_update is True
         assert result.py_needs_update is False
-        assert result.merged_cells[0].source == "x = 10"
+        assert result.target_state.cells[0].source == "x = 10"
 
     def test_ipynb_only_changed(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 1", "y = 2"], ["x = 1", "y = 99"])
@@ -137,7 +137,7 @@ class TestCheckDrift:
         assert isinstance(result, Merged)
         assert result.py_needs_update is True
         assert result.ipynb_needs_update is False
-        assert result.merged_cells[1].source == "y = 99"
+        assert result.target_state.cells[1].source == "y = 99"
 
     def test_both_changed_same_cell_conflict(self, tmp_path):
         py, ipynb = _write_pair(tmp_path, ["x = 10"], ["x = 99"])
@@ -156,7 +156,7 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert isinstance(result, Merged)
         assert result.ipynb_needs_update is True
-        assert any(c.source == "y = 2" for c in result.merged_cells)
+        assert any(c.source == "y = 2" for c in result.target_state.cells)
 
     def test_theirs_insert_cell_auto_merges(self, tmp_path):
         """theirs (ipynb) adds a cell; ours (py) unchanged from base -> MERGED."""
@@ -166,7 +166,7 @@ class TestCheckDrift:
             result = check_drift(py, ipynb)
         assert isinstance(result, Merged)
         assert result.py_needs_update is True
-        assert any(c.source == "z = 3" for c in result.merged_cells)
+        assert any(c.source == "z = 3" for c in result.target_state.cells)
 
     def test_no_git_base_sources_equal_is_in_sync(self, tmp_path):
         """No git base + equal content -> in_sync with a canonical seed."""
@@ -203,8 +203,8 @@ class TestCheckDrift:
         with self._patch_git(base_py):
             result = check_drift(py, ipynb)
         assert isinstance(result, Merged)
-        assert result.merged_cells[0].source == "x = 10"
-        assert result.merged_cells[1].source == "y = 20"
+        assert result.target_state.cells[0].source == "x = 10"
+        assert result.target_state.cells[1].source == "y = 20"
 
     def test_ipynb_head_never_consulted(self, tmp_path):
         """.ipynb is gitignored by design; check_drift must never query its HEAD."""

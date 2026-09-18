@@ -58,6 +58,8 @@ def _make_py(path: Path, *sources: str) -> None:
         "# ---\n",
         "# jupyter:\n",
         "#   kernelspec:\n",
+        "#     display_name: Python 3\n",
+        "#     language: python\n",
         "#     name: python3\n",
         "# ---\n\n",
     ]
