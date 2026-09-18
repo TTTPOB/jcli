@@ -1,5 +1,7 @@
 """Tests for applying shared state to both pair representations."""
 
+from unittest.mock import patch
+
 import nbformat
 import pytest
 
@@ -167,3 +169,18 @@ def test_invalid_notebook_candidate_is_not_written(tmp_path):
         )
 
     assert path.read_bytes() == before
+
+
+def test_notebook_apply_skips_write_when_serialized_bytes_are_unchanged(tmp_path):
+    path = tmp_path / "nb.ipynb"
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell("x = 1")])
+    nb.metadata["custom"] = {"value": True}
+    nbformat.write(nb, str(path))
+    state = _state({"custom": {"value": True}}, source="x = 1")
+    apply_pair_state_to_ipynb(path, state)
+
+    with patch("jupyter_jcli.pairing.Path.write_bytes") as write_bytes:
+        changed = apply_pair_state_to_ipynb(path, state)
+
+    assert changed is False
+    write_bytes.assert_not_called()

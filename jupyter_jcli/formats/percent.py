@@ -1,6 +1,5 @@
 """Parser, emitter, and canonicalizer for the py:percent format."""
 
-import math
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -11,6 +10,7 @@ import yaml
 from jupyter_jcli._enums import CellType
 from jupyter_jcli.formats.ipython_magics import transform_ipython_magics
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.metadata import json_compatible_copy, json_equal
 
 _CELL_MARKER_RE = re.compile(r"^# %%(?:\s|$)")
 _CELL_ID_OPTION_RE = re.compile(r'(?:^|\s)id=(?:"([^"]*)"|(\S+))(?=\s|$)')
@@ -265,7 +265,7 @@ def _front_matter_for_metadata(front_matter: str, metadata: dict) -> str | None:
         current = {}
     if not isinstance(current, dict):
         raise TypeError("front matter jupyter field must be a mapping")
-    if current == metadata:
+    if json_equal(current, metadata):
         return front_matter
     return update_front_matter_metadata(front_matter, metadata)
 
@@ -302,20 +302,7 @@ def _dump_front_matter_document(document: dict) -> str:
 
 
 def _to_plain(value):
-    if isinstance(value, dict):
-        result = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError("metadata mapping keys must be strings")
-            result[key] = _to_plain(item)
-        return result
-    if isinstance(value, list):
-        return [_to_plain(item) for item in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError("metadata numbers must be finite")
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    raise TypeError(f"metadata value is not JSON-compatible: {type(value).__name__}")
+    return json_compatible_copy(value)
 
 
 def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:

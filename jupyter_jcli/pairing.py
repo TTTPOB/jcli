@@ -221,8 +221,11 @@ def apply_pair_state_to_ipynb(
         parsed.notebook.metadata = deepcopy(state.metadata)
         nb = ipynb.to_node(parsed)
     nbformat.validate(nb)
-    ipynb_path.write_text(nbformat.writes(nb), encoding="utf-8")
-    return before != ipynb_path.read_bytes()
+    updated = nbformat.writes(nb).encode("utf-8")
+    if before == updated:
+        return False
+    ipynb_path.write_bytes(updated)
+    return True
 
 
 def update_ipynb_sources(

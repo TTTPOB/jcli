@@ -8,6 +8,7 @@ from typing import Any
 
 from jupyter_jcli.formats import percent
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.metadata import json_compatible_copy, json_equal
 
 # These paths are local/runtime state, not pair-shared notebook configuration.
 _EXCLUDED_TOP_LEVEL = frozenset({"widgets", "jupytext", "vscode", "colab"})
@@ -62,7 +63,9 @@ class PairState:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PairState):
             return NotImplemented
-        return self.metadata == other.metadata and self.cell_text() == other.cell_text()
+        return json_equal(self.metadata, other.metadata) and (
+            self.cell_text() == other.cell_text()
+        )
 
 
 @dataclass(frozen=True)
@@ -82,10 +85,13 @@ class MetadataConflict:
 def project_shared_metadata(metadata: dict) -> dict[str, Any]:
     """Remove the centralized set of local/runtime metadata paths."""
     projected = {
-        str(key): deepcopy(value)
+        key: json_compatible_copy(value)
         for key, value in metadata.items()
-        if key not in _EXCLUDED_TOP_LEVEL
+        if key not in _EXCLUDED_TOP_LEVEL and isinstance(key, str)
     }
+    invalid_keys = [key for key in metadata if not isinstance(key, str)]
+    if invalid_keys:
+        raise TypeError("metadata mapping keys must be strings")
     language_info = projected.get("language_info")
     if isinstance(language_info, dict):
         language_info.pop("version", None)
@@ -101,7 +107,7 @@ def metadata_with_local_fields(current: dict, shared: dict[str, Any]) -> dict[st
     new_kernel = shared.get("kernelspec", {})
     old_name = old_kernel.get("name") if isinstance(old_kernel, dict) else None
     new_name = new_kernel.get("name") if isinstance(new_kernel, dict) else None
-    kernel_changed = old_name != new_name
+    kernel_changed = not json_equal(old_name, new_name)
 
     for key in _EXCLUDED_TOP_LEVEL:
         if key in current and not (kernel_changed and key == "widgets"):
@@ -150,11 +156,11 @@ def _copy_value(value):
 
 
 def _merge_atomic(path, base, py, notebook, conflicts):
-    if py == notebook:
+    if json_equal(py, notebook):
         return _copy_value(py)
-    if py == base:
+    if json_equal(py, base):
         return _copy_value(notebook)
-    if notebook == base:
+    if json_equal(notebook, base):
         return _copy_value(py)
     conflicts.append(
         MetadataConflict(
@@ -168,11 +174,11 @@ def _merge_atomic(path, base, py, notebook, conflicts):
 
 
 def _merge_value(path, base, py, notebook, conflicts):
-    if py == notebook:
+    if json_equal(py, notebook):
         return _copy_value(py)
-    if py == base:
+    if json_equal(py, base):
         return _copy_value(notebook)
-    if notebook == base:
+    if json_equal(notebook, base):
         return _copy_value(py)
     if all(
         value is _MISSING or isinstance(value, dict) for value in (base, py, notebook)

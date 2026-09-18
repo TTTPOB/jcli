@@ -1,5 +1,7 @@
 """Tests for shared py/notebook pair state."""
 
+import pytest
+
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.pair_state import (
     PairState,
@@ -115,3 +117,32 @@ def test_local_metadata_is_retained_but_runtime_state_invalidates_on_kernel_chan
         "language_info": {"name": "julia"},
         "vscode": {"keep": True},
     }
+
+
+def test_pair_state_rejects_non_string_metadata_keys():
+    with pytest.raises(TypeError, match="keys must be strings"):
+        _state({1: "invalid"})
+
+
+def test_pair_state_distinguishes_booleans_from_numbers():
+    assert _state({"custom": True}) != _state({"custom": 1})
+    assert _state({"custom": False}) != _state({"custom": 0})
+
+
+def test_metadata_merge_does_not_treat_boolean_as_unchanged_number():
+    merged, conflicts = merge_metadata(
+        {"custom": {"value": False}},
+        {"custom": {"value": 0}},
+        {"custom": {"value": False}},
+    )
+
+    assert conflicts == []
+    assert merged == {"custom": {"value": 0}}
+
+    merged, conflicts = merge_metadata(
+        {"custom": {"value": None}},
+        {"custom": {"value": True}},
+        {"custom": {"value": 1}},
+    )
+    assert merged is None
+    assert conflicts[0].display_path == "metadata.custom.value"
