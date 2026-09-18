@@ -135,10 +135,9 @@ For an existing notebook or py:percent file, use `summary -> show -> exec`: loca
 relevant cells, read their complete source, then execute only the cells the task
 requires. `summary` and `show` do not execute code or display stored outputs.
 
-Summaries show complete source for short cells. Longer Python cells report
-`imports`, `defines`, `writes`, and qualified `calls` extracted from the AST, plus
-an original source preview. Cells containing IPython syntax still report the
-preview when AST parsing fails.
+Summaries use exactly one source field: `full_text` for cells up to 120
+characters, otherwise a truncated `preview`. Longer Python cells also report
+`imports`, `defines`, `writes`, and qualified `calls` when AST parsing succeeds.
 
 ```bash
 j-cli notebook summary analysis.py
@@ -242,9 +241,9 @@ j-cli -j exec <session_selector> --code "print('hello')"
 
 j-cli -j exec <session_selector> --file notebook.ipynb --cell 0:3
 # JSONL:
-# {"status":"ok","cell":{"cell_index":0,"outputs":[...],"execution_count":1},"notebook_updated":"notebook.ipynb"}
-# {"status":"ok","cell":{"cell_index":1,"outputs":[...],"execution_count":2},"notebook_updated":"notebook.ipynb"}
-# {"status":"ok","summary":{"cells_executed":2,"notebook_updated":"notebook.ipynb"}}
+# {"status":"ok","cell":{"cell_index":0,"outputs":[...],"execution_count":1},"notebook_updated":true}
+# {"status":"ok","cell":{"cell_index":1,"outputs":[...],"execution_count":2},"notebook_updated":true}
+# {"status":"ok","summary":{"cells_executed":2,"notebook_updated":true}}
 ```
 
 A successful file run ends with the summary object. If a cell fails, stdout ends with that cell's `status: "error"` event, j-cli omits the summary, and it writes the structured `EXECUTION_ERROR` object to stderr.

@@ -5,6 +5,7 @@ from pathlib import Path
 import click
 
 from jupyter_jcli._enums import OutputPolicy
+from jupyter_jcli.commands._display import display_path
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
@@ -54,7 +55,7 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
         authoritative="ipynb",
         persist_baseline=_is_canonical_pair(out_py_path, in_ipynb_path),
     )
-    click.echo(f"Wrote {out_py}")
+    click.echo(f"Wrote {display_path(out_py_path)}")
 
 
 @convert.command("assign-ids")
@@ -70,7 +71,9 @@ def assign_ids(py_file: str) -> None:
 
     missing_indices = [cell.index for cell in parsed.cells if cell.cell_id is None]
     if not missing_indices:
-        click.echo(f"All {len(parsed.cells)} cells already have IDs in {py_file}")
+        click.echo(
+            f"All {len(parsed.cells)} cells already have IDs in {display_path(py_path)}"
+        )
         return
 
     from_pair: list[int] = []
@@ -98,7 +101,9 @@ def assign_ids(py_file: str) -> None:
     py_path.write_text(text, encoding="utf-8")
     from_pair_set = set(from_pair)
     generated = [index for index in missing_indices if index not in from_pair_set]
-    click.echo(f"Assigned IDs to {len(missing_indices)} cells in {py_file}")
+    click.echo(
+        f"Assigned IDs to {len(missing_indices)} cells in {display_path(py_path)}"
+    )
     if paired_path is not None:
         click.echo(
             f"From paired notebook ({len(from_pair)}): {_format_indices(from_pair)}"
@@ -164,4 +169,4 @@ def py_to_ipynb(
         output_policy=OutputPolicy(output_policy),
         persist_baseline=_is_canonical_pair(in_py_path, out_path),
     )
-    click.echo(f"{'Updated' if existed else 'Wrote'} {out_ipynb}")
+    click.echo(f"{'Updated' if existed else 'Wrote'} {display_path(out_path)}")

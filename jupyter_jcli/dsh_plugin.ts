@@ -250,12 +250,17 @@ function structuredDeny(stdout: string): string | undefined {
   return reason.length === 0 ? GENERIC_DENY_REASON : reason
 }
 
-function structuredContext(stdout: string, maxChars: number): string | undefined {
+function structuredContextText(stdout: string): string | undefined {
   const parsed = structuredOutput(stdout)
   const output = parsed?.hookSpecificOutput
   if (!isRecord(output) || typeof output.additionalContext !== 'string') return undefined
   const context = output.additionalContext.trim()
-  return context.length === 0 ? undefined : clipped(context, maxChars)
+  return context.length === 0 ? undefined : context
+}
+
+function structuredContext(stdout: string, maxChars: number): string | undefined {
+  const context = structuredContextText(stdout)
+  return context === undefined ? undefined : clipped(context, maxChars)
 }
 
 function resultStatus(result: ShellRunResult): string {
@@ -276,10 +281,23 @@ function failureDiagnostic(
   const stderr = result === undefined ? '' : outputText(result.stderr).trim()
   const stdout = result === undefined ? '' : outputText(result.stdout).trim()
   const detail = thrown === undefined ? '' : errorText(thrown)
+  const context = structuredContextText(stdout)
+  const repeatedDiagnostic = context === undefined ? '' : `${guard}: ${context}`
+  let independentStderr = stderr
+  if (repeatedDiagnostic && stderr === repeatedDiagnostic) {
+    independentStderr = ''
+  } else if (repeatedDiagnostic && stderr.endsWith(`\n${repeatedDiagnostic}`)) {
+    independentStderr = stderr.slice(0, -(repeatedDiagnostic.length + 1)).trimEnd()
+  }
+
   const pieces = [`jcli-dsh: ${guard} failed (${status})`]
-  if (stderr) pieces.push(`stderr: ${stderr}`)
+  if (independentStderr) pieces.push(`stderr: ${independentStderr}`)
   if (detail) pieces.push(`error: ${detail}`)
-  if (stdout) pieces.push(`stdout: ${stdout}`)
+  if (context !== undefined && independentStderr !== stderr) {
+    pieces.push(context)
+  } else if (stdout) {
+    pieces.push(`stdout: ${stdout}`)
+  }
   return clipped(pieces.join('; '), maxChars)
 }
 
@@ -608,23 +626,77 @@ async function saveSelectedImage(
   }
 }
 
-function renderMetadata(value: Record<string, any>): string {
-  const { source, selected, stream, error: _error, outputs: _outputs, ...response } = value
-  const output = {
-    ...response,
-    ...(isRecord(selected)
-      ? { selected: Object.fromEntries(Object.entries(selected).filter(([key]) => key !== 'data' && key !== 'attachment')) }
-      : {}),
-    ...(isRecord(stream)
-      ? { stream: Object.fromEntries(Object.entries(stream).filter(([key]) => key !== 'data')) }
-      : {}),
+function outputProvenance(source: unknown, includeOutput: boolean): Record<string, any> {
+  if (!isRecord(source)) return {}
+  const provenance: Record<string, any> = {
+    path: source.path,
+    cell: source.cell_index,
   }
-  return JSON.stringify({ provenance: source, output })
+  if (includeOutput) provenance.output = source.output_index
+  if (typeof source.mapping === 'string' && source.mapping !== 'direct') {
+    provenance.requested = {
+      path: source.requested_path,
+      cell: source.requested_cell_index,
+      mapping: source.mapping,
+    }
+  }
+  return provenance
+}
+
+function outputPage(payload: unknown): Record<string, any> | undefined {
+  if (!isRecord(payload) || payload.truncated !== true) return undefined
+  return {
+    offset: payload.offset,
+    returned: payload.returned_characters,
+    total: payload.total_characters,
+    ...(payload.next_offset === undefined ? {} : { next_offset: payload.next_offset }),
+  }
+}
+
+function renderMetadata(value: Record<string, any>): string {
+  const selected = isRecord(value.selected) ? value.selected : undefined
+  const stream = isRecord(value.stream) ? value.stream : undefined
+  const available = Array.isArray(value.available_mime_types)
+    ? value.available_mime_types
+    : []
+  const page = outputPage(selected ?? stream)
+  const output = {
+    type: value.output_type,
+    ...(selected === undefined ? {} : { mime: selected.mime_type }),
+    ...(available.length > 1 ? { available } : {}),
+    ...(stream === undefined ? {} : { name: stream.name }),
+    ...(page === undefined ? {} : { page }),
+  }
+  return JSON.stringify({
+    provenance: outputProvenance(value.source, true),
+    output,
+  })
+}
+
+function renderDirectory(value: Record<string, any>): string {
+  const outputs = Array.isArray(value.outputs)
+    ? value.outputs.map((entry: unknown) => {
+        if (!isRecord(entry)) return entry
+        return {
+          index: entry.output_index,
+          type: entry.output_type,
+          mime: Array.isArray(entry.available_mime_types) ? entry.available_mime_types : [],
+          ...(entry.output_type === 'stream' ? { name: entry.name } : {}),
+          ...(entry.output_type === 'error'
+            ? { ename: entry.ename, evalue: entry.evalue }
+            : {}),
+        }
+      })
+    : []
+  return JSON.stringify({
+    provenance: outputProvenance(value.source, false),
+    outputs,
+  })
 }
 
 function renderOutput(_args: OutputToolArgs, value: Record<string, any>): ContentBlock[] {
   if (Array.isArray(value.outputs)) {
-    return [{ type: 'text', text: JSON.stringify(value) }]
+    return [{ type: 'text', text: renderDirectory(value) }]
   }
   const metadata = { type: 'text' as const, text: renderMetadata(value) }
   if (isRecord(value.selected)) {

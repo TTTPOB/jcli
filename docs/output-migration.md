@@ -4,13 +4,13 @@ j-cli now separates notebook-backed output from inline/plain-script output. Cons
 
 ## Notebook-backed execution
 
-`j-cli exec --file analysis.ipynb` and py:percent execution save each completed cell to the target notebook before formatting the response. JSON output identifies the saved location with:
+`j-cli exec --file analysis.ipynb` and py:percent execution save each completed cell to the target notebook before formatting the response. JSON output confirms a successful writeback with:
 
-- `notebook_updated`: notebook path
+- `notebook_updated: true`
 - `cell_index`: physical index in the executed source file
 - `notebook_cell_index`: physical index in the saved notebook when it differs from the source index
 
-The display summary may describe an image, but it is no longer an extracted temporary-file API. To retrieve the payload, first list the saved cell outputs, then read the selected physical output:
+Read saved outputs back through the originally requested `.py` or `.ipynb` path; j-cli resolves that request to the canonical notebook cell. The display summary may describe an image, but it is no longer an extracted temporary-file API. To retrieve the payload, first list the saved cell outputs, then read the selected physical output:
 
 ```bash
 j-cli -j notebook outputs analysis.py --cell 4

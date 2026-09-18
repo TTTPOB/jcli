@@ -466,15 +466,17 @@ class TestExecFile:
         assert lines[0]["cell"]["cell_index"] == 0
         assert any("alpha" in o.get("text", "") for o in lines[0]["cell"]["outputs"])
         assert lines[0]["notebook_created"] == str(tmp_path / "jsonl.ipynb")
-        assert lines[0]["notebook_updated"] == str(tmp_path / "jsonl.ipynb")
+        assert lines[0]["notebook_updated"] is True
+        assert "notebook_cell_index" not in lines[0]["cell"]
         assert lines[1]["cell"]["cell_index"] == 1
         assert any("beta" in o.get("text", "") for o in lines[1]["cell"]["outputs"])
-        assert lines[1]["notebook_updated"] == str(tmp_path / "jsonl.ipynb")
+        assert lines[1]["notebook_updated"] is True
+        assert "notebook_cell_index" not in lines[1]["cell"]
         assert lines[2] == {
             "status": "ok",
             "summary": {
                 "cells_executed": 2,
-                "notebook_updated": str(tmp_path / "jsonl.ipynb"),
+                "notebook_updated": True,
             },
         }
 
@@ -551,11 +553,12 @@ class TestExecAutoCreatesIpynb:
     """
 
     def test_percent_marker_creates_ipynb(
-        self, live_session, mock_kernel_connection, tmp_path
+        self, live_session, mock_kernel_connection, tmp_path, monkeypatch
     ):
         """py:percent file with # %% marker auto-creates .ipynb with outputs."""
         import nbformat
 
+        monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         script = tmp_path / "new.py"
         script.write_text(
@@ -586,7 +589,8 @@ class TestExecAutoCreatesIpynb:
         assert result.exit_code == 0
         assert "auto created" in result.output
         assert expected_nb.exists(), "paired .ipynb should have been created"
-        assert "Notebook created" in result.output
+        assert "Notebook created: new.ipynb" in result.output
+        assert str(expected_nb) not in result.output
 
         nb = nbformat.read(str(expected_nb), as_version=4)
         assert len(nb.cells) == 2
@@ -725,7 +729,7 @@ class TestExecAutoCreatesIpynb:
         cell_event = next(event for event in events if "cell" in event)
         # Should update, not create
         assert "notebook_created" not in cell_event
-        assert cell_event.get("notebook_updated") == str(nb_path)
+        assert cell_event.get("notebook_updated") is True
 
     def test_json_output_includes_notebook_created(
         self, live_session, mock_kernel_connection, tmp_path

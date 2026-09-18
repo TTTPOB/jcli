@@ -51,26 +51,23 @@ def _serialize_change(change: CellChange) -> dict:
 
 
 def _summarize_cell(cell: Cell) -> dict:
-    preview, preview_truncated = _truncate_text(
-        _first_nonempty_line(cell.source) or "",
-        _MAX_SOURCE_PREVIEW_CHARS,
-    )
     data = {
         "index": cell.index,
         "type": cell.cell_type,
         "line_count": len(cell.source.splitlines()),
-        "source_preview": preview,
-        "source_preview_truncated": preview_truncated,
     }
     if cell.source_start_line is not None and cell.source_end_line is not None:
         data["source_start_line"] = cell.source_start_line
         data["source_end_line"] = cell.source_end_line
     if len(cell.source) <= _MAX_SOURCE_PREVIEW_CHARS:
-        data["source"] = cell.source
+        data["full_text"] = cell.source
+        return data
+
+    preview, preview_truncated = _truncate_text(cell.source, _MAX_SOURCE_PREVIEW_CHARS)
+    data["preview"] = preview
+    data["preview_truncated"] = preview_truncated
     if cell.cell_type == CellType.CODE:
         data.update(_summarize_python(cell.source))
-    elif cell.cell_type == CellType.MARKDOWN:
-        data["first_nonempty_line"] = preview
     return data
 
 
@@ -235,7 +232,3 @@ def _qualified_name(node: ast.expr) -> str | None:
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
     return value[:limit], len(value) > limit
-
-
-def _first_nonempty_line(source: str) -> str | None:
-    return next((line for line in source.splitlines() if line.strip()), None)
