@@ -26,23 +26,25 @@ executing them.
 
 ## Search notebook content
 
-Use `rg` with the `--pre` flag and the bundled preprocessor to search inside `.ipynb` files:
+Use `rg` with the `--pre` flag and the bundled preprocessor to search inside
+`.ipynb` files. First resolve this skill's own directory from the loaded skill,
+then use its absolute path; do not assume the current workspace is the j-cli
+repository:
 
 ```bash
+JCLI_SKILL_DIR=/absolute/path/to/the/installed/j-cli-skill
+
 # Search all notebooks for a pattern
-rg --pre skills/j-cli/scripts/rg_ipynb_preprocessor.py 'pattern' .
+rg --pre "$JCLI_SKILL_DIR/scripts/rg_ipynb_preprocessor.py" 'pattern' .
 
 # Search only .ipynb files
-rg --pre skills/j-cli/scripts/rg_ipynb_preprocessor.py -g '*.ipynb' 'pattern' .
+rg --pre "$JCLI_SKILL_DIR/scripts/rg_ipynb_preprocessor.py" -g '*.ipynb' 'pattern' .
 
 # The preprocessor renders each notebook as plain text: cell sources and outputs
 # Binary outputs (images, PDFs) are replaced with a size notice
 ```
 
-The preprocessor is at `skills/j-cli/scripts/rg_ipynb_preprocessor.py` and has no
-external dependencies.
-
-Resolve the bundled preprocessor path relative to the installed skill directory when it is not at the workspace path shown above.
+The bundled preprocessor has no external dependencies.
 
 ## Read saved output
 

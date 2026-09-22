@@ -76,6 +76,5 @@ j-cli setup opencode
 j-cli setup git
 ```
 
-Choose only the host the user is using. See the repository
-[README](../../README.md#setup-claude) for scopes, generated files, removal,
-prerequisites, and hook behavior.
+Choose only the host the user is using. Run `j-cli setup <host> --help` for its
+available scopes, generated files, removal options, and prerequisites.
