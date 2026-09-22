@@ -175,3 +175,69 @@ def test_git_tracking_tolerates_missing_git(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", missing)
     assert not is_git_tracked(tmp_path / "new" / "file")
+
+
+def test_opencode_skill_only_ignores_broken_unselected_host_paths(isolated):
+    (isolated / ".opencode" / "plugins" / "jcli.js").mkdir(parents=True)
+    (isolated / ".opencode" / ".gitignore").mkdir()
+
+    result = invoke("opencode", "--only", "skill")
+
+    assert result.exit_code == 0
+    assert (isolated / ".agents" / "skills" / "j-cli" / "SKILL.md").exists()
+
+
+def test_opencode_rejects_damaged_explicit_capabilities(isolated):
+    plugin = isolated / ".opencode" / "plugins" / "jcli.js"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text(
+        "// Managed by j-cli setup opencode.\nconst enabledCapabilities = {broken}\n",
+        encoding="utf-8",
+    )
+
+    result = invoke("opencode", "--project", "--only", "hook")
+
+    assert result.exit_code == 1
+    assert "PLUGIN_CONFIG_INVALID" in result.stderr
+
+
+def test_dsh_explicit_false_capabilities_do_not_enable_tool(isolated):
+    config = isolated / ".dsh" / "cordis.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "# >>> jcli managed (dsh hooks) >>>\n"
+        "- id: jcli-hooks\n"
+        "  name: './plugins/jcli.ts'\n"
+        "  config:\n"
+        "    hooks: false\n"
+        "    tools: false\n"
+        "# <<< jcli managed (dsh hooks) <<<\n",
+        encoding="utf-8",
+    )
+
+    result = invoke("dsh", "--project", "--only", "hook")
+
+    assert result.exit_code == 0
+    text = config.read_text(encoding="utf-8")
+    assert "hooks: true" in text
+    assert "tools: false" in text
+
+
+def test_dsh_rejects_non_boolean_capability_flags(isolated):
+    config = isolated / ".dsh" / "cordis.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "# >>> jcli managed (dsh hooks) >>>\n"
+        "- id: jcli-hooks\n"
+        "  name: './plugins/jcli.ts'\n"
+        "  config:\n"
+        "    hooks: 'true'\n"
+        "    tools: false\n"
+        "# <<< jcli managed (dsh hooks) <<<\n",
+        encoding="utf-8",
+    )
+
+    result = invoke("dsh", "--project", "--only", "hook")
+
+    assert result.exit_code == 1
+    assert "DSH_CONFIG_INVALID" in result.stderr

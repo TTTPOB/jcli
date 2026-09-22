@@ -14,11 +14,15 @@ from jupyter_jcli.output import emit, emit_error
 from .common import (
     Component,
     Scope,
+    apply_skill,
+    component_ignore_dirs,
     only_option,
     preflight_gitignore,
     preflight_local_untracked,
+    preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_skill_dir,
 )
 from .mcp import manage_claude_mcp, manage_codex_mcp
 
@@ -156,37 +160,36 @@ def claude(
 ):
     """Install Claude skill, native hooks, and notebook-output MCP tool."""
     components = selected_components(only)
-    _validate_skill_dir_option(components, skill_dir, ctx.use_json)
+    validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     path = _resolve_claude_path(scope)
     skill_target = _skill_target("claude", scope_value, skill_dir)
     if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    _preflight_skill(skill_target, remove, components, ctx.use_json)
-    if scope_value == Scope.LOCAL and Component.SKILL in components:
-        preflight_local_untracked([skill_target], ctx.use_json)
-    if scope_value != Scope.USER and Component.SKILL in components:
-        preflight_gitignore([skill_target.parent], ctx.use_json)
-    tool_result = (
-        manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
-        if Component.TOOL in components
-        else "skipped"
-    )
+    preflight_skill(skill_target, components, remove, ctx.use_json)
+    ignore_dirs = component_ignore_dirs(scope_value, components, None, skill_target)
+    if scope_value == Scope.LOCAL:
+        preflight_local_untracked(
+            [skill_target] if Component.SKILL in components else [], ctx.use_json
+        )
+    preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
+        tool_result = (
+            manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
+            if Component.TOOL in components
+            else "skipped"
+        )
         hook_changed, removed_hooks = (
             _install_or_remove("claude", path, remove, ctx)
             if Component.HOOK in components
             else (False, 0)
         )
-    except OSError as exc:
-        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
-    skill_changed = _apply_skill(skill_target, remove, components, ctx.use_json)
-    try:
+        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
         ignore_changed = _update_skill_ignore(
             skill_target, scope_value, remove, components
         )
     except OSError as exc:
-        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
     _emit_setup_result(
         "Claude",
         components,
@@ -234,7 +237,7 @@ def codex(
 ):
     """Install Codex skill, native hooks, and notebook-output MCP tool."""
     components = selected_components(only)
-    _validate_skill_dir_option(components, skill_dir, ctx.use_json)
+    validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
         click.echo(
@@ -245,7 +248,7 @@ def codex(
     skill_target = _skill_target("codex", scope_value, skill_dir)
     if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    _preflight_skill(skill_target, remove, components, ctx.use_json)
+    preflight_skill(skill_target, components, remove, ctx.use_json)
     local_paths: list[Path] = []
     if Component.HOOK in components:
         local_paths.append(path)
@@ -255,35 +258,27 @@ def codex(
         local_paths.append(skill_target)
     if scope_value == Scope.LOCAL:
         preflight_local_untracked(local_paths, ctx.use_json)
-        ignore_dirs = [Path.cwd() / ".codex"]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    elif scope_value == Scope.PROJECT:
-        ignore_dirs = [Path.cwd() / ".codex"]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    tool_result = (
-        manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
-        if Component.TOOL in components
-        else "skipped"
+    ignore_dirs = component_ignore_dirs(
+        scope_value, components, path.parent, skill_target
     )
+    preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
+        tool_result = (
+            manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
+            if Component.TOOL in components
+            else "skipped"
+        )
         hook_changed, removed_hooks = (
             _install_or_remove("codex", path, remove, ctx)
             if Component.HOOK in components
             else (False, 0)
         )
-    except OSError as exc:
-        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
-    skill_changed = _apply_skill(skill_target, remove, components, ctx.use_json)
-    try:
+        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
         ignore_changed = _update_codex_ignores(
             scope_value, remove, components, skill_target
         )
     except OSError as exc:
-        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
     _emit_setup_result(
         "Codex",
         components,
@@ -576,17 +571,6 @@ def _emit_setup_result(
     )
 
 
-def _validate_skill_dir_option(
-    components: frozenset[Component], skill_dir: Path | None, use_json: bool
-) -> None:
-    if skill_dir is not None and Component.SKILL not in components:
-        emit_error(
-            "SKILL_DIR_WITHOUT_SKILL",
-            "--skill-dir requires selecting the skill component",
-            use_json,
-        )
-
-
 def _skill_target(platform: str, scope: Scope, override: Path | None) -> Path:
     if override is not None:
         root = override.expanduser()
@@ -604,33 +588,6 @@ def _skill_target(platform: str, scope: Scope, override: Path | None) -> Path:
     else:
         root = Path.cwd() / ".agents" / "skills"
     return root / "j-cli"
-
-
-def _preflight_skill(
-    target: Path, remove: bool, components: frozenset[Component], use_json: bool
-) -> None:
-    if Component.SKILL not in components:
-        return
-    from .skill import SkillError, preflight_install_skill, preflight_remove_skill
-
-    try:
-        (preflight_remove_skill if remove else preflight_install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-
-
-def _apply_skill(
-    target: Path, remove: bool, components: frozenset[Component], use_json: bool
-) -> bool:
-    if Component.SKILL not in components:
-        return False
-    from .skill import SkillError, install_skill, remove_skill
-
-    try:
-        return (remove_skill if remove else install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-    return False
 
 
 def _update_skill_ignore(
@@ -652,12 +609,14 @@ def _update_codex_ignores(
     if scope == Scope.USER:
         return False
     enabled = scope == Scope.LOCAL and not remove
-    changed = update_managed_gitignore(
-        Path.cwd() / ".codex",
-        {Component.HOOK: ["/hooks.json"], Component.TOOL: ["/config.toml"]},
-        components,
-        enabled,
-    )
+    changed = False
+    if components & {Component.HOOK, Component.TOOL}:
+        changed = update_managed_gitignore(
+            Path.cwd() / ".codex",
+            {Component.HOOK: ["/hooks.json"], Component.TOOL: ["/config.toml"]},
+            components,
+            enabled,
+        )
     if Component.SKILL in components:
         changed = (
             _update_skill_ignore(skill_target, scope, remove, components) or changed

@@ -48,6 +48,65 @@ def only_option(function):
     )(function)
 
 
+def validate_skill_dir(
+    components: frozenset[Component], skill_dir: Path | None, use_json: bool
+) -> None:
+    if skill_dir is not None and Component.SKILL not in components:
+        emit_error(
+            "SKILL_DIR_WITHOUT_SKILL",
+            "--skill-dir requires selecting the skill component",
+            use_json,
+        )
+
+
+def preflight_skill(
+    target: Path,
+    components: frozenset[Component],
+    remove: bool,
+    use_json: bool,
+) -> None:
+    if Component.SKILL not in components:
+        return
+    from .skill import SkillError, preflight_install_skill, preflight_remove_skill
+
+    try:
+        (preflight_remove_skill if remove else preflight_install_skill)(target)
+    except (SkillError, OSError) as exc:
+        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+
+
+def apply_skill(
+    target: Path,
+    components: frozenset[Component],
+    remove: bool,
+    use_json: bool,
+) -> bool:
+    if Component.SKILL not in components:
+        return False
+    from .skill import SkillError, install_skill, remove_skill
+
+    try:
+        return (remove_skill if remove else install_skill)(target)
+    except (SkillError, OSError) as exc:
+        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+
+
+def component_ignore_dirs(
+    scope: Scope,
+    components: frozenset[Component],
+    host_directory: Path | None,
+    skill_target: Path,
+) -> list[Path]:
+    if scope == Scope.USER:
+        return []
+    directories = []
+    if host_directory is not None and components & {Component.HOOK, Component.TOOL}:
+        directories.append(host_directory)
+    if Component.SKILL in components:
+        directories.append(skill_target.parent)
+    return list(dict.fromkeys(directories))
+
+
 def is_git_tracked(path: Path, root: Path | None = None) -> bool:
     """Return whether a path or anything below it is tracked by its repository."""
     target = path.expanduser().resolve()

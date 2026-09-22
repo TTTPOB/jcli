@@ -23,11 +23,15 @@ from jupyter_jcli.output import emit, emit_error
 from .common import (
     Component,
     Scope,
+    apply_skill,
+    component_ignore_dirs,
     only_option,
     preflight_gitignore,
     preflight_local_untracked,
+    preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_skill_dir,
 )
 from .hooks import _remove_dsh_hooks
 
@@ -79,12 +83,7 @@ def dsh(
 ) -> None:
     """Install DSH skill plus independent native hook and tool capabilities."""
     components = selected_components(only)
-    if skill_dir is not None and Component.SKILL not in components:
-        emit_error(
-            "SKILL_DIR_WITHOUT_SKILL",
-            "--skill-dir requires selecting skill",
-            ctx.use_json,
-        )
+    validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
         click.echo(
@@ -93,35 +92,30 @@ def dsh(
         )
     config_path, plugin_path = _resolve_paths(scope_value)
     skill_target = _skill_target(scope_value, skill_dir)
-    _preflight_skill(skill_target, components, remove, ctx.use_json)
-    if scope_value == Scope.LOCAL:
-        paths = []
-        if components & {Component.HOOK, Component.TOOL}:
-            paths.extend([config_path, plugin_path])
-        if Component.SKILL in components:
-            paths.append(skill_target)
-        preflight_local_untracked(paths, ctx.use_json)
-        ignore_dirs = [config_path.parent]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    elif scope_value == Scope.PROJECT:
-        ignore_dirs = [config_path.parent]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    plugin_result = {"changed": False, "removed": 0, "capabilities": []}
+    preflight_skill(skill_target, components, remove, ctx.use_json)
+    local_paths: list[Path] = []
     if components & {Component.HOOK, Component.TOOL}:
-        plugin_result = _install_or_remove(
-            scope_value, config_path, plugin_path, remove, ctx, components
-        )
-    skill_changed = _apply_skill(skill_target, components, remove, ctx.use_json)
+        local_paths.extend([config_path, plugin_path])
+    if Component.SKILL in components:
+        local_paths.append(skill_target)
+    if scope_value == Scope.LOCAL:
+        preflight_local_untracked(local_paths, ctx.use_json)
+    ignore_dirs = component_ignore_dirs(
+        scope_value, components, config_path.parent, skill_target
+    )
+    preflight_gitignore(ignore_dirs, ctx.use_json)
+    plugin_result = {"changed": False, "removed": 0, "capabilities": []}
     try:
+        if components & {Component.HOOK, Component.TOOL}:
+            plugin_result = _install_or_remove(
+                scope_value, config_path, plugin_path, remove, ctx, components
+            )
+        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
         ignore_changed = _update_ignores(
             scope_value, components, remove, config_path, plugin_path, skill_target
         )
     except OSError as exc:
-        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+        emit_error("DSH_WRITE_FAILED", str(exc), ctx.use_json)
     changed = bool(plugin_result["changed"] or skill_changed or ignore_changed)
     if Component.SKILL in components and remove and not ctx.use_json:
         click.echo(
@@ -545,18 +539,39 @@ def _warn_duplicate_scope(scope: Scope) -> None:
         )
 
 
-def _configured_capabilities(config_text: str) -> frozenset[Component]:
+def _configured_capabilities(
+    config_path: Path, config_text: str, use_json: bool
+) -> frozenset[Component]:
     matches = _marked_matches(config_text)
     if not matches:
         return frozenset()
-    block = matches[0].group(0)
-    explicit = {
+    try:
+        loaded = yaml.safe_load(matches[0].group(0))
+        row = loaded[0]
+        if "insert" in row:
+            row = row["insert"][0]
+    except (yaml.YAMLError, KeyError, IndexError, TypeError) as exc:
+        emit_error(
+            "DSH_CONFIG_INVALID",
+            f"{config_path}: invalid managed capability row: {exc}",
+            use_json,
+        )
+    config = row.get("config")
+    if not isinstance(config, dict) or not ({"hooks", "tools"} & set(config)):
+        return frozenset({Component.HOOK, Component.TOOL})
+    if set(config) & {"hooks", "tools"} != {"hooks", "tools"} or any(
+        not isinstance(config[key], bool) for key in ("hooks", "tools")
+    ):
+        emit_error(
+            "DSH_CONFIG_INVALID",
+            f"{config_path}: managed config hooks and tools must both be booleans",
+            use_json,
+        )
+    return frozenset(
         component
         for component in (Component.HOOK, Component.TOOL)
-        if re.search(rf"(?m)^\s*{component.value}s: true\s*$", block)
-    }
-    # Rows written before capability flags combined both behaviors.
-    return frozenset(explicit or {Component.HOOK, Component.TOOL})
+        if config[f"{component.value}s"]
+    )
 
 
 def _install_or_remove(
@@ -568,7 +583,9 @@ def _install_or_remove(
     components: frozenset[Component],
 ) -> dict[str, Any]:
     config_text = _read_text(config_path)
-    before_capabilities = _configured_capabilities(config_text)
+    before_capabilities = _configured_capabilities(
+        config_path, config_text, ctx.use_json
+    )
     chosen = components & {Component.HOOK, Component.TOOL}
     after_capabilities = (
         before_capabilities - chosen if remove else before_capabilities | chosen
@@ -587,21 +604,18 @@ def _install_or_remove(
         plugin_changed = plugin_path.exists()
         legacy_changed = _legacy_changed(legacy_path, legacy_before, legacy_after)
 
-        try:
-            if config_changed:
-                if config_after.strip():
-                    _write_text(config_path, config_after)
-                elif config_path.exists():
-                    config_path.unlink()
-            if plugin_changed:
-                plugin_path.unlink()
-            if legacy_changed:
-                if legacy_after:
-                    _write_text(legacy_path, _json_text(legacy_after))
-                elif legacy_path.exists():
-                    legacy_path.unlink()
-        except OSError as exc:
-            emit_error("DSH_WRITE_FAILED", str(exc), ctx.use_json)
+        if config_changed:
+            if config_after.strip():
+                _write_text(config_path, config_after)
+            elif config_path.exists():
+                config_path.unlink()
+        if plugin_changed:
+            plugin_path.unlink()
+        if legacy_changed:
+            if legacy_after:
+                _write_text(legacy_path, _json_text(legacy_after))
+            elif legacy_path.exists():
+                legacy_path.unlink()
         _warn_legacy_user_content(legacy_path, has_user_content)
         removed = (
             (1 if config_changed else 0) + (1 if plugin_changed else 0) + removed_legacy
@@ -628,18 +642,15 @@ def _install_or_remove(
 
     # Install the adapter before declaring it in Cordis. This ensures a row that
     # DSH can observe always points at a readable native module.
-    try:
-        if plugin_changed:
-            _atomic_replace(plugin_path, source)
-        if config_changed:
-            _write_text(config_path, config_after)
-        if legacy_changed:
-            if legacy_after:
-                _write_text(legacy_path, _json_text(legacy_after))
-            elif legacy_path.exists():
-                legacy_path.unlink()
-    except OSError as exc:
-        emit_error("DSH_WRITE_FAILED", str(exc), ctx.use_json)
+    if plugin_changed:
+        _atomic_replace(plugin_path, source)
+    if config_changed:
+        _write_text(config_path, config_after)
+    if legacy_changed:
+        if legacy_after:
+            _write_text(legacy_path, _json_text(legacy_after))
+        elif legacy_path.exists():
+            legacy_path.unlink()
 
     _warn_legacy_user_content(legacy_path, has_user_content)
     changed = plugin_changed or config_changed or legacy_changed
@@ -663,33 +674,6 @@ def _skill_target(scope: Scope, override: Path | None) -> Path:
     return Path.cwd().resolve() / ".agents" / "skills" / "j-cli"
 
 
-def _preflight_skill(
-    target: Path, components: frozenset[Component], remove: bool, use_json: bool
-) -> None:
-    if Component.SKILL not in components:
-        return
-    from .skill import SkillError, preflight_install_skill, preflight_remove_skill
-
-    try:
-        (preflight_remove_skill if remove else preflight_install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-
-
-def _apply_skill(
-    target: Path, components: frozenset[Component], remove: bool, use_json: bool
-) -> bool:
-    if Component.SKILL not in components:
-        return False
-    from .skill import SkillError, install_skill, remove_skill
-
-    try:
-        return (remove_skill if remove else install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-    return False
-
-
 def _update_ignores(
     scope: Scope,
     components: frozenset[Component],
@@ -701,15 +685,17 @@ def _update_ignores(
     if scope == Scope.USER:
         return False
     enabled = scope == Scope.LOCAL and not remove
-    changed = update_managed_gitignore(
-        config_path.parent,
-        {
-            Component.HOOK: ["/cordis.yml", "/plugins/jcli.ts"],
-            Component.TOOL: ["/cordis.yml", "/plugins/jcli.ts"],
-        },
-        components,
-        enabled,
-    )
+    changed = False
+    if components & {Component.HOOK, Component.TOOL}:
+        changed = update_managed_gitignore(
+            config_path.parent,
+            {
+                Component.HOOK: ["/cordis.yml", "/plugins/jcli.ts"],
+                Component.TOOL: ["/cordis.yml", "/plugins/jcli.ts"],
+            },
+            components,
+            enabled,
+        )
     if Component.SKILL in components:
         changed = (
             update_managed_gitignore(

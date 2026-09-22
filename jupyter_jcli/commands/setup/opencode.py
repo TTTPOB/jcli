@@ -16,11 +16,15 @@ from jupyter_jcli.output import emit, emit_error
 from .common import (
     Component,
     Scope,
+    apply_skill,
+    component_ignore_dirs,
     only_option,
     preflight_gitignore,
     preflight_local_untracked,
+    preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_skill_dir,
 )
 
 _OPENCODE_MANAGED_MARKER = "// Managed by j-cli setup opencode."
@@ -60,12 +64,7 @@ def opencode(
 ) -> None:
     """Install OpenCode skill, guards, and notebook output tool."""
     components = selected_components(only)
-    if skill_dir is not None and Component.SKILL not in components:
-        emit_error(
-            "SKILL_DIR_WITHOUT_SKILL",
-            "--skill-dir requires selecting skill",
-            ctx.use_json,
-        )
+    validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
         click.echo(
@@ -75,38 +74,29 @@ def opencode(
     plugin_path = _resolve_opencode_path(scope_value)
     skill_target = _skill_target(scope_value, skill_dir)
 
-    _preflight_skill(skill_target, components, remove, ctx.use_json)
+    preflight_skill(skill_target, components, remove, ctx.use_json)
+    local_paths: list[Path] = []
+    if components & {Component.HOOK, Component.TOOL}:
+        local_paths.append(plugin_path)
+    if Component.SKILL in components:
+        local_paths.append(skill_target)
     if scope_value == Scope.LOCAL:
-        paths = []
-        if components & {Component.HOOK, Component.TOOL}:
-            paths.append(plugin_path)
-        if Component.SKILL in components:
-            paths.append(skill_target)
-        preflight_local_untracked(paths, ctx.use_json)
-        ignore_dirs = [plugin_path.parent.parent]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    elif scope_value == Scope.PROJECT:
-        ignore_dirs = [plugin_path.parent.parent]
-        if Component.SKILL in components:
-            ignore_dirs.append(skill_target.parent)
-        preflight_gitignore(ignore_dirs, ctx.use_json)
-    _preflight_plugin(plugin_path, components, remove, ctx.use_json)
-
+        preflight_local_untracked(local_paths, ctx.use_json)
+    ignore_dirs = component_ignore_dirs(
+        scope_value, components, plugin_path.parent.parent, skill_target
+    )
+    preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
+        _preflight_plugin(plugin_path, components, remove, ctx.use_json)
         plugin_changed, capabilities = _apply_plugin(
             plugin_path, components, remove, ctx.use_json
         )
-    except OSError as exc:
-        emit_error("PLUGIN_WRITE_FAILED", str(exc), ctx.use_json)
-    skill_changed = _apply_skill(skill_target, components, remove, ctx.use_json)
-    try:
+        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
         ignore_changed = _update_ignores(
             scope_value, components, remove, plugin_path, skill_target
         )
     except OSError as exc:
-        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+        emit_error("PLUGIN_SETUP_FAILED", str(exc), ctx.use_json)
     changed = plugin_changed or skill_changed or ignore_changed
     if Component.SKILL in components and remove and not ctx.use_json:
         click.echo(
@@ -166,18 +156,38 @@ def _base_source() -> str:
     )
 
 
-def _capabilities(source: str) -> frozenset[Component]:
+def _capabilities(source: str, path: Path, use_json: bool) -> frozenset[Component]:
     match = _CAPABILITIES_RE.search(source)
     if match is None:
+        if "const enabledCapabilities =" in source:
+            emit_error(
+                "PLUGIN_CONFIG_INVALID",
+                f"{path}: invalid enabledCapabilities declaration",
+                use_json,
+            )
         return frozenset({Component.HOOK, Component.TOOL})
     try:
         raw = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return frozenset({Component.HOOK, Component.TOOL})
+    except json.JSONDecodeError as exc:
+        emit_error(
+            "PLUGIN_CONFIG_INVALID",
+            f"{path}: invalid enabledCapabilities: {exc}",
+            use_json,
+        )
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"hook", "tool"}
+        or any(not isinstance(raw[key], bool) for key in ("hook", "tool"))
+    ):
+        emit_error(
+            "PLUGIN_CONFIG_INVALID",
+            f"{path}: enabledCapabilities must contain boolean hook and tool fields",
+            use_json,
+        )
     return frozenset(
         component
         for component in (Component.HOOK, Component.TOOL)
-        if raw.get(component.value) is True
+        if raw[component.value]
     )
 
 
@@ -212,10 +222,9 @@ def _apply_plugin(
 ) -> tuple[bool, frozenset[Component]]:
     chosen = components & {Component.HOOK, Component.TOOL}
     if not chosen:
-        current = path.read_text(encoding="utf-8") if path.exists() else ""
-        return False, (_capabilities(current) if current else frozenset())
+        return False, frozenset()
     current = path.read_text(encoding="utf-8") if path.exists() else ""
-    before = _capabilities(current) if current else frozenset()
+    before = _capabilities(current, path, use_json) if current else frozenset()
     after = before - chosen if remove else before | chosen
     if not after:
         if path.exists():
@@ -233,33 +242,6 @@ def _apply_plugin(
     return changed, after
 
 
-def _preflight_skill(
-    target: Path, components: frozenset[Component], remove: bool, use_json: bool
-) -> None:
-    if Component.SKILL not in components:
-        return
-    from .skill import SkillError, preflight_install_skill, preflight_remove_skill
-
-    try:
-        (preflight_remove_skill if remove else preflight_install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-
-
-def _apply_skill(
-    target: Path, components: frozenset[Component], remove: bool, use_json: bool
-) -> bool:
-    if Component.SKILL not in components:
-        return False
-    from .skill import SkillError, install_skill, remove_skill
-
-    try:
-        return (remove_skill if remove else install_skill)(target)
-    except SkillError as exc:
-        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
-    return False
-
-
 def _update_ignores(
     scope: Scope,
     components: frozenset[Component],
@@ -270,12 +252,17 @@ def _update_ignores(
     if scope == Scope.USER:
         return False
     enabled = scope == Scope.LOCAL and not remove
-    changed = update_managed_gitignore(
-        plugin_path.parent.parent,
-        {Component.HOOK: ["/plugins/jcli.js"], Component.TOOL: ["/plugins/jcli.js"]},
-        components,
-        enabled,
-    )
+    changed = False
+    if components & {Component.HOOK, Component.TOOL}:
+        changed = update_managed_gitignore(
+            plugin_path.parent.parent,
+            {
+                Component.HOOK: ["/plugins/jcli.js"],
+                Component.TOOL: ["/plugins/jcli.js"],
+            },
+            components,
+            enabled,
+        )
     if Component.SKILL in components:
         changed = (
             update_managed_gitignore(
