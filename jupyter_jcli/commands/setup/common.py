@@ -107,10 +107,10 @@ def component_ignore_dirs(
     return list(dict.fromkeys(directories))
 
 
-def is_git_tracked(path: Path, root: Path | None = None) -> bool:
+def is_git_tracked(path: Path) -> bool:
     """Return whether a path or anything below it is tracked by its repository."""
     target = path.expanduser().resolve()
-    probe = (root or target).expanduser().resolve()
+    probe = target
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
     if probe.is_file():
@@ -131,15 +131,12 @@ def is_git_tracked(path: Path, root: Path | None = None) -> bool:
         relative = target.relative_to(repo_root)
     except ValueError:
         return False
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-files", "--", relative.as_posix()],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return False
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-files", "--", relative.as_posix()],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
