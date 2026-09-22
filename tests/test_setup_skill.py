@@ -117,6 +117,19 @@ def test_install_rejects_unmanaged_target_without_modifying_it(tmp_path, bundled
     assert set(target.iterdir()) == {owned}
 
 
+def test_preflight_rejects_non_directory_existing_ancestor(tmp_path, bundled_skill):
+    blocking_file = tmp_path / "agent-home"
+    blocking_file.write_text("keep me\n", encoding="utf-8")
+    target = blocking_file / "skills" / "j-cli"
+
+    with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
+        preflight_install_skill(target)
+    with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
+        preflight_remove_skill(target)
+
+    assert blocking_file.read_text(encoding="utf-8") == "keep me\n"
+
+
 def test_update_and_remove_reject_modified_managed_file(tmp_path, bundled_skill):
     target = tmp_path / "j-cli"
     assert install_skill(target) is True
@@ -181,17 +194,14 @@ def test_missing_bundled_resource_fails_before_creating_target(tmp_path, monkeyp
     assert not target.exists()
 
 
-def test_hatch_config_bundles_the_single_skill_source_in_wheel_and_sdist():
+def test_skill_has_one_importable_source_inside_the_python_package():
     root = Path(__file__).parents[1]
-    config = (root / "pyproject.toml").read_text(encoding="utf-8")
+    packaged_skill = root / "jupyter_jcli" / "skills" / "j-cli"
 
-    assert (
-        "[tool.hatch.build.targets.wheel.force-include]\n"
-        '"skills/j-cli" = "jupyter_jcli/skills/j-cli"'
-    ) in config
-    assert (
-        "[tool.hatch.build.targets.sdist.force-include]\n"
-        '"skills/j-cli" = "skills/j-cli"'
-    ) in config
-    assert (root / "skills" / "j-cli" / "SKILL.md").is_file()
-    assert not (root / "jupyter_jcli" / "skills").exists()
+    assert (packaged_skill / "SKILL.md").is_file()
+    assert (packaged_skill / "scripts" / "rg_ipynb_preprocessor.py").is_file()
+    assert not (root / "skills" / "j-cli").exists()
+
+    resource_files = skill_module._load_resource_files()
+    assert resource_files["SKILL.md"] == (packaged_skill / "SKILL.md").read_bytes()
+    assert "scripts/rg_ipynb_preprocessor.py" in resource_files

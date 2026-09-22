@@ -43,12 +43,6 @@ j-cli = "jupyter_jcli.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["jupyter_jcli"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"skills/j-cli" = "jupyter_jcli/skills/j-cli"
-
-[tool.hatch.build.targets.sdist.force-include]
-"skills/j-cli" = "skills/j-cli"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

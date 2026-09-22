@@ -123,7 +123,18 @@ def _reject_symlinks(target: Path) -> None:
         raise SkillConflictError(f"Cannot inspect skill target: {target}") from exc
 
 
+def _require_directory_ancestor(target: Path) -> None:
+    ancestor = target.parent
+    while not ancestor.exists() and ancestor != ancestor.parent:
+        ancestor = ancestor.parent
+    if ancestor.exists() and not ancestor.is_dir():
+        raise SkillConflictError(
+            f"Skill target ancestor is not a directory: {ancestor}"
+        )
+
+
 def _load_managed_files(target: Path) -> dict[str, str] | None:
+    _require_directory_ancestor(target)
     if target.is_symlink():
         raise SkillConflictError(f"Skill target is a symbolic link: {target}")
     if not target.exists():
