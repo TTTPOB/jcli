@@ -1,6 +1,7 @@
 """Claude Code and Codex managed JSON hook installation."""
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -10,7 +11,15 @@ from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.output import emit, emit_error
 
-from .common import Scope
+from .common import (
+    Component,
+    Scope,
+    only_option,
+    preflight_gitignore,
+    preflight_local_untracked,
+    selected_components,
+    update_managed_gitignore,
+)
 from .mcp import manage_claude_mcp, manage_codex_mcp
 
 # ---------------------------------------------------------------------------
@@ -117,163 +126,214 @@ _DSH_MANAGED_VALS = _managed_values(_DSH_MANAGED_BLOCKS)
 
 @click.command("claude")
 @click.option(
-    "--user",
-    "scope",
-    flag_value=Scope.USER.value,
-    help="Write to ~/.claude/settings.json",
+    "--user", "scope", flag_value=Scope.USER.value, help="Write user configuration."
 )
 @click.option(
     "--project",
     "scope",
     flag_value=Scope.PROJECT.value,
-    help="Write to ./.claude/settings.json",
+    help="Write shared project configuration.",
 )
 @click.option(
     "--local",
     "scope",
     flag_value=Scope.LOCAL.value,
     default=True,
-    help="Write to ./.claude/settings.local.json (default, gitignored)",
+    help="Write native local configuration (default).",
 )
+@only_option
+@click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
-    "--remove",
-    is_flag=True,
-    default=False,
-    help="Remove all j-cli managed hooks from the target settings file.",
+    "--remove", is_flag=True, default=False, help="Remove selected components."
 )
 @pass_ctx
-def claude(ctx: CliContext, scope: str, remove: bool):
-    """Install Claude Code guards and the notebook-output MCP server."""
+def claude(
+    ctx: CliContext,
+    scope: str,
+    only: tuple[str, ...],
+    skill_dir: Path | None,
+    remove: bool,
+):
+    """Install Claude skill, native hooks, and notebook-output MCP tool."""
+    components = selected_components(only)
+    _validate_skill_dir_option(components, skill_dir, ctx.use_json)
+    scope_value = Scope(scope)
     path = _resolve_claude_path(scope)
-    # Validate existing hook JSON before asking Claude CLI to mutate MCP state.
-    if path.exists():
+    skill_target = _skill_target("claude", scope_value, skill_dir)
+    if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
-    _install_or_remove("claude", path, remove, ctx)
+    _preflight_skill(skill_target, remove, components, ctx.use_json)
+    if scope_value == Scope.LOCAL and Component.SKILL in components:
+        preflight_local_untracked([skill_target], ctx.use_json)
+    if scope_value != Scope.USER and Component.SKILL in components:
+        preflight_gitignore([skill_target.parent], ctx.use_json)
+    tool_result = (
+        manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
+        if Component.TOOL in components
+        else "skipped"
+    )
+    try:
+        hook_changed, removed_hooks = (
+            _install_or_remove("claude", path, remove, ctx)
+            if Component.HOOK in components
+            else (False, 0)
+        )
+    except OSError as exc:
+        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
+    skill_changed = _apply_skill(skill_target, remove, components, ctx.use_json)
+    try:
+        ignore_changed = _update_skill_ignore(
+            skill_target, scope_value, remove, components
+        )
+    except OSError as exc:
+        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+    _emit_setup_result(
+        "Claude",
+        components,
+        remove,
+        path,
+        skill_target,
+        tool_result,
+        hook_changed,
+        removed_hooks,
+        skill_changed,
+        ignore_changed,
+        ctx,
+    )
 
 
 @click.command("codex")
 @click.option(
-    "--user", "scope", flag_value=Scope.USER.value, help="Write to ~/.codex/hooks.json"
+    "--user", "scope", flag_value=Scope.USER.value, help="Write user configuration."
 )
 @click.option(
     "--project",
     "scope",
     flag_value=Scope.PROJECT.value,
-    default=True,
-    help="Write to ./.codex/hooks.json (default)",
+    help="Write shared project configuration.",
 )
 @click.option(
     "--local",
     "scope",
     flag_value=Scope.LOCAL.value,
-    help="Alias for --project (Codex has no settings.local.json layer)",
+    default=True,
+    help="Write project paths with exact ignores (default).",
 )
+@only_option
+@click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
-    "--remove",
-    is_flag=True,
-    default=False,
-    help="Remove all j-cli managed hooks from the target hooks file.",
+    "--remove", is_flag=True, default=False, help="Remove selected components."
 )
 @pass_ctx
-def codex(ctx: CliContext, scope: str, remove: bool):
-    """Install Codex guards and the notebook-output MCP server.
-
-    notebook-edit-guard is not installed (Codex has no NotebookEdit tool).
-
-    Codex hook schema sources:
-      https://developers.openai.com/codex/hooks
-      https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated
-    """
-    path = _resolve_codex_path(scope)
-    if Scope(scope) == Scope.LOCAL:
+def codex(
+    ctx: CliContext,
+    scope: str,
+    only: tuple[str, ...],
+    skill_dir: Path | None,
+    remove: bool,
+):
+    """Install Codex skill, native hooks, and notebook-output MCP tool."""
+    components = selected_components(only)
+    _validate_skill_dir_option(components, skill_dir, ctx.use_json)
+    scope_value = Scope(scope)
+    if scope_value == Scope.LOCAL and not ctx.use_json:
         click.echo(
-            "Note: Codex has no local config layer; --local is an alias for --project "
-            "and writes ./.codex/hooks.json plus ./.codex/config.toml",
+            "Note: Codex has no native local layer; project paths are managed with exact .gitignore entries.",
             err=True,
         )
-    # Validate existing hook JSON before asking Codex CLI to mutate MCP state.
-    if path.exists():
+    path = _resolve_codex_path(scope)
+    skill_target = _skill_target("codex", scope_value, skill_dir)
+    if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
-    _install_or_remove("codex", path, remove, ctx)
+    _preflight_skill(skill_target, remove, components, ctx.use_json)
+    local_paths: list[Path] = []
+    if Component.HOOK in components:
+        local_paths.append(path)
+    if Component.TOOL in components:
+        local_paths.append(path.parent / "config.toml")
+    if Component.SKILL in components:
+        local_paths.append(skill_target)
+    if scope_value == Scope.LOCAL:
+        preflight_local_untracked(local_paths, ctx.use_json)
+        ignore_dirs = [Path.cwd() / ".codex"]
+        if Component.SKILL in components:
+            ignore_dirs.append(skill_target.parent)
+        preflight_gitignore(ignore_dirs, ctx.use_json)
+    elif scope_value == Scope.PROJECT:
+        ignore_dirs = [Path.cwd() / ".codex"]
+        if Component.SKILL in components:
+            ignore_dirs.append(skill_target.parent)
+        preflight_gitignore(ignore_dirs, ctx.use_json)
+    tool_result = (
+        manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
+        if Component.TOOL in components
+        else "skipped"
+    )
+    try:
+        hook_changed, removed_hooks = (
+            _install_or_remove("codex", path, remove, ctx)
+            if Component.HOOK in components
+            else (False, 0)
+        )
+    except OSError as exc:
+        emit_error("SETUP_WRITE_FAILED", str(exc), ctx.use_json)
+    skill_changed = _apply_skill(skill_target, remove, components, ctx.use_json)
+    try:
+        ignore_changed = _update_codex_ignores(
+            scope_value, remove, components, skill_target
+        )
+    except OSError as exc:
+        emit_error("GITIGNORE_WRITE_FAILED", str(exc), ctx.use_json)
+    _emit_setup_result(
+        "Codex",
+        components,
+        remove,
+        path,
+        skill_target,
+        tool_result,
+        hook_changed,
+        removed_hooks,
+        skill_changed,
+        ignore_changed,
+        ctx,
+    )
 
 
 def _install_or_remove(
     platform: str, path: Path, remove: bool, ctx: CliContext
-) -> None:
-    """Install or remove managed hooks for a given platform."""
+) -> tuple[bool, int]:
+    """Install or remove managed hooks and return changed/removed counts."""
     if remove:
         if not path.exists():
-            emit(
-                {
-                    "status": ResponseStatus.NOOP,
-                    "path": str(path),
-                    "_human": f"Nothing to remove: {path} does not exist.",
-                },
-                ctx.use_json,
-            )
-            return
-
+            return False, 0
         settings = _load_settings(path, ctx.use_json)
         removed = _remove_managed_hooks(settings)
-
-        # Prune empty hook structures
         if "hooks" in settings:
-            for _event_key in list(settings["hooks"].keys()):
-                if not settings["hooks"].get(_event_key):
-                    settings["hooks"].pop(_event_key, None)
+            for event_key in list(settings["hooks"]):
+                if not settings["hooks"].get(event_key):
+                    settings["hooks"].pop(event_key, None)
             if not settings["hooks"]:
                 del settings["hooks"]
+        if removed:
+            if settings:
+                _write_settings(path, settings)
+            else:
+                path.unlink()
+        return removed > 0, removed
 
-        if settings:
-            _write_settings(path, settings)
-        else:
-            path.unlink()
-
-        if removed == 0:
-            emit(
-                {
-                    "status": ResponseStatus.NOOP,
-                    "removed": 0,
-                    "path": str(path),
-                    "_human": f"No managed hooks found in {path}; nothing removed.",
-                },
-                ctx.use_json,
-            )
-        else:
-            emit(
-                {
-                    "status": ResponseStatus.OK,
-                    "removed": removed,
-                    "path": str(path),
-                    "_human": f"Removed {removed} managed hook(s) from {path}.",
-                },
-                ctx.use_json,
-            )
-        return
-
-    # Install path
     path.parent.mkdir(parents=True, exist_ok=True)
-
     if platform == "codex":
         _ensure_codex_feature_flag(path)
-
+    before = path.read_text(encoding="utf-8") if path.exists() else None
     settings = _load_settings(path, ctx.use_json)
     for block_desc in _MANAGED_BLOCKS:
-        if platform not in block_desc.get("platforms", []):
-            continue
-        _merge_hook(settings, block_desc, platform)
-    _write_settings(path, settings)
-
-    emit(
-        {
-            "status": ResponseStatus.OK,
-            "path": str(path),
-            "_human": f"Wrote {platform.title()} hooks to {path}",
-        },
-        ctx.use_json,
-    )
+        if platform in block_desc.get("platforms", []):
+            _merge_hook(settings, block_desc, platform)
+    rendered = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+    if rendered == before:
+        return False, 0
+    path.write_text(rendered, encoding="utf-8")
+    return True, 0
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +395,7 @@ def _resolve_claude_path(scope: str) -> Path:
 def _resolve_codex_path(scope: str) -> Path:
     s = Scope(scope)
     if s == Scope.USER:
-        return Path.home() / ".codex" / "hooks.json"
+        return _codex_home() / "hooks.json"
     # Codex only reads hooks.json — there is no hooks.local.json layer.
     # Both --project and --local write to ./.codex/hooks.json.
     return Path.cwd() / ".codex" / "hooks.json"
@@ -465,3 +525,149 @@ def _install_dsh_hooks(settings: dict) -> None:
 def _remove_dsh_hooks(settings: dict) -> int:
     """Remove only DSH-managed hook blocks from a JSON settings map."""
     return _remove_managed_hooks(settings, _DSH_MANAGED_VALS)
+
+
+def _emit_setup_result(
+    platform: str,
+    components: frozenset[Component],
+    remove: bool,
+    hook_path: Path,
+    skill_path: Path,
+    tool_result: str,
+    hook_changed: bool,
+    removed_hooks: int,
+    skill_changed: bool,
+    ignore_changed: bool,
+    ctx: CliContext,
+) -> None:
+    changed = (
+        hook_changed
+        or skill_changed
+        or ignore_changed
+        or tool_result in {"installed", "removed"}
+    )
+    if remove and Component.SKILL in components and not ctx.use_json:
+        click.echo(
+            f"Note: removing shared skill {skill_path} affects every host that discovers it.",
+            err=True,
+        )
+    emit(
+        {
+            "status": ResponseStatus.OK if changed else ResponseStatus.NOOP,
+            "components": sorted(component.value for component in components),
+            "path": str(hook_path),
+            "hook_path": str(hook_path),
+            "skill_path": str(skill_path) if Component.SKILL in components else None,
+            "tool_result": tool_result,
+            "removed": removed_hooks
+            + (1 if remove and skill_changed else 0)
+            + (1 if tool_result == "removed" else 0),
+            "_human": (
+                f"{'Removed' if remove else 'Updated'} {platform} components: {', '.join(sorted(c.value for c in components))}"
+                if changed
+                else (
+                    f"Nothing to remove: {hook_path} does not exist or has no selected managed components."
+                    if remove
+                    else f"{platform} selected components are already up to date."
+                )
+            ),
+        },
+        ctx.use_json,
+    )
+
+
+def _validate_skill_dir_option(
+    components: frozenset[Component], skill_dir: Path | None, use_json: bool
+) -> None:
+    if skill_dir is not None and Component.SKILL not in components:
+        emit_error(
+            "SKILL_DIR_WITHOUT_SKILL",
+            "--skill-dir requires selecting the skill component",
+            use_json,
+        )
+
+
+def _skill_target(platform: str, scope: Scope, override: Path | None) -> Path:
+    if override is not None:
+        root = override.expanduser()
+        if not root.is_absolute():
+            root = Path.cwd() / root
+        return root.resolve() / "j-cli"
+    if platform == "claude":
+        root = (
+            Path.home() / ".claude" / "skills"
+            if scope == Scope.USER
+            else Path.cwd() / ".claude" / "skills"
+        )
+    elif scope == Scope.USER:
+        root = _codex_home() / "skills"
+    else:
+        root = Path.cwd() / ".agents" / "skills"
+    return root / "j-cli"
+
+
+def _preflight_skill(
+    target: Path, remove: bool, components: frozenset[Component], use_json: bool
+) -> None:
+    if Component.SKILL not in components:
+        return
+    from .skill import SkillError, preflight_install_skill, preflight_remove_skill
+
+    try:
+        (preflight_remove_skill if remove else preflight_install_skill)(target)
+    except SkillError as exc:
+        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+
+
+def _apply_skill(
+    target: Path, remove: bool, components: frozenset[Component], use_json: bool
+) -> bool:
+    if Component.SKILL not in components:
+        return False
+    from .skill import SkillError, install_skill, remove_skill
+
+    try:
+        return (remove_skill if remove else install_skill)(target)
+    except SkillError as exc:
+        emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+    return False
+
+
+def _update_skill_ignore(
+    target: Path, scope: Scope, remove: bool, components: frozenset[Component]
+) -> bool:
+    if Component.SKILL not in components or scope == Scope.USER:
+        return False
+    return update_managed_gitignore(
+        target.parent,
+        {Component.SKILL: ["/j-cli/"]},
+        components,
+        scope == Scope.LOCAL and not remove,
+    )
+
+
+def _update_codex_ignores(
+    scope: Scope, remove: bool, components: frozenset[Component], skill_target: Path
+) -> bool:
+    if scope == Scope.USER:
+        return False
+    enabled = scope == Scope.LOCAL and not remove
+    changed = update_managed_gitignore(
+        Path.cwd() / ".codex",
+        {Component.HOOK: ["/hooks.json"], Component.TOOL: ["/config.toml"]},
+        components,
+        enabled,
+    )
+    if Component.SKILL in components:
+        changed = (
+            _update_skill_ignore(skill_target, scope, remove, components) or changed
+        )
+    return changed
+
+
+def _codex_home() -> Path:
+    return (
+        Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        .expanduser()
+        .resolve()
+    )

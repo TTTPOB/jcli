@@ -31,6 +31,8 @@ export interface Config {
   executable?: string
   timeoutMs?: number
   diagnosticMaxChars?: number
+  hooks?: boolean
+  tools?: boolean
 }
 
 type TextBlock = { type: 'text'; text: string }
@@ -155,6 +157,8 @@ type NormalizedConfig = {
   executable: string
   timeoutMs: number
   diagnosticMaxChars: number
+  hooks: boolean
+  tools: boolean
 }
 
 function validatePositiveBound(label: string, value: unknown, max: number): number {
@@ -180,7 +184,12 @@ function normalizeConfig(config: Config | undefined): NormalizedConfig {
   const diagnosticMaxChars = input.diagnosticMaxChars === undefined
     ? DEFAULT_DIAGNOSTIC_MAX_CHARS
     : validatePositiveBound('diagnosticMaxChars', input.diagnosticMaxChars, MAX_DIAGNOSTIC_MAX_CHARS)
-  return { executable, timeoutMs, diagnosticMaxChars }
+  const hooks = input.hooks ?? true
+  const tools = input.tools ?? true
+  if (typeof hooks !== 'boolean' || typeof tools !== 'boolean') {
+    throw new Error('jcli-dsh: hooks and tools must be booleans')
+  }
+  return { executable, timeoutMs, diagnosticMaxChars, hooks, tools }
 }
 
 /** Quote one executable as one POSIX shell word without interpreting its contents. */
@@ -775,6 +784,7 @@ export function apply(ctx: Context, config?: Config): void {
   ensureSandboxPolicy(ctx)
   const normalized = normalizeConfig(config)
   const register = (scope: Context): void => {
+    if (!normalized.tools) return
     try {
       registerOutputTool(scope, normalized)
     } catch (error: unknown) {
@@ -783,6 +793,8 @@ export function apply(ctx: Context, config?: Config): void {
   }
   if (typeof ctx.inject === 'function') ctx.inject(['tools'], register)
   else register(ctx)
+
+  if (!normalized.hooks) return
 
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision> => {
     const guards = exec.name === 'bash'

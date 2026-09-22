@@ -68,9 +68,7 @@ def manage_codex_mcp(
     """Install or remove the managed Codex MCP entry in the selected config."""
     resolved_scope = Scope(scope)
     root = project_root.resolve()
-    config_dir = (
-        Path.home() / ".codex" if resolved_scope == Scope.USER else root / ".codex"
-    )
+    config_dir = _codex_home() if resolved_scope == Scope.USER else root / ".codex"
     expected_args = _expected_args(resolved_scope, root)
     entry = _read_codex_entry(config_dir, root, use_json)
     scope_label = "user" if resolved_scope == Scope.USER else "project"
@@ -302,3 +300,11 @@ def _run_codex(command: list[str], cwd: Path, config_dir: Path, use_json: bool) 
                 use_json,
             )
         emit_error("MCP_SETUP_FAILED", detail, use_json)
+
+
+def _codex_home() -> Path:
+    return (
+        Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        .expanduser()
+        .resolve()
+    )

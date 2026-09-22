@@ -4,6 +4,7 @@ import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 
 const service = "j-cli"
+const enabledCapabilities = {"hook":true,"tool":true}
 const executable = process.env.JCLI_BIN || "j-cli"
 const maxTransportBytes = 32 * 1024 * 1024
 const maxStdoutBytes = maxTransportBytes + 1
@@ -363,12 +364,14 @@ export const JcliPlugin = async ({ client, directory }) => {
     cwd: directory,
   })
 
-  return {
-    tool: {
+  const plugin = {
+    tool: enabledCapabilities.tool ? {
       read_notebook_output: notebookOutputTool,
-    },
+    } : {},
 
     "tool.execute.before": async (input, output) => {
+      if (!enabledCapabilities.hook) return
+
       if (input.tool === "bash") {
         const cwd = path.resolve(directory, output.args.workdir || ".")
         const payload = {
@@ -395,6 +398,7 @@ export const JcliPlugin = async ({ client, directory }) => {
     },
 
     "tool.execute.after": async (input, output) => {
+      if (!enabledCapabilities.hook) return
       if (input.tool === "edit" || input.tool === "write") {
         const payload = editPayload(input.tool, input.args)
         payload.hook_event_name = "PostToolUse"
@@ -410,4 +414,5 @@ export const JcliPlugin = async ({ client, directory }) => {
       }
     },
   }
+  return plugin
 }

@@ -112,7 +112,7 @@ def test_damaged_resource_header_fails_before_creating_any_file(monkeypatch, tmp
     monkeypatch.setattr(
         dsh_module.resources, "files", lambda _package: DamagedResource()
     )
-    result = _invoke(CliRunner(), ["--project"])
+    result = _invoke(CliRunner(), ["--project", "--only", "hook", "--only", "tool"])
 
     assert result.exit_code == 1
     assert "DSH_PLUGIN_INVALID" in result.stderr
