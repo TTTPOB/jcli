@@ -25,13 +25,17 @@ from .common import (
     Scope,
     apply_skill,
     component_ignore_dirs,
+    force_option,
     only_option,
+    path_exists,
     preflight_gitignore,
     preflight_local_untracked,
     preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_force,
     validate_skill_dir,
+    warn_global_conflicts,
 )
 from .hooks import _remove_dsh_hooks
 
@@ -69,6 +73,7 @@ _DSH_VERSION_RE = re.compile(r"^// j-cli version .*$")
     help="Write $DSH_HOME/cordis.patch.yml and its native plugin (global scope).",
 )
 @only_option
+@force_option
 @click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
     "--remove", is_flag=True, default=False, help="Remove selected components."
@@ -78,11 +83,13 @@ def dsh(
     ctx: CliContext,
     scope: str,
     only: tuple[str, ...],
+    force: bool,
     skill_dir: Path | None,
     remove: bool,
 ) -> None:
     """Install DSH skill plus independent native hook and tool capabilities."""
     components = selected_components(only)
+    validate_force(force, remove, ctx.use_json)
     validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
@@ -92,7 +99,11 @@ def dsh(
         )
     config_path, plugin_path = _resolve_paths(scope_value)
     skill_target = _skill_target(scope_value, skill_dir)
-    preflight_skill(skill_target, components, remove, ctx.use_json)
+    if not remove:
+        _warn_global_dsh_conflicts(
+            scope_value, components, config_path, plugin_path, skill_target
+        )
+    preflight_skill(skill_target, components, remove, ctx.use_json, force)
     local_paths: list[Path] = []
     if components & {Component.HOOK, Component.TOOL}:
         local_paths.extend([config_path, plugin_path])
@@ -108,9 +119,17 @@ def dsh(
     try:
         if components & {Component.HOOK, Component.TOOL}:
             plugin_result = _install_or_remove(
-                scope_value, config_path, plugin_path, remove, ctx, components
+                scope_value,
+                config_path,
+                plugin_path,
+                remove,
+                ctx,
+                components,
+                force,
             )
-        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
+        skill_changed = apply_skill(
+            skill_target, components, remove, ctx.use_json, force
+        )
         ignore_changed = _update_ignores(
             scope_value, components, remove, config_path, plugin_path, skill_target
         )
@@ -143,6 +162,99 @@ def dsh(
             ),
         },
         ctx.use_json,
+    )
+
+
+def _global_dsh_config_capability(path: Path, component: Component) -> bool | None:
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+        root = yaml.compose(text)
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    if root is not None and (
+        not isinstance(root, SequenceNode)
+        or any(not isinstance(item, MappingNode) for item in root.value)
+    ):
+        return None
+    matches = _marked_matches(text)
+    if not matches:
+        return _DSH_ROW_ID in _row_ids(root)
+    try:
+        loaded = yaml.safe_load(matches[0].group(0))
+        row = loaded[0]
+        if "insert" in row:
+            row = row["insert"][0]
+        config = row["config"]
+    except (yaml.YAMLError, KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    key = f"{component.value}s"
+    if set(config) & {"hooks", "tools"} != {"hooks", "tools"} or any(
+        not isinstance(config.get(name), bool) for name in ("hooks", "tools")
+    ):
+        return None
+    return config[key]
+
+
+def _global_dsh_plugin_is_foreign(path: Path) -> bool | None:
+    if not path_exists(path):
+        return False
+    if not path.exists():
+        return True
+    try:
+        return not _has_plugin_header(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError):
+        return None
+
+
+def _warn_global_dsh_conflicts(
+    scope: Scope,
+    components: frozenset[Component],
+    config_target: Path,
+    plugin_target: Path,
+    skill_target: Path,
+) -> None:
+    dsh_home = Path(os.environ.get("DSH_HOME") or "~/.dsh").expanduser().resolve()
+    agents_home = (
+        Path(os.environ.get("DSH_AGENTS_HOME") or Path.home() / ".agents")
+        .expanduser()
+        .resolve()
+    )
+    global_config = dsh_home / "cordis.patch.yml"
+    global_plugin = dsh_home / "plugins" / "jcli.ts"
+    hook_probes = [
+        (
+            global_config,
+            lambda path: _global_dsh_config_capability(path, Component.HOOK),
+        ),
+        (global_plugin, _global_dsh_plugin_is_foreign),
+    ]
+    tool_probes = [
+        (
+            global_config,
+            lambda path: _global_dsh_config_capability(path, Component.TOOL),
+        ),
+        (global_plugin, _global_dsh_plugin_is_foreign),
+    ]
+    warn_global_conflicts(
+        scope,
+        components,
+        {
+            Component.SKILL: skill_target,
+            Component.HOOK: config_target,
+            Component.TOOL: plugin_target,
+        },
+        {
+            Component.SKILL: [
+                (agents_home / "skills" / "j-cli", path_exists),
+                (dsh_home / "skills" / "j-cli", path_exists),
+            ],
+            Component.HOOK: hook_probes,
+            Component.TOOL: tool_probes,
+        },
     )
 
 
@@ -307,21 +419,95 @@ def _replace_or_append_block(text: str, block: str, root: Node | None) -> str:
         if prefix and not prefix.endswith("\n"):
             prefix += "\n"
         return prefix + block + text[end:]
+    if isinstance(root, SequenceNode) and root.flow_style:
+        start = root.start_mark.index
+        end = root.end_mark.index
+        root.flow_style = False
+        rendered = yaml.serialize(root)
+        text = text[:start] + rendered + text[end:]
     if not text:
         return block
     separator = "" if text.endswith("\n") else "\n"
     return text + separator + block
 
 
-def _validate_unmanaged_ids(path: Path, text: str, use_json: bool) -> Node | None:
+def _node_removal_span(
+    text: str, node: Node, parent_flow_style: bool | None
+) -> tuple[int, int]:
+    if not parent_flow_style:
+        start = text.rfind("\n", 0, node.start_mark.index) + 1
+        end = node.end_mark.index
+        if end < len(text) and text[end] == "\n":
+            end += 1
+        return start, end
+
+    start = node.start_mark.index
+    end = node.end_mark.index
+    after = end
+    while after < len(text) and text[after].isspace():
+        after += 1
+    if after < len(text) and text[after] == ",":
+        end = after + 1
+        while end < len(text) and text[end].isspace():
+            end += 1
+        return start, end
+    before = start - 1
+    while before >= 0 and text[before].isspace():
+        before -= 1
+    if before >= 0 and text[before] == ",":
+        start = before
+    return start, end
+
+
+def _row_has_id(node: Node, row_id: str) -> bool:
+    if not isinstance(node, MappingNode):
+        return False
+    value = _mapping_value(node, "id")
+    return isinstance(value, ScalarNode) and value.value == row_id
+
+
+def _remove_unmanaged_id_rows(text: str, root: Node | None) -> str:
+    if not isinstance(root, SequenceNode):
+        return text
+    spans: list[tuple[int, int]] = []
+    for item in root.value:
+        if not isinstance(item, MappingNode):
+            continue
+        if _row_has_id(item, _DSH_ROW_ID):
+            spans.append(_node_removal_span(text, item, root.flow_style))
+            continue
+        inserted = _mapping_value(item, "insert")
+        if not isinstance(inserted, SequenceNode):
+            continue
+        matching = [
+            child for child in inserted.value if _row_has_id(child, _DSH_ROW_ID)
+        ]
+        if matching and len(matching) == len(inserted.value):
+            spans.append(_node_removal_span(text, item, root.flow_style))
+        else:
+            spans.extend(
+                _node_removal_span(text, child, inserted.flow_style)
+                for child in matching
+            )
+    for start, end in sorted(spans, reverse=True):
+        text = text[:start] + text[end:]
+    return text
+
+
+def _prepare_unmanaged_text(
+    path: Path, text: str, use_json: bool, force: bool
+) -> tuple[str, Node | None]:
     root = _parse_yaml(path, text, use_json)
-    if _DSH_ROW_ID in _row_ids(root):
+    if _DSH_ROW_ID not in _row_ids(root):
+        return text, root
+    if not force:
         emit_error(
             "DSH_CONFIG_CONFLICT",
             f"{path}: unmanaged row id '{_DSH_ROW_ID}' already exists",
             use_json,
         )
-    return root
+    cleaned = _remove_unmanaged_id_rows(text, root)
+    return cleaned, _parse_yaml(path, cleaned, use_json)
 
 
 def _read_hook_json(path: Path, use_json: bool) -> dict[str, Any]:
@@ -427,8 +613,10 @@ def _has_plugin_header(source: str) -> bool:
     return first_line == _DSH_PLUGIN_MARKER
 
 
-def _validate_plugin_conflict(path: Path, use_json: bool) -> None:
-    if not path.exists():
+def _validate_plugin_conflict(path: Path, use_json: bool, force: bool = False) -> None:
+    if not (path.exists() or path.is_symlink()):
+        return
+    if force:
         return
     try:
         current = path.read_text(encoding="utf-8")
@@ -527,11 +715,10 @@ def _remove_config_block(
 
 
 def _warn_duplicate_scope(scope: Scope) -> None:
-    """Warn when workspace and global native rows may both run."""
-    if scope == Scope.USER:
-        other = Path.cwd().resolve() / ".dsh" / "cordis.yml"
-    else:
-        other, _ = _resolve_paths(Scope.USER)
+    """Warn a user install when a workspace native row may also run."""
+    if scope != Scope.USER:
+        return
+    other = Path.cwd().resolve() / ".dsh" / "cordis.yml"
     if other.exists() and _DSH_MARKER_RE.search(_read_text(other)):
         click.echo(
             f"warning: {other} also contains the j-cli DSH row; both scopes may run duplicate hooks",
@@ -581,11 +768,16 @@ def _install_or_remove(
     remove: bool,
     ctx: CliContext,
     components: frozenset[Component],
+    force: bool = False,
 ) -> dict[str, Any]:
     config_text = _read_text(config_path)
     before_capabilities = _configured_capabilities(
         config_path, config_text, ctx.use_json
     )
+    if force and path_exists(plugin_path):
+        current_plugin = _read_text(plugin_path)
+        if not _has_plugin_header(current_plugin):
+            before_capabilities = frozenset()
     chosen = components & {Component.HOOK, Component.TOOL}
     after_capabilities = (
         before_capabilities - chosen if remove else before_capabilities | chosen
@@ -626,17 +818,26 @@ def _install_or_remove(
     source = _versioned_plugin_source(
         _plugin_resource_source(ctx.use_json), ctx.use_json
     )
-    _validate_plugin_conflict(plugin_path, ctx.use_json)
+    _validate_plugin_conflict(plugin_path, ctx.use_json, force)
     existing_root = _parse_yaml(config_path, config_text, ctx.use_json)
     unmanaged_text = _remove_marked_blocks(config_text)
-    _validate_unmanaged_ids(config_path, unmanaged_text, ctx.use_json)
+    cleaned_text, cleaned_root = _prepare_unmanaged_text(
+        config_path, unmanaged_text, ctx.use_json, force
+    )
+    if cleaned_text != unmanaged_text:
+        config_text = cleaned_text
+        existing_root = cleaned_root
     config_after = _replace_or_append_block(
         config_text,
         _managed_block(scope, plugin_path, after_capabilities),
         existing_root,
     )
     _parse_yaml(config_path, config_after, ctx.use_json)
-    plugin_changed = not plugin_path.exists() or _read_text(plugin_path) != source
+    plugin_changed = (
+        not plugin_path.exists()
+        or _read_text(plugin_path) != source
+        or (force and plugin_path.is_symlink())
+    )
     config_changed = config_after != config_text
     legacy_changed = _legacy_changed(legacy_path, legacy_before, legacy_after)
 

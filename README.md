@@ -238,7 +238,20 @@ Skills use the host's discovery paths, preferring the shared `.agents/skills/j-c
 | DSH | `.agents/skills/j-cli` | `$DSH_AGENTS_HOME/skills/j-cli` (default `~/.agents/skills/j-cli`) |
 | OpenCode | `.agents/skills/j-cli` | `~/.agents/skills/j-cli` |
 
-The skill is bundled with the Python package and installs offline without Node, an external skill installer, or a source checkout. After upgrading j-cli, rerun `setup <host> --only skill` with the same scope and optional `--skill-dir` to update the installed copy. Existing unmanaged directories, symbolic links left by other installers, and modified managed files are not overwritten. Back up local changes and remove the old installation through its original installer before switching to j-cli management. Uninstall preserves extra user files.
+The skill is bundled with the Python package and installs offline without Node, an external skill installer, or a source checkout. After upgrading j-cli, rerun `setup <host> --only skill` with the same scope and optional `--skill-dir` to update the installed copy. Without `--force`, existing unmanaged directories, symbolic links left by other installers, and modified managed files are not overwritten. Normal uninstall preserves extra user files.
+
+Project/local installation checks the selected components in the host's known global discovery/configuration locations and warns if a matching global integration exists. It still installs at the requested scope, never modifies the global copy, and leaves loading precedence to the host. The check includes alternate supported skill directories, not just j-cli's preferred installation path; for example, [OpenCode discovers global skills](https://opencode.ai/docs/skills/#place-files) in `.agents`, `.claude`, and its own config directory. Warnings go to stderr so JSON stdout remains parseable.
+
+Use `--force` to take over conflicting targets for the selected components:
+
+```bash
+j-cli setup dsh --force                    # replace selected targets at local scope
+j-cli setup claude --only tool --force     # take over the named MCP entry only
+j-cli setup dsh --only skill --force       # replace the complete target j-cli skill
+j-cli setup dsh --user --only skill --force # explicitly target the global skill
+```
+
+**Back up local changes first.** Forced skill installation replaces the entire target `j-cli/` directory, including extra files. If that target is a symbolic link, it replaces the link itself without modifying the linked source. For hooks, MCP and plugins, force remains confined to j-cli's hook entries, the `jcli-notebook-output` server, or the dedicated `jcli.js`/`jcli.ts` plugin and its corresponding configuration row; unrelated user configuration is preserved. It does not bypass invalid configuration or the local-scope Git tracking check, and cannot be combined with `--remove`. Finding a global copy never expands the force operation to that copy.
 
 DSH and OpenCode share one plugin file between `hook` and `tool`. Selecting one capability does not remove the other, including its local ignore rules. To make the entire plugin project-shared, select both with `--project --only hook --only tool` (or use `--project` for all components). User-written ignore rules are never removed; check them if project files remain ignored.
 
@@ -256,7 +269,7 @@ j-cli setup claude --remove --only tool    # preserve skill and hooks
 j-cli setup claude --only skill --skill-dir ./agent-skills
 ```
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry if it points to another command. The server exposes one read-only call, `read_notebook_output`, which lists a cell's saved outputs when `output_index` is omitted and reads one output when it is provided. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. A user-scoped server returns `ROOTS_REQUIRED` if the client provides no roots. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
+The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry pointing to another command unless installation explicitly uses `--force`. The server exposes one read-only call, `read_notebook_output`, which lists a cell's saved outputs when `output_index` is omitted and reads one output when it is provided. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. A user-scoped server returns `ROOTS_REQUIRED` if the client provides no roots. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
 
 The notebook-output server requires the optional MCP dependencies. Install them with `uv tool install 'jupyter-jcli[mcp]'` (or the equivalent extras-aware command for your environment). If the extra is missing, `j-cli mcp serve` reports that `jupyter-jcli[mcp]` is required.
 
@@ -321,7 +334,7 @@ j-cli setup codex --remove --only hook  # preserve skill and MCP tool
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected. The server exposes the same single `read_notebook_output` call as Claude setup. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots and return `ROOTS_REQUIRED` if none are available. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
+The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected unless installation explicitly uses `--force`. The server exposes the same single `read_notebook_output` call as Claude setup. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots and return `ROOTS_REQUIRED` if none are available. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
 
 **What gets installed (4 hooks):**
 
@@ -364,7 +377,7 @@ Workspace paths use the canonical current working directory. The workspace modul
 and workspace scopes always use separate adapter paths.
 The installer validates the packaged resource, every existing YAML/JSON input,
 and TS ownership before writing. Adapter replacement is atomic and an existing
-TS file without the j-cli managed header is never overwritten or removed.
+TS file without the j-cli managed header is overwritten only with `--force`; removal still requires ownership.
 Re-running is idempotent; YAML comments, `!!js` tags, explicit document markers,
 empty sequences, unrelated rows, and unrelated legacy settings are preserved.
 When both scopes are present, setup warns because DSH could run both adapters.
@@ -400,7 +413,7 @@ j-cli setup opencode --only tool           # output tool without guards
 j-cli setup opencode --remove --only hook  # preserve tool and skill
 ```
 
-The installer updates only files carrying the j-cli managed marker. It refuses to overwrite or remove an unrelated `jcli.js`. Avoid installing both project and user copies because OpenCode loads both plugin directories.
+The installer normally updates only files carrying the j-cli managed marker. `--force` allows replacement of an unrelated `jcli.js` with the selected capabilities, but removal still requires ownership. Avoid installing both project and user copies because OpenCode loads both plugin directories.
 
 The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output. It also exposes the single read-only `read_notebook_output` tool, using OpenCode's normal read permission check and the shared list-or-read contract; it does not require the MCP extra.
 

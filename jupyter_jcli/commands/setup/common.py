@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from enum import Enum
 from pathlib import Path
 
 import click
 
 from jupyter_jcli.output import emit_error
+
+GlobalProbe = tuple[Path, Callable[[Path], bool | None]]
 
 
 class Scope(str, Enum):
@@ -48,6 +50,26 @@ def only_option(function):
     )(function)
 
 
+def force_option(function):
+    """Add the shared explicit conflict-takeover option."""
+    return click.option(
+        "--force",
+        is_flag=True,
+        default=False,
+        help="Replace conflicting selected components during installation.",
+    )(function)
+
+
+def validate_force(force: bool, remove: bool, use_json: bool) -> None:
+    """Reject force removal before any selected component can be changed."""
+    if force and remove:
+        emit_error(
+            "FORCE_WITH_REMOVE",
+            "--force cannot be combined with --remove",
+            use_json,
+        )
+
+
 def validate_skill_dir(
     components: frozenset[Component], skill_dir: Path | None, use_json: bool
 ) -> None:
@@ -64,13 +86,17 @@ def preflight_skill(
     components: frozenset[Component],
     remove: bool,
     use_json: bool,
+    force: bool = False,
 ) -> None:
     if Component.SKILL not in components:
         return
     from .skill import SkillError, preflight_install_skill, preflight_remove_skill
 
     try:
-        (preflight_remove_skill if remove else preflight_install_skill)(target)
+        if remove:
+            preflight_remove_skill(target)
+        else:
+            preflight_install_skill(target, force=force)
     except (SkillError, OSError) as exc:
         emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
 
@@ -80,15 +106,61 @@ def apply_skill(
     components: frozenset[Component],
     remove: bool,
     use_json: bool,
+    force: bool = False,
 ) -> bool:
     if Component.SKILL not in components:
         return False
     from .skill import SkillError, install_skill, remove_skill
 
     try:
-        return (remove_skill if remove else install_skill)(target)
+        if remove:
+            return remove_skill(target)
+        return install_skill(target, force=force)
     except (SkillError, OSError) as exc:
         emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+
+
+def path_exists(path: Path) -> bool:
+    """Return whether a path entry exists, including a broken symlink."""
+    return path.exists() or path.is_symlink()
+
+
+def warn_global_conflicts(
+    scope: Scope,
+    components: frozenset[Component],
+    targets: Mapping[Component, Path],
+    probes: Mapping[Component, Iterable[GlobalProbe]],
+) -> None:
+    """Warn about selected user-scope integrations shadowing this install."""
+    if scope == Scope.USER:
+        return
+    for component in components:
+        target = targets.get(component)
+        if target is None:
+            continue
+        expanded_target = target.expanduser()
+        target_location = (expanded_target.parent.resolve(), expanded_target.name)
+        for path, inspect in probes.get(component, ()):
+            candidate = path.expanduser()
+            candidate_location = (candidate.parent.resolve(), candidate.name)
+            if candidate_location == target_location:
+                continue
+            try:
+                present = inspect(candidate)
+            except (OSError, ValueError, TypeError):
+                present = None
+            if present is None:
+                click.echo(
+                    f"warning: could not inspect global {component.value} integration "
+                    f"at {candidate}; continuing with target {target}",
+                    err=True,
+                )
+            elif present:
+                click.echo(
+                    f"warning: global {component.value} integration exists at "
+                    f"{candidate}; continuing with target {target}",
+                    err=True,
+                )
 
 
 def component_ignore_dirs(

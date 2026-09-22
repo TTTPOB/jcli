@@ -125,6 +125,10 @@ def test_preflight_rejects_non_directory_existing_ancestor(tmp_path, bundled_ski
     with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
         preflight_install_skill(target)
     with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
+        preflight_install_skill(target, force=True)
+    with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
+        install_skill(target, force=True)
+    with pytest.raises(SkillConflictError, match="ancestor is not a directory"):
         preflight_remove_skill(target)
 
     assert blocking_file.read_text(encoding="utf-8") == "keep me\n"
@@ -192,6 +196,95 @@ def test_missing_bundled_resource_fails_before_creating_target(tmp_path, monkeyp
     with pytest.raises(SkillResourceError, match="missing or unreadable"):
         install_skill(target)
     assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "target_kind",
+    [
+        "unmanaged-directory",
+        "modified-managed-directory",
+        "invalid-marker",
+        "file",
+        "directory-symlink",
+        "dangling-symlink",
+    ],
+)
+def test_force_fully_replaces_conflicting_target(tmp_path, bundled_skill, target_kind):
+    target = tmp_path / "j-cli"
+    symlink_source = None
+
+    if target_kind == "unmanaged-directory":
+        target.mkdir()
+        (target / "old.txt").write_text("user owned\n", encoding="utf-8")
+    elif target_kind == "modified-managed-directory":
+        install_skill(target)
+        (target / "SKILL.md").write_text("user edit\n", encoding="utf-8")
+        (target / "old.txt").write_text("extra\n", encoding="utf-8")
+    elif target_kind == "invalid-marker":
+        install_skill(target)
+        (target / ".j-cli-managed.json").write_text("not json", encoding="utf-8")
+        (target / "old.txt").write_text("extra\n", encoding="utf-8")
+    elif target_kind == "file":
+        target.write_text("user owned\n", encoding="utf-8")
+    elif target_kind == "directory-symlink":
+        symlink_source = tmp_path / "source"
+        symlink_source.mkdir()
+        (symlink_source / "old.txt").write_text("source data\n", encoding="utf-8")
+        target.symlink_to(symlink_source, target_is_directory=True)
+    else:
+        target.symlink_to(tmp_path / "missing-source", target_is_directory=True)
+
+    with pytest.raises(SkillConflictError):
+        preflight_install_skill(target)
+    with pytest.raises(SkillConflictError):
+        install_skill(target)
+
+    preflight_install_skill(target, force=True)
+    assert install_skill(target, force=True) is True
+
+    assert target.is_dir()
+    assert not target.is_symlink()
+    assert {path.relative_to(target).as_posix() for path in target.rglob("*")} == {
+        ".j-cli-managed.json",
+        "SKILL.md",
+        "scripts",
+        "scripts/search.py",
+        "workflows",
+        "workflows/view.md",
+    }
+    if symlink_source is not None:
+        assert (symlink_source / "old.txt").read_text(encoding="utf-8") == (
+            "source data\n"
+        )
+
+
+def test_force_resource_failure_preserves_existing_target(tmp_path, monkeypatch):
+    target = tmp_path / "j-cli"
+    target.write_text("keep me\n", encoding="utf-8")
+    monkeypatch.setattr(skill_module, "_skill_resource", lambda: tmp_path / "missing")
+
+    with pytest.raises(SkillResourceError, match="missing or unreadable"):
+        install_skill(target, force=True)
+
+    assert target.read_text(encoding="utf-8") == "keep me\n"
+
+
+def test_force_staging_failure_preserves_existing_target(
+    tmp_path, bundled_skill, monkeypatch
+):
+    target = tmp_path / "j-cli"
+    target.mkdir()
+    (target / "notes.txt").write_text("keep me\n", encoding="utf-8")
+
+    def fail_write(staging, files):
+        (staging / "partial.txt").write_text("partial\n", encoding="utf-8")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(skill_module, "_write_tree", fail_write)
+    with pytest.raises(OSError, match="disk full"):
+        install_skill(target, force=True)
+    assert (target / "notes.txt").read_text(encoding="utf-8") == "keep me\n"
+    assert list(tmp_path.glob(".j-cli.*")) == []
 
 
 @pytest.mark.parametrize("marker_text", ["not json", "{}", '{"schema": 99}'])

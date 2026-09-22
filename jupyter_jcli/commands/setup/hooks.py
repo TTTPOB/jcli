@@ -16,13 +16,17 @@ from .common import (
     Scope,
     apply_skill,
     component_ignore_dirs,
+    force_option,
     only_option,
+    path_exists,
     preflight_gitignore,
     preflight_local_untracked,
     preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_force,
     validate_skill_dir,
+    warn_global_conflicts,
 )
 from .mcp import manage_claude_mcp, manage_codex_mcp
 
@@ -146,6 +150,7 @@ _DSH_MANAGED_VALS = _managed_values(_DSH_MANAGED_BLOCKS)
     help="Write native local configuration (default).",
 )
 @only_option
+@force_option
 @click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
     "--remove", is_flag=True, default=False, help="Remove selected components."
@@ -155,18 +160,22 @@ def claude(
     ctx: CliContext,
     scope: str,
     only: tuple[str, ...],
+    force: bool,
     skill_dir: Path | None,
     remove: bool,
 ):
     """Install Claude skill, native hooks, and notebook-output MCP tool."""
     components = selected_components(only)
+    validate_force(force, remove, ctx.use_json)
     validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     path = _resolve_claude_path(scope)
     skill_target = _skill_target("claude", scope_value, skill_dir)
+    if not remove:
+        _warn_claude_global_conflicts(scope_value, components, path, skill_target)
     if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    preflight_skill(skill_target, components, remove, ctx.use_json)
+    preflight_skill(skill_target, components, remove, ctx.use_json, force)
     ignore_dirs = component_ignore_dirs(scope_value, components, None, skill_target)
     if scope_value == Scope.LOCAL:
         preflight_local_untracked(
@@ -175,7 +184,7 @@ def claude(
     preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
         tool_result = (
-            manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json)
+            manage_claude_mcp(scope, Path.cwd(), remove, ctx.use_json, force)
             if Component.TOOL in components
             else "skipped"
         )
@@ -184,7 +193,9 @@ def claude(
             if Component.HOOK in components
             else (False, 0)
         )
-        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
+        skill_changed = apply_skill(
+            skill_target, components, remove, ctx.use_json, force
+        )
         ignore_changed = _update_skill_ignore(
             skill_target, scope_value, remove, components
         )
@@ -223,6 +234,7 @@ def claude(
     help="Write project paths with exact ignores (default).",
 )
 @only_option
+@force_option
 @click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
     "--remove", is_flag=True, default=False, help="Remove selected components."
@@ -232,11 +244,13 @@ def codex(
     ctx: CliContext,
     scope: str,
     only: tuple[str, ...],
+    force: bool,
     skill_dir: Path | None,
     remove: bool,
 ):
     """Install Codex skill, native hooks, and notebook-output MCP tool."""
     components = selected_components(only)
+    validate_force(force, remove, ctx.use_json)
     validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
@@ -246,9 +260,11 @@ def codex(
         )
     path = _resolve_codex_path(scope)
     skill_target = _skill_target("codex", scope_value, skill_dir)
+    if not remove:
+        _warn_codex_global_conflicts(scope_value, components, path, skill_target)
     if Component.HOOK in components and path.exists():
         _load_settings(path, ctx.use_json)
-    preflight_skill(skill_target, components, remove, ctx.use_json)
+    preflight_skill(skill_target, components, remove, ctx.use_json, force)
     local_paths: list[Path] = []
     if Component.HOOK in components:
         local_paths.append(path)
@@ -264,7 +280,7 @@ def codex(
     preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
         tool_result = (
-            manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json)
+            manage_codex_mcp(scope, Path.cwd(), remove, ctx.use_json, force)
             if Component.TOOL in components
             else "skipped"
         )
@@ -273,7 +289,9 @@ def codex(
             if Component.HOOK in components
             else (False, 0)
         )
-        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
+        skill_changed = apply_skill(
+            skill_target, components, remove, ctx.use_json, force
+        )
         ignore_changed = _update_codex_ignores(
             scope_value, remove, components, skill_target
         )
@@ -375,6 +393,107 @@ def _ensure_codex_feature_flag(path: Path) -> None:
         f"warning: codex_hooks feature flag not enabled in {config_toml} — "
         f"add '[features]\ncodex_hooks = true' to activate hooks",
         err=True,
+    )
+
+
+def _read_global_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError("expected a JSON object")
+    return value
+
+
+def _global_hooks_present(path: Path) -> bool:
+    settings = _read_global_json(path)
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise TypeError("hooks must be an object")
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            raise TypeError("hook event must be an array")
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            entries = group.get("hooks", [])
+            if not isinstance(entries, list):
+                raise TypeError("hook group must contain an array")
+            if any(
+                isinstance(entry, dict) and entry.get(_MANAGED_KEY) in _ALL_MANAGED_VALS
+                for entry in entries
+            ):
+                return True
+    return False
+
+
+def _global_claude_mcp_present(path: Path) -> bool:
+    servers = _read_global_json(path).get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise TypeError("mcpServers must be an object")
+    return "jcli-notebook-output" in servers
+
+
+def _global_codex_mcp_present(path: Path) -> bool:
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    return bool(
+        re.search(
+            r"(?m)^\s*\[mcp_servers\.(?:jcli-notebook-output|\"jcli-notebook-output\"|'jcli-notebook-output')\]\s*(?:#.*)?$",
+            text,
+        )
+    )
+
+
+def _warn_claude_global_conflicts(
+    scope: Scope,
+    components: frozenset[Component],
+    hook_target: Path,
+    skill_target: Path,
+) -> None:
+    warn_global_conflicts(
+        scope,
+        components,
+        {
+            Component.SKILL: skill_target,
+            Component.HOOK: hook_target,
+            Component.TOOL: Path.cwd() / ".mcp.json",
+        },
+        {
+            Component.SKILL: [
+                (Path.home() / ".claude" / "skills" / "j-cli", path_exists)
+            ],
+            Component.HOOK: [
+                (Path.home() / ".claude" / "settings.json", _global_hooks_present)
+            ],
+            Component.TOOL: [
+                (Path.home() / ".claude.json", _global_claude_mcp_present)
+            ],
+        },
+    )
+
+
+def _warn_codex_global_conflicts(
+    scope: Scope,
+    components: frozenset[Component],
+    hook_target: Path,
+    skill_target: Path,
+) -> None:
+    codex_home = _codex_home()
+    warn_global_conflicts(
+        scope,
+        components,
+        {
+            Component.SKILL: skill_target,
+            Component.HOOK: hook_target,
+            Component.TOOL: Path.cwd() / ".codex" / "config.toml",
+        },
+        {
+            Component.SKILL: [(codex_home / "skills" / "j-cli", path_exists)],
+            Component.HOOK: [(codex_home / "hooks.json", _global_hooks_present)],
+            Component.TOOL: [(codex_home / "config.toml", _global_codex_mcp_present)],
+        },
     )
 
 

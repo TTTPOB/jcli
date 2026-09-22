@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands.setup import mcp as setup_mcp
 from jupyter_jcli.commands.setup.common import is_git_tracked
 
 
@@ -241,3 +243,259 @@ def test_dsh_rejects_non_boolean_capability_flags(isolated):
 
     assert result.exit_code == 1
     assert "DSH_CONFIG_INVALID" in result.stderr
+
+
+@pytest.mark.parametrize("host", ["claude", "codex", "dsh", "opencode"])
+def test_force_is_allowed_without_selecting_skill(isolated, host):
+    result = invoke(host, "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    assert not (isolated / ".agents" / "skills" / "j-cli").exists()
+
+
+@pytest.mark.parametrize("host", ["claude", "codex", "dsh", "opencode"])
+def test_force_remove_is_rejected_before_writes(isolated, host):
+    result = invoke(host, "--only", "hook", "--force", "--remove")
+
+    assert result.exit_code == 1
+    assert "FORCE_WITH_REMOVE" in result.stderr
+    assert not (isolated / ".claude").exists()
+    assert not (isolated / ".codex").exists()
+    assert not (isolated / ".dsh").exists()
+    assert not (isolated / ".opencode").exists()
+
+
+@pytest.mark.parametrize(
+    ("host", "plugin_relative", "capability_text"),
+    [
+        ("dsh", ".dsh/plugins/jcli.ts", "tools: false"),
+        ("opencode", ".opencode/plugins/jcli.js", '"tool":false'),
+    ],
+)
+def test_force_replaces_foreign_plugin_symlink_without_writing_source(
+    isolated, host, plugin_relative, capability_text
+):
+    source = isolated / "external-plugin"
+    source.write_text("user-owned\n", encoding="utf-8")
+    plugin = isolated / plugin_relative
+    plugin.parent.mkdir(parents=True)
+    plugin.symlink_to(source)
+
+    result = invoke(host, "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    assert source.read_text(encoding="utf-8") == "user-owned\n"
+    assert not plugin.is_symlink()
+    if host == "dsh":
+        rendered = (isolated / ".dsh" / "cordis.yml").read_text(encoding="utf-8")
+    else:
+        rendered = plugin.read_text(encoding="utf-8")
+    assert capability_text in rendered
+
+
+@pytest.mark.parametrize(
+    ("host", "plugin_relative"),
+    [
+        ("dsh", ".dsh/plugins/jcli.ts"),
+        ("opencode", ".opencode/plugins/jcli.js"),
+    ],
+)
+def test_force_replaces_managed_plugin_symlink_even_when_content_matches(
+    isolated, host, plugin_relative
+):
+    assert invoke(host, "--project", "--only", "hook").exit_code == 0
+    plugin = isolated / plugin_relative
+    source = isolated / f"{host}-managed-source"
+    source.write_bytes(plugin.read_bytes())
+    plugin.unlink()
+    plugin.symlink_to(source)
+    source_before = source.read_bytes()
+
+    result = invoke(host, "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    assert not plugin.is_symlink()
+    assert source.read_bytes() == source_before
+
+
+def test_dsh_force_foreign_plugin_does_not_inherit_managed_capabilities(isolated):
+    assert invoke("dsh", "--project", "--only", "hook", "--only", "tool").exit_code == 0
+    plugin = isolated / ".dsh" / "plugins" / "jcli.ts"
+    plugin.write_text("foreign plugin\n", encoding="utf-8")
+
+    result = invoke("dsh", "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    config = (isolated / ".dsh" / "cordis.yml").read_text(encoding="utf-8")
+    assert "hooks: true" in config
+    assert "tools: false" in config
+
+
+def test_dsh_force_takes_over_reserved_row_and_preserves_other_yaml(isolated):
+    config = isolated / ".dsh" / "cordis.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "# keep\n"
+        "- id: jcli-hooks\n"
+        "  name: someone-else\n"
+        "- id: other\n"
+        "  name: keep-me\n",
+        encoding="utf-8",
+    )
+
+    result = invoke("dsh", "--project", "--only", "tool", "--force")
+
+    assert result.exit_code == 0
+    rendered = config.read_text(encoding="utf-8")
+    assert rendered.count("id: jcli-hooks") == 1
+    assert "# keep" in rendered
+    assert "id: other" in rendered
+    assert "hooks: false" in rendered
+    assert "tools: true" in rendered
+
+
+@pytest.mark.parametrize("value", ["keep-me", "!!js 'keep-me'"])
+def test_dsh_force_takes_over_reserved_row_in_flow_sequence(isolated, value):
+    config = isolated / ".dsh" / "cordis.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "[{id: jcli-hooks, name: someone-else}, {id: other, name: " + value + "}]\n",
+        encoding="utf-8",
+    )
+
+    result = invoke("dsh", "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    rendered = config.read_text(encoding="utf-8")
+    assert rendered.count("id: jcli-hooks") == 1
+    assert "id: other" in rendered
+    assert "keep-me" in rendered
+    assert ("!!js" in rendered) == value.startswith("!!js")
+
+
+def test_force_hook_merge_preserves_user_hook(isolated):
+    settings = isolated / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Read",
+                            "hooks": [{"type": "command", "command": "keep-me"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = invoke("claude", "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    rendered = json.loads(settings.read_text(encoding="utf-8"))
+    assert rendered["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "keep-me"
+
+
+@pytest.mark.parametrize("platform", ["claude", "codex"])
+def test_mcp_force_removes_only_conflicting_name_then_adds(
+    isolated, monkeypatch, platform
+):
+    calls = []
+    monkeypatch.setattr(
+        setup_mcp,
+        f"_read_{platform}_entry",
+        lambda *_args: {"command": "someone-else", "args": []},
+    )
+    if platform == "claude":
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_claude",
+            lambda command, *_args: calls.append(command),
+        )
+        result = setup_mcp.manage_claude_mcp(
+            "project", isolated, False, False, force=True
+        )
+    else:
+        monkeypatch.setattr(
+            setup_mcp,
+            "_run_codex",
+            lambda command, *_args: calls.append(command),
+        )
+        result = setup_mcp.manage_codex_mcp(
+            "project", isolated, False, False, force=True
+        )
+
+    assert result == "installed"
+    assert calls[0][1:3] == ["mcp", "remove"]
+    assert calls[1][1:3] == ["mcp", "add"]
+    assert all("jcli-notebook-output" in command for command in calls)
+
+
+def test_invalid_selected_global_config_warns_but_unselected_does_not(isolated):
+    global_settings = isolated / "home" / ".claude" / "settings.json"
+    global_settings.parent.mkdir(parents=True)
+    global_settings.write_text("{broken", encoding="utf-8")
+
+    skill_only = invoke("claude", "--project", "--only", "skill")
+    hook_only = invoke("claude", "--project", "--only", "hook")
+
+    assert skill_only.exit_code == 0
+    assert str(global_settings) not in skill_only.stderr
+    assert hook_only.exit_code == 0
+    assert "could not inspect global hook integration" in hook_only.stderr
+    assert str(global_settings) in hook_only.stderr
+    assert global_settings.read_text(encoding="utf-8") == "{broken"
+
+
+@pytest.mark.parametrize("host", ["dsh", "opencode"])
+def test_global_managed_plugin_warns_only_for_enabled_capability(isolated, host):
+    assert invoke(host, "--user", "--only", "tool").exit_code == 0
+
+    hook = invoke(host, "--project", "--only", "hook")
+    tool = invoke(host, "--project", "--only", "tool")
+
+    assert hook.exit_code == 0
+    assert "global hook integration exists" not in hook.stderr
+    assert tool.exit_code == 0
+    assert tool.stderr.count("global tool integration exists") == 1
+
+
+def test_force_local_skill_symlink_warns_and_does_not_modify_global(isolated):
+    assert invoke("opencode", "--user", "--only", "skill").exit_code == 0
+    global_skill = isolated / "home" / ".agents" / "skills" / "j-cli"
+    local_skill = isolated / ".agents" / "skills" / "j-cli"
+    local_skill.parent.mkdir(parents=True)
+    local_skill.symlink_to(global_skill, target_is_directory=True)
+    global_before = (global_skill / "SKILL.md").read_bytes()
+
+    result = invoke("opencode", "--project", "--only", "skill", "--force")
+
+    assert result.exit_code == 0
+    assert str(global_skill) in result.stderr
+    assert not local_skill.is_symlink()
+    assert (global_skill / "SKILL.md").read_bytes() == global_before
+
+
+def test_selected_global_conflict_warns_without_modifying_global(isolated):
+    global_plugin = isolated / "home" / ".config" / "opencode" / "plugins" / "jcli.js"
+    global_plugin.parent.mkdir(parents=True)
+    global_plugin.write_text("global-user-plugin\n", encoding="utf-8")
+    global_skill = isolated / "home" / ".agents" / "skills" / "j-cli"
+    global_skill.mkdir(parents=True)
+    (global_skill / "SKILL.md").write_text("global skill\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        ["--json", "setup", "opencode", "--project", "--only", "hook", "--force"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["status"] == "ok"
+    assert str(global_plugin) in result.stderr
+    assert str(global_skill) not in result.stderr
+    assert global_plugin.read_text(encoding="utf-8") == "global-user-plugin\n"
+    assert (global_skill / "SKILL.md").read_text(encoding="utf-8") == "global skill\n"

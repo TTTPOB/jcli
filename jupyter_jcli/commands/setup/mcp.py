@@ -18,7 +18,11 @@ _MCP_BASE_ARGS = ["mcp", "serve"]
 
 
 def manage_claude_mcp(
-    scope: str, project_root: Path, remove: bool, use_json: bool
+    scope: str,
+    project_root: Path,
+    remove: bool,
+    use_json: bool,
+    force: bool = False,
 ) -> str:
     """Install or remove the managed Claude MCP entry via Claude's CLI."""
     resolved_scope = Scope(scope)
@@ -27,12 +31,19 @@ def manage_claude_mcp(
     entry = _read_claude_entry(resolved_scope, root, use_json)
 
     if entry is not None and not _is_managed_entry(entry, expected_args):
-        emit_error(
-            "MCP_NAME_CONFLICT",
-            f"Claude MCP server {_MCP_NAME!r} already exists in {resolved_scope.value} "
-            "scope with a different command; remove or rename it before retrying.",
+        if not force or remove:
+            emit_error(
+                "MCP_NAME_CONFLICT",
+                f"Claude MCP server {_MCP_NAME!r} already exists in {resolved_scope.value} "
+                "scope with a different command; remove or rename it before retrying.",
+                use_json,
+            )
+        _run_claude(
+            ["claude", "mcp", "remove", "--scope", resolved_scope.value, _MCP_NAME],
+            root,
             use_json,
         )
+        entry = None
 
     if remove:
         if entry is None:
@@ -63,7 +74,11 @@ def manage_claude_mcp(
 
 
 def manage_codex_mcp(
-    scope: str, project_root: Path, remove: bool, use_json: bool
+    scope: str,
+    project_root: Path,
+    remove: bool,
+    use_json: bool,
+    force: bool = False,
 ) -> str:
     """Install or remove the managed Codex MCP entry in the selected config."""
     resolved_scope = Scope(scope)
@@ -74,12 +89,15 @@ def manage_codex_mcp(
     scope_label = "user" if resolved_scope == Scope.USER else "project"
 
     if entry is not None and not _is_managed_entry(entry, expected_args):
-        emit_error(
-            "MCP_NAME_CONFLICT",
-            f"Codex MCP server {_MCP_NAME!r} already exists in {scope_label} scope "
-            "with a different command; remove or rename it before retrying.",
-            use_json,
-        )
+        if not force or remove:
+            emit_error(
+                "MCP_NAME_CONFLICT",
+                f"Codex MCP server {_MCP_NAME!r} already exists in {scope_label} scope "
+                "with a different command; remove or rename it before retrying.",
+                use_json,
+            )
+        _run_codex(["codex", "mcp", "remove", _MCP_NAME], root, config_dir, use_json)
+        entry = None
 
     if remove:
         if entry is None:

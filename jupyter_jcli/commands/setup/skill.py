@@ -195,17 +195,20 @@ def _check_new_file_conflicts(
                 )
 
 
-def _plan_install(target: Path) -> _InstallPlan:
+def _plan_install(target: Path, *, force: bool = False) -> _InstallPlan:
     files = _load_resource_files()
+    if force:
+        _require_directory_ancestor(target)
+        return _InstallPlan(files=files, old_files=None)
     managed = _load_managed_files(target)
     if managed is not None:
         _check_new_file_conflicts(target, files, managed)
     return _InstallPlan(files=files, old_files=managed)
 
 
-def preflight_install_skill(target: Path) -> None:
+def preflight_install_skill(target: Path, *, force: bool = False) -> None:
     """Validate that installing to *target* is safe without changing files."""
-    _plan_install(Path(target))
+    _plan_install(Path(target), force=force)
 
 
 def preflight_remove_skill(target: Path) -> None:
@@ -246,29 +249,40 @@ def _write_tree(target: Path, files: Mapping[str, bytes]) -> None:
     marker.chmod(0o644)
 
 
-def _install_new(target: Path, files: Mapping[str, bytes]) -> None:
+def _install_new(
+    target: Path, files: Mapping[str, bytes], *, replace: bool = False
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
     try:
         _write_tree(staging, files)
+        if replace and (target.exists() or target.is_symlink()):
+            if target.is_symlink() or not target.is_dir():
+                target.unlink()
+            else:
+                shutil.rmtree(target)
         os.replace(staging, target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def install_skill(target: Path) -> bool:
+def install_skill(target: Path, *, force: bool = False) -> bool:
     """Install or safely update the bundled skill at final directory *target*.
 
     Return ``True`` when files changed and ``False`` when the managed install was
-    already current. Never replaces an unmanaged directory or symbolic link.
+    already current. By default, never replace an unmanaged directory or symbolic
+    link; with *force*, fully replace any existing target after staging succeeds.
     """
     target = Path(target)
-    plan = _plan_install(target)
-    marker = _marker_bytes(plan.files)
+    plan = _plan_install(target, force=force)
+    if force:
+        _install_new(target, plan.files, replace=True)
+        return True
     if plan.old_files is None:
         _install_new(target, plan.files)
         return True
 
+    marker = _marker_bytes(plan.files)
     current_marker = (target / _MARKER_NAME).read_bytes()
     old_names = set(plan.old_files)
     new_names = set(plan.files)

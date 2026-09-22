@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from importlib import resources
 from pathlib import Path
@@ -18,13 +19,17 @@ from .common import (
     Scope,
     apply_skill,
     component_ignore_dirs,
+    force_option,
     only_option,
+    path_exists,
     preflight_gitignore,
     preflight_local_untracked,
     preflight_skill,
     selected_components,
     update_managed_gitignore,
+    validate_force,
     validate_skill_dir,
+    warn_global_conflicts,
 )
 
 _OPENCODE_MANAGED_MARKER = "// Managed by j-cli setup opencode."
@@ -50,6 +55,7 @@ _CAPABILITIES_RE = re.compile(r"^const enabledCapabilities = (\{.*\})$", re.MULT
     help="Write project paths and gitignore selected files (default).",
 )
 @only_option
+@force_option
 @click.option("--skill-dir", type=click.Path(path_type=Path, file_okay=False))
 @click.option(
     "--remove", is_flag=True, default=False, help="Remove selected components."
@@ -59,11 +65,13 @@ def opencode(
     ctx: CliContext,
     scope: str,
     only: tuple[str, ...],
+    force: bool,
     skill_dir: Path | None,
     remove: bool,
 ) -> None:
     """Install OpenCode skill, guards, and notebook output tool."""
     components = selected_components(only)
+    validate_force(force, remove, ctx.use_json)
     validate_skill_dir(components, skill_dir, ctx.use_json)
     scope_value = Scope(scope)
     if scope_value == Scope.LOCAL and not ctx.use_json:
@@ -73,8 +81,12 @@ def opencode(
         )
     plugin_path = _resolve_opencode_path(scope_value)
     skill_target = _skill_target(scope_value, skill_dir)
+    if not remove:
+        _warn_global_opencode_conflicts(
+            scope_value, components, plugin_path, skill_target
+        )
 
-    preflight_skill(skill_target, components, remove, ctx.use_json)
+    preflight_skill(skill_target, components, remove, ctx.use_json, force)
     local_paths: list[Path] = []
     if components & {Component.HOOK, Component.TOOL}:
         local_paths.append(plugin_path)
@@ -87,11 +99,13 @@ def opencode(
     )
     preflight_gitignore(ignore_dirs, ctx.use_json)
     try:
-        _preflight_plugin(plugin_path, components, remove, ctx.use_json)
+        _preflight_plugin(plugin_path, components, remove, ctx.use_json, force)
         plugin_changed, capabilities = _apply_plugin(
-            plugin_path, components, remove, ctx.use_json
+            plugin_path, components, remove, ctx.use_json, force
         )
-        skill_changed = apply_skill(skill_target, components, remove, ctx.use_json)
+        skill_changed = apply_skill(
+            skill_target, components, remove, ctx.use_json, force
+        )
         ignore_changed = _update_ignores(
             scope_value, components, remove, plugin_path, skill_target
         )
@@ -127,9 +141,77 @@ def opencode(
     )
 
 
+def _global_plugin_capability(path: Path, component: Component) -> bool | None:
+    if not path_exists(path):
+        return False
+    if not path.exists():
+        return True
+    source = path.read_text(encoding="utf-8")
+    if not source.startswith(_OPENCODE_MANAGED_MARKER):
+        return True
+    match = _CAPABILITIES_RE.search(source)
+    if match is None:
+        return None
+    try:
+        raw = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"hook", "tool"}
+        or any(not isinstance(raw[key], bool) for key in ("hook", "tool"))
+    ):
+        return None
+    return raw[component.value]
+
+
+def _warn_global_opencode_conflicts(
+    scope: Scope,
+    components: frozenset[Component],
+    plugin_target: Path,
+    skill_target: Path,
+) -> None:
+    config_home = Path(
+        os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    ).expanduser()
+    global_plugin = config_home / "opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
+    skill_candidates = [
+        Path.home() / ".agents" / "skills" / "j-cli",
+        Path.home() / ".claude" / "skills" / "j-cli",
+        config_home / "opencode" / "skills" / "j-cli",
+    ]
+    warn_global_conflicts(
+        scope,
+        components,
+        {
+            Component.SKILL: skill_target,
+            Component.HOOK: plugin_target,
+            Component.TOOL: plugin_target,
+        },
+        {
+            Component.SKILL: [(path, path_exists) for path in skill_candidates],
+            Component.HOOK: [
+                (
+                    global_plugin,
+                    lambda path: _global_plugin_capability(path, Component.HOOK),
+                )
+            ],
+            Component.TOOL: [
+                (
+                    global_plugin,
+                    lambda path: _global_plugin_capability(path, Component.TOOL),
+                )
+            ],
+        },
+    )
+
+
 def _resolve_opencode_path(scope: Scope) -> Path:
     if scope == Scope.USER:
-        return Path.home() / ".config" / "opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
+        config_home = Path(
+            os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+        ).expanduser()
+        return config_home / "opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
     return Path.cwd() / ".opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
 
 
@@ -204,9 +286,15 @@ def _render_source(components: frozenset[Component]) -> str:
 
 
 def _preflight_plugin(
-    path: Path, components: frozenset[Component], remove: bool, use_json: bool
+    path: Path,
+    components: frozenset[Component],
+    remove: bool,
+    use_json: bool,
+    force: bool = False,
 ) -> None:
-    if not components & {Component.HOOK, Component.TOOL} or not path.exists():
+    if not components & {Component.HOOK, Component.TOOL} or not path_exists(path):
+        return
+    if force and not remove:
         return
     current = path.read_text(encoding="utf-8")
     if not current.startswith(_OPENCODE_MANAGED_MARKER):
@@ -218,25 +306,37 @@ def _preflight_plugin(
 
 
 def _apply_plugin(
-    path: Path, components: frozenset[Component], remove: bool, use_json: bool
+    path: Path,
+    components: frozenset[Component],
+    remove: bool,
+    use_json: bool,
+    force: bool = False,
 ) -> tuple[bool, frozenset[Component]]:
     chosen = components & {Component.HOOK, Component.TOOL}
     if not chosen:
         return False, frozenset()
+    present = path_exists(path)
     current = path.read_text(encoding="utf-8") if path.exists() else ""
-    before = _capabilities(current, path, use_json) if current else frozenset()
+    managed = current.startswith(_OPENCODE_MANAGED_MARKER)
+    before = (
+        _capabilities(current, path, use_json)
+        if current and (managed or not force)
+        else frozenset()
+    )
     after = before - chosen if remove else before | chosen
     if not after:
-        if path.exists():
+        if present:
             path.unlink()
             changed = True
         else:
             changed = False
     else:
         rendered = _render_source(after)
-        changed = current != rendered
+        changed = current != rendered or (force and path.is_symlink())
         if changed:
             path.parent.mkdir(parents=True, exist_ok=True)
+            if force and path.is_symlink():
+                path.unlink()
             path.write_text(rendered, encoding="utf-8")
             _warn_duplicate_opencode_plugin(path)
     return changed, after
@@ -278,8 +378,10 @@ def _update_ignores(
 
 def _warn_duplicate_opencode_plugin(installed_path: Path) -> None:
     project_path = Path.cwd() / ".opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
-    user_path = Path.home() / ".config" / "opencode" / "plugins" / _OPENCODE_PLUGIN_NAME
-    other_path = user_path if installed_path == project_path else project_path
+    user_path = _resolve_opencode_path(Scope.USER)
+    if installed_path != user_path:
+        return
+    other_path = project_path
     if other_path.exists():
         click.echo(
             f"warning: {other_path} also exists; OpenCode will load both j-cli plugins",
