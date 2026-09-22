@@ -223,18 +223,26 @@ export JCLI_OUTPUT_MAX_RUNS=50
 
 Cleanup retains unrecognized or uncertain entries. `j-cli setup git` adds `**/.j-cli/` to its managed `.gitignore` block. See [output migration](docs/output-migration.md) for the change from temporary image paths and [output protocol](docs/output-protocol.md) for MIME, paging, and transport details.
 
+### Agent host setup components
+
+`setup claude`, `setup codex`, `setup dsh`, and `setup opencode` install all three components by default: the bundled `j-cli` skill, notebook guards (`hook`), and the notebook-output integration (`tool`). Every command defaults to local scope. Use repeatable `--only skill|hook|tool` for exact incremental operations; unspecified components are preserved, and `--remove` applies to the same selection (all three when `--only` is absent). Plugin and MCP details are implementation details of `tool`, not additional selectable components.
+
+For hosts without a native local layer, local scope uses the normal project paths plus exact j-cli-managed entries in the closest config folder's `.gitignore`; it never ignores the whole host folder or changes user ignore lines. Switching a selected component to `--project` removes its managed ignore block. If a selected target is already Git-tracked, local setup fails before writing and tells you to untrack it explicitly; it never runs `git rm`.
+
+Skills use the host's discovery paths, preferring the shared `.agents/skills/j-cli` project location when supported. Removing a skill at a shared path affects every host that discovers that path. Override only the skill root with `--skill-dir PATH` (the target becomes `PATH/j-cli`); this does not force-overwrite conflicts and does not relocate hook/tool configuration.
+
 ### `setup claude`
 
-Install Claude Code hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, plus the `jcli-notebook-output` MCP server for reading notebook outputs.
+Install the bundled skill, Claude Code native hooks, and the `jcli-notebook-output` MCP tool.
 
 ```bash
-j-cli setup claude           # default: .claude/settings.local.json (gitignored)
-j-cli setup claude --project # .claude/settings.json (committed, team-shared)
-j-cli setup claude --user    # ~/.claude/settings.json (global, all projects)
-
-# remove all j-cli managed hooks from the target file
-j-cli setup claude --remove
-j-cli setup claude --project --remove
+j-cli setup claude                         # local skill + hook + tool (default)
+j-cli setup claude --project               # shared project components
+j-cli setup claude --user                  # user-global components
+j-cli setup claude --only skill            # no Claude CLI or MCP prerequisite
+j-cli setup claude --only hook --only tool # exact two-component update
+j-cli setup claude --remove --only tool    # preserve skill and hooks
+j-cli setup claude --only skill --skill-dir ./agent-skills
 ```
 
 The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry if it points to another command. The server exposes one read-only call, `read_notebook_output`, which lists a cell's saved outputs when `output_index` is omitted and reads one output when it is provided. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. A user-scoped server returns `ROOTS_REQUIRED` if the client provides no roots. `--remove` prunes only j-cli managed hooks and the matching managed MCP entry, preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
@@ -290,17 +298,14 @@ j-cli convert py-to-ipynb <nb.py> <nb.ipynb>   # take py as truth
 
 ### `setup codex`
 
-Install Codex hooks (`PreToolUse` and `PostToolUse`) that intercept notebook-execution bypass tools and keep `.py` / `.ipynb` pairs in sync, plus the `jcli-notebook-output` MCP server for reading notebook outputs.
+Install the shared `.agents` skill, Codex native hooks, and the `jcli-notebook-output` MCP tool.
 
 ```bash
-j-cli setup codex             # writes .codex/hooks.json + .codex/config.toml
-j-cli setup codex --project   # same as default
-j-cli setup codex --local     # alias for --project (Codex has no local layer)
-j-cli setup codex --user      # writes under ~/.codex (global, all projects)
-
-# remove all j-cli managed hooks from the target file
-j-cli setup codex --remove
-j-cli setup codex --project --remove
+j-cli setup codex                       # local all; exact files are gitignored
+j-cli setup codex --project             # shared project files
+j-cli setup codex --user                # $CODEX_HOME (default ~/.codex)
+j-cli setup codex --only skill          # project .agents/skills/j-cli
+j-cli setup codex --remove --only hook  # preserve skill and MCP tool
 ```
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
@@ -328,24 +333,22 @@ Workspace installation still requires `dsh-workspace-overlay` to mount
 `.dsh/cordis.yml`.
 
 ```bash
-j-cli setup dsh                 # default --local; native workspace adapter
-j-cli setup dsh --project       # same workspace files, project spelling
-j-cli setup dsh --proj          # alias for --project
-j-cli setup dsh --global        # native adapter under $DSH_HOME/plugins
-j-cli setup dsh --user          # alias for --global
-
-# remove only j-cli-managed rows, adapters, and legacy entries
-j-cli setup dsh --remove
-j-cli setup dsh --global --remove
+j-cli setup dsh                       # local skill + hook + tool
+j-cli setup dsh --project             # shared workspace files
+j-cli setup dsh --proj                # alias for --project
+j-cli setup dsh --global              # alias for --user
+j-cli setup dsh --only hook           # enable guards independently
+j-cli setup dsh --remove --only tool  # keep plugin while hooks remain
 ```
 
-| Scope | Flags | Cordis file | Native adapter | Cordis module name |
+| Scope | Flags | Skill | Cordis file | Native adapter |
 |---|---|---|---|---|
-| Workspace | `--local` (default), `--project`, `--proj` | `<cwd>/.dsh/cordis.yml` | `<cwd>/.dsh/plugins/jcli.ts` | `./plugins/jcli.ts` |
-| Global | `--global`, `--user` | `$DSH_HOME/cordis.patch.yml` | `$DSH_HOME/plugins/jcli.ts` | absolute adapter path |
+| Workspace local | default, `--local` | `<cwd>/.agents/skills/j-cli` | `<cwd>/.dsh/cordis.yml` | `<cwd>/.dsh/plugins/jcli.ts` |
+| Workspace shared | `--project`, `--proj` | `<cwd>/.agents/skills/j-cli` | same workspace paths | same workspace path |
+| User | `--global`, `--user` | `${DSH_AGENTS_HOME:-~/.agents}/skills/j-cli` | `$DSH_HOME/cordis.patch.yml` | `$DSH_HOME/plugins/jcli.ts` |
 
-`$DSH_HOME` defaults to `~/.dsh`; workspace paths use the canonical current
-working directory. The workspace module name is deliberately relative to the
+`$DSH_HOME` defaults to `~/.dsh`; `$DSH_AGENTS_HOME` defaults to `~/.agents`.
+Workspace paths use the canonical current working directory. The workspace module name is deliberately relative to the
 `.dsh` composition file, so the whole workspace can be moved together. Global
 and workspace scopes always use separate adapter paths.
 The installer validates the packaged resource, every existing YAML/JSON input,
@@ -376,16 +379,14 @@ the tool result and add a diagnostic.
 
 ### `setup opencode`
 
-Install a self-contained OpenCode plugin that intercepts notebook-execution bypass tools and keeps `.py` / `.ipynb` pairs in sync. OpenCode loads JavaScript files from its plugin directories at startup.
+Install the shared `.agents` skill and a self-contained OpenCode plugin. The plugin can enable guards and the notebook-output tool independently.
 
 ```bash
-j-cli setup opencode             # writes .opencode/plugins/jcli.js (default)
-j-cli setup opencode --project   # same as default
-j-cli setup opencode --user      # writes ~/.config/opencode/plugins/jcli.js
-
-# remove the j-cli managed plugin
-j-cli setup opencode --remove
-j-cli setup opencode --user --remove
+j-cli setup opencode                       # local skill + hook + tool
+j-cli setup opencode --project             # shared project components
+j-cli setup opencode --user                # user-global components
+j-cli setup opencode --only tool           # output tool without guards
+j-cli setup opencode --remove --only hook  # preserve tool and skill
 ```
 
 The installer updates only files carrying the j-cli managed marker. It refuses to overwrite or remove an unrelated `jcli.js`. Avoid installing both project and user copies because OpenCode loads both plugin directories.
