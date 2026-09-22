@@ -2,9 +2,10 @@
 
 import click
 
+from .claude import claude
+from .codex import codex
 from .dsh import dsh
 from .git import git_setup
-from .hooks import claude, codex
 from .opencode import opencode
 
 

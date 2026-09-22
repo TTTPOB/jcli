@@ -33,7 +33,7 @@ def test_skill_only_does_not_invoke_mcp_or_create_hooks(isolated, monkeypatch, h
         raise AssertionError("skill-only setup invoked MCP integration")
 
     monkeypatch.setattr(
-        f"jupyter_jcli.commands.setup.hooks.manage_{host}_mcp", unexpected
+        f"jupyter_jcli.commands.setup.{host}.manage_{host}_mcp", unexpected
     )
     result = invoke(host, "--only", "skill")
 
@@ -47,7 +47,7 @@ def test_skill_only_does_not_invoke_mcp_or_create_hooks(isolated, monkeypatch, h
 def test_repeatable_only_installs_exact_claude_components(isolated, monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "jupyter_jcli.commands.setup.hooks.manage_claude_mcp",
+        "jupyter_jcli.commands.setup.claude.manage_claude_mcp",
         lambda *args, **kwargs: calls.append(args),
     )
     result = invoke("claude", "--only", "skill", "--only", "hook")
@@ -316,6 +316,30 @@ def test_force_replaces_managed_plugin_symlink_even_when_content_matches(
     assert result.exit_code == 0
     assert not plugin.is_symlink()
     assert source.read_bytes() == source_before
+
+
+@pytest.mark.parametrize(
+    ("host", "hook_relative"),
+    [
+        ("claude", ".claude/settings.json"),
+        ("codex", ".codex/hooks.json"),
+    ],
+)
+def test_force_replaces_hook_symlink_without_writing_source(
+    isolated, host, hook_relative
+):
+    source = isolated / f"{host}-external-hooks.json"
+    source.write_text("{}\n", encoding="utf-8")
+    hook_path = isolated / hook_relative
+    hook_path.parent.mkdir(parents=True)
+    hook_path.symlink_to(source)
+
+    result = invoke(host, "--project", "--only", "hook", "--force")
+
+    assert result.exit_code == 0
+    assert source.read_text(encoding="utf-8") == "{}\n"
+    assert not hook_path.is_symlink()
+    assert "notebook-exec-guard" in hook_path.read_text(encoding="utf-8")
 
 
 def test_dsh_force_foreign_plugin_does_not_inherit_managed_capabilities(isolated):

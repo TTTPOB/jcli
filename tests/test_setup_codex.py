@@ -14,7 +14,7 @@ from jupyter_jcli.commands.setup import mcp as setup_mcp
 def _isolate_codex_mcp(monkeypatch):
     """Keep legacy hook tests from invoking the real Codex CLI."""
     monkeypatch.setattr(
-        "jupyter_jcli.commands.setup.hooks.manage_codex_mcp",
+        "jupyter_jcli.commands.setup.codex.manage_codex_mcp",
         lambda *args, **kwargs: "unchanged",
     )
 

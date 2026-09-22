@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import re
@@ -31,13 +30,15 @@ from .common import (
     preflight_gitignore,
     preflight_local_untracked,
     preflight_skill,
+    resolve_skill_target,
     selected_components,
     update_managed_gitignore,
+    update_skill_ignore,
     validate_force,
     validate_skill_dir,
     warn_global_conflicts,
 )
-from .hooks import _remove_dsh_hooks
+from .hooks import clean_dsh_legacy_settings, load_dsh_legacy_settings
 
 _DSH_ROW_ID = "jcli-hooks"
 _DSH_MARKER_START = "# >>> jcli managed (dsh hooks) >>>"
@@ -510,59 +511,6 @@ def _prepare_unmanaged_text(
     return cleaned, _parse_yaml(path, cleaned, use_json)
 
 
-def _read_hook_json(path: Path, use_json: bool) -> dict[str, Any]:
-    """Read and validate the legacy bridge settings file."""
-    if not path.exists():
-        return {}
-    try:
-        text = path.read_text(encoding="utf-8")
-        if not text.strip():
-            return {}
-        raw = json.loads(text)
-    except (OSError, json.JSONDecodeError, UnicodeError) as exc:
-        emit_error("DSH_HOOKS_INVALID", f"{path}: {exc}", use_json)
-    if not isinstance(raw, dict):
-        emit_error(
-            "DSH_HOOKS_INVALID", f"{path}: top-level value must be an object", use_json
-        )
-
-    hooks = raw.get("hooks")
-    if "hooks" in raw and not isinstance(hooks, dict):
-        emit_error("DSH_HOOKS_INVALID", f"{path}: hooks must be an object", use_json)
-    if isinstance(hooks, dict):
-        for event, groups in hooks.items():
-            if not isinstance(groups, list):
-                emit_error(
-                    "DSH_HOOKS_INVALID",
-                    f"{path}: hooks.{event} must be an array",
-                    use_json,
-                )
-            for group in groups:
-                if (
-                    isinstance(group, dict)
-                    and "hooks" in group
-                    and not isinstance(group["hooks"], list)
-                ):
-                    emit_error(
-                        "DSH_HOOKS_INVALID",
-                        f"{path}: hooks.{event} group hooks must be an array",
-                        use_json,
-                    )
-    return raw
-
-
-def _prune_hook_settings(settings: dict[str, Any]) -> None:
-    """Drop empty legacy hook containers without changing user values."""
-    hooks = settings.get("hooks")
-    if not isinstance(hooks, dict):
-        return
-    for event in list(hooks):
-        if not hooks.get(event):
-            hooks.pop(event, None)
-    if not hooks:
-        settings.pop("hooks", None)
-
-
 def _plugin_resource_source(use_json: bool) -> str:
     """Load and validate the packaged native adapter before any file write."""
     try:
@@ -675,14 +623,6 @@ def _json_text(settings: dict[str, Any]) -> str:
     return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
 
-def _legacy_cleanup(settings: dict[str, Any]) -> tuple[dict[str, Any], int, bool]:
-    """Remove legacy bridge entries and report remaining user content."""
-    cleaned = copy.deepcopy(settings)
-    removed = _remove_dsh_hooks(cleaned)
-    _prune_hook_settings(cleaned)
-    return cleaned, removed, bool(cleaned)
-
-
 def _legacy_changed(path: Path, before: dict[str, Any], after: dict[str, Any]) -> bool:
     """Treat an existing empty object/file as removable legacy state."""
     return path.exists() and (before != after or not after)
@@ -785,8 +725,10 @@ def _install_or_remove(
     removed_capabilities = len(before_capabilities - after_capabilities)
     delete_plugin = not after_capabilities
     legacy_path = _legacy_hooks_path(scope)
-    legacy_before = _read_hook_json(legacy_path, ctx.use_json)
-    legacy_after, removed_legacy, has_user_content = _legacy_cleanup(legacy_before)
+    legacy_before = load_dsh_legacy_settings(legacy_path, ctx.use_json)
+    legacy_after, removed_legacy, has_user_content = clean_dsh_legacy_settings(
+        legacy_before
+    )
 
     if delete_plugin:
         _validate_plugin_remove(plugin_path, ctx.use_json)
@@ -864,15 +806,12 @@ def _install_or_remove(
 
 
 def _skill_target(scope: Scope, override: Path | None) -> Path:
-    if override is not None:
-        root = override.expanduser()
-        if not root.is_absolute():
-            root = Path.cwd() / root
-        return root.resolve() / "j-cli"
     if scope == Scope.USER:
         agents_home = Path(os.environ.get("DSH_AGENTS_HOME") or Path.home() / ".agents")
-        return agents_home.expanduser().resolve() / "skills" / "j-cli"
-    return Path.cwd().resolve() / ".agents" / "skills" / "j-cli"
+        root = agents_home.expanduser().resolve() / "skills"
+    else:
+        root = Path.cwd().resolve() / ".agents" / "skills"
+    return resolve_skill_target(root, override)
 
 
 def _update_ignores(
@@ -897,11 +836,5 @@ def _update_ignores(
             components,
             enabled,
         )
-    if Component.SKILL in components:
-        changed = (
-            update_managed_gitignore(
-                skill_target.parent, {Component.SKILL: ["/j-cli/"]}, components, enabled
-            )
-            or changed
-        )
+    changed = update_skill_ignore(skill_target, scope, remove, components) or changed
     return changed

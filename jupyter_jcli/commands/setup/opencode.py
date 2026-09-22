@@ -25,8 +25,10 @@ from .common import (
     preflight_gitignore,
     preflight_local_untracked,
     preflight_skill,
+    resolve_skill_target,
     selected_components,
     update_managed_gitignore,
+    update_skill_ignore,
     validate_force,
     validate_skill_dir,
     warn_global_conflicts,
@@ -216,18 +218,13 @@ def _resolve_opencode_path(scope: Scope) -> Path:
 
 
 def _skill_target(scope: Scope, override: Path | None) -> Path:
-    if override is not None:
-        root = override.expanduser()
-        if not root.is_absolute():
-            root = Path.cwd() / root
-        return root.resolve() / "j-cli"
     # OpenCode discovers the cross-host Agent Skills convention in both scopes.
     root = (
         Path.home() / ".agents" / "skills"
         if scope == Scope.USER
         else Path.cwd() / ".agents" / "skills"
     )
-    return root / "j-cli"
+    return resolve_skill_target(root, override)
 
 
 def _base_source() -> str:
@@ -363,16 +360,7 @@ def _update_ignores(
             components,
             enabled,
         )
-    if Component.SKILL in components:
-        changed = (
-            update_managed_gitignore(
-                skill_target.parent,
-                {Component.SKILL: ["/j-cli/"]},
-                components,
-                enabled,
-            )
-            or changed
-        )
+    changed = update_skill_ignore(skill_target, scope, remove, components) or changed
     return changed
 
 

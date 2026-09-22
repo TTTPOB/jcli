@@ -68,7 +68,7 @@ class TestScopeEnum:
 def _isolate_claude_mcp(monkeypatch):
     """Keep legacy hook tests from invoking the real Claude CLI."""
     monkeypatch.setattr(
-        "jupyter_jcli.commands.setup.hooks.manage_claude_mcp",
+        "jupyter_jcli.commands.setup.claude.manage_claude_mcp",
         lambda *args, **kwargs: "unchanged",
     )
 

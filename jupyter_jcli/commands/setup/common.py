@@ -5,12 +5,14 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 import click
 
-from jupyter_jcli.output import emit_error
+from jupyter_jcli._enums import ResponseStatus
+from jupyter_jcli.output import emit, emit_error
 
 GlobalProbe = tuple[Path, Callable[[Path], bool | None]]
 
@@ -32,6 +34,39 @@ class Component(str, Enum):
 
 
 ALL_COMPONENTS = frozenset(Component)
+
+
+@dataclass(frozen=True)
+class NativeSetupResult:
+    """Outcome of one native-hook host's selected component operations."""
+
+    host_name: str
+    components: frozenset[Component]
+    remove: bool
+    hook_path: Path
+    skill_path: Path
+    tool_result: str
+    hook_changed: bool = False
+    removed_hooks: int = 0
+    skill_changed: bool = False
+    ignore_changed: bool = False
+
+    @property
+    def changed(self) -> bool:
+        return (
+            self.hook_changed
+            or self.skill_changed
+            or self.ignore_changed
+            or self.tool_result in {"installed", "removed"}
+        )
+
+    @property
+    def removed(self) -> int:
+        return (
+            self.removed_hooks
+            + (1 if self.remove and self.skill_changed else 0)
+            + (1 if self.tool_result == "removed" else 0)
+        )
 
 
 def selected_components(values: Iterable[str]) -> frozenset[Component]:
@@ -118,6 +153,72 @@ def apply_skill(
         return install_skill(target, force=force)
     except (SkillError, OSError) as exc:
         emit_error("SKILL_SETUP_FAILED", str(exc), use_json)
+
+
+def resolve_skill_target(root: Path, override: Path | None) -> Path:
+    """Resolve a host's skill target with the shared override semantics."""
+    if override is not None:
+        root = override.expanduser()
+        if not root.is_absolute():
+            root = Path.cwd() / root
+        root = root.resolve()
+    return root / "j-cli"
+
+
+def update_skill_ignore(
+    target: Path,
+    scope: Scope,
+    remove: bool,
+    components: frozenset[Component],
+) -> bool:
+    """Update the exact local ignore block shared by every skill target."""
+    if Component.SKILL not in components or scope == Scope.USER:
+        return False
+    return update_managed_gitignore(
+        target.parent,
+        {Component.SKILL: ["/j-cli/"]},
+        components,
+        scope == Scope.LOCAL and not remove,
+    )
+
+
+def emit_native_setup_result(result: NativeSetupResult, use_json: bool) -> None:
+    """Emit the stable result contract shared by native hook and MCP hosts."""
+    if result.remove and Component.SKILL in result.components and not use_json:
+        click.echo(
+            f"Note: removing shared skill {result.skill_path} affects every host "
+            "that discovers it.",
+            err=True,
+        )
+    emit(
+        {
+            "status": ResponseStatus.OK if result.changed else ResponseStatus.NOOP,
+            "components": sorted(component.value for component in result.components),
+            "path": str(result.hook_path),
+            "hook_path": str(result.hook_path),
+            "skill_path": (
+                str(result.skill_path) if Component.SKILL in result.components else None
+            ),
+            "tool_result": result.tool_result,
+            "removed": result.removed,
+            "_human": (
+                f"{'Removed' if result.remove else 'Updated'} "
+                f"{result.host_name} components: "
+                f"{', '.join(sorted(c.value for c in result.components))}"
+                if result.changed
+                else (
+                    f"Nothing to remove: {result.hook_path} does not exist or has "
+                    "no selected managed components."
+                    if result.remove
+                    else (
+                        f"{result.host_name} selected components are already "
+                        "up to date."
+                    )
+                )
+            ),
+        },
+        use_json,
+    )
 
 
 def path_exists(path: Path) -> bool:
