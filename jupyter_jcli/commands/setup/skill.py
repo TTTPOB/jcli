@@ -50,35 +50,29 @@ def _load_resource_files() -> dict[str, bytes]:
     files: dict[str, bytes] = {}
 
     def visit(directory, parts: tuple[str, ...]) -> None:
-        try:
-            children = sorted(directory.iterdir(), key=lambda child: child.name)
-        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
-            raise SkillResourceError(
-                "Bundled j-cli skill resource is missing or unreadable"
-            ) from exc
-        for child in children:
+        for child in sorted(directory.iterdir(), key=lambda child: child.name):
             relative_parts = (*parts, child.name)
             relative = PurePosixPath(*relative_parts).as_posix()
-            try:
-                is_symlink = getattr(child, "is_symlink", None)
-                if is_symlink is not None and is_symlink():
-                    raise SkillResourceError(
-                        f"Bundled j-cli skill contains a symbolic link: {relative}"
-                    )
-                if child.is_dir():
-                    visit(child, relative_parts)
-                elif child.is_file():
-                    files[relative] = child.read_bytes()
-                else:
-                    raise SkillResourceError(
-                        f"Bundled j-cli skill contains an unsupported entry: {relative}"
-                    )
-            except OSError as exc:
+            is_symlink = getattr(child, "is_symlink", None)
+            if is_symlink is not None and is_symlink():
                 raise SkillResourceError(
-                    f"Bundled j-cli skill resource is unreadable: {relative}"
-                ) from exc
+                    f"Bundled j-cli skill contains a symbolic link: {relative}"
+                )
+            if child.is_dir():
+                visit(child, relative_parts)
+            elif child.is_file():
+                files[relative] = child.read_bytes()
+            else:
+                raise SkillResourceError(
+                    f"Bundled j-cli skill contains an unsupported entry: {relative}"
+                )
 
-    visit(root, ())
+    try:
+        visit(root, ())
+    except OSError as exc:
+        raise SkillResourceError(
+            f"Bundled j-cli skill resource is missing or unreadable: {exc}"
+        ) from exc
     if "SKILL.md" not in files:
         raise SkillResourceError("Bundled j-cli skill resource has no SKILL.md")
     return files
@@ -109,18 +103,15 @@ def _reject_symlinks(target: Path) -> None:
     def inspection_failed(error: OSError) -> None:
         raise SkillConflictError(f"Cannot inspect skill target: {target}") from error
 
-    try:
-        for root, directories, filenames in os.walk(
-            target, followlinks=False, onerror=inspection_failed
-        ):
-            root_path = Path(root)
-            for name in (*directories, *filenames):
-                if (root_path / name).is_symlink():
-                    raise SkillConflictError(
-                        f"Skill target contains a symbolic link: {root_path / name}"
-                    )
-    except OSError as exc:
-        raise SkillConflictError(f"Cannot inspect skill target: {target}") from exc
+    for root, directories, filenames in os.walk(
+        target, followlinks=False, onerror=inspection_failed
+    ):
+        root_path = Path(root)
+        for name in (*directories, *filenames):
+            if (root_path / name).is_symlink():
+                raise SkillConflictError(
+                    f"Skill target contains a symbolic link: {root_path / name}"
+                )
 
 
 def _require_directory_ancestor(target: Path) -> None:

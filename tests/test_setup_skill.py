@@ -194,6 +194,41 @@ def test_missing_bundled_resource_fails_before_creating_target(tmp_path, monkeyp
     assert not target.exists()
 
 
+@pytest.mark.parametrize("marker_text", ["not json", "{}", '{"schema": 99}'])
+def test_invalid_marker_does_not_modify_installation(
+    tmp_path, bundled_skill, marker_text
+):
+    target = tmp_path / "j-cli"
+    install_skill(target)
+    marker = target / ".j-cli-managed.json"
+    marker.write_text(marker_text, encoding="utf-8")
+    before = (target / "SKILL.md").read_bytes()
+
+    for operation in (install_skill, remove_skill):
+        with pytest.raises(SkillConflictError, match="marker is invalid"):
+            operation(target)
+        assert (target / "SKILL.md").read_bytes() == before
+        assert marker.read_text(encoding="utf-8") == marker_text
+
+
+def test_update_does_not_overwrite_user_file_added_at_new_resource_path(
+    tmp_path, bundled_skill
+):
+    target = tmp_path / "j-cli"
+    install_skill(target)
+    user_file = target / "workflows" / "edit.md"
+    user_file.write_text("my notes\n", encoding="utf-8")
+    (bundled_skill / "workflows" / "edit.md").write_text(
+        "new workflow\n", encoding="utf-8"
+    )
+    before_marker = (target / ".j-cli-managed.json").read_bytes()
+
+    with pytest.raises(SkillConflictError, match="unmanaged entry"):
+        install_skill(target)
+    assert user_file.read_text(encoding="utf-8") == "my notes\n"
+    assert (target / ".j-cli-managed.json").read_bytes() == before_marker
+
+
 def test_skill_has_one_importable_source_inside_the_python_package():
     root = Path(__file__).parents[1]
     packaged_skill = root / "jupyter_jcli" / "skills" / "j-cli"
