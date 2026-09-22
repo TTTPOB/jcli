@@ -113,6 +113,18 @@ test('exports the native plugin contract and imports without DSH packages', () =
   assert.ok(pluginPath.pathname.endsWith('/jupyter_jcli/dsh_plugin.ts'))
 })
 
+for (const hooks of [false, true]) {
+  for (const tools of [false, true]) {
+    test(`registers only selected capabilities: hooks=${hooks}, tools=${tools}`, () => {
+      const h = harness({ config: { hooks, tools } })
+      assert.equal(typeof h.pre === 'function', hooks)
+      assert.equal(typeof h.post === 'function', hooks)
+      assert.equal(h.tools.some(tool => tool.name === 'read_notebook_output'), tools)
+      assert.deepEqual(h.calls, [])
+    })
+  }
+}
+
 test('filters unrelated tools without invoking a guard', async () => {
   const h = harness({ results: [result(9, '', 'must not run')] })
   let nextCalls = 0

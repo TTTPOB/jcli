@@ -107,6 +107,19 @@ if (scenario === "mapping") {
   console.log(JSON.stringify({ logs, writeOutput, patchOutput }))
 }
 
+if (scenario === "capabilities") {
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "s", callID: "1" },
+    { args: { command: "echo hello" } },
+  )
+  const writeOutput = { title: "write", output: "written", metadata: {} }
+  await hooks["tool.execute.after"](
+    { tool: "write", sessionID: "s", callID: "2", args: { filePath: "/tmp/analysis.py" } },
+    writeOutput,
+  )
+  console.log(JSON.stringify({ tools: Object.keys(hooks.tool), logs }))
+}
+
 if (scenario === "deny") {
   let error
   try {
@@ -145,15 +158,19 @@ if (scenario === "post-failure") {
 
 
 def _run_plugin(
-    tmp_path: Path, scenario: str, mode: str = ""
+    tmp_path: Path, scenario: str, mode: str = "", *, source: str | None = None
 ) -> tuple[dict, list[dict]]:
     plugin = resources.files("jupyter_jcli").joinpath("opencode_plugin.js")
+    if source is not None:
+        plugin = tmp_path / "installed-plugin.mjs"
+        plugin.write_text(source, encoding="utf-8")
     fake_jcli = tmp_path / "fake-j-cli"
     fake_jcli.write_text(_FAKE_JCLI, encoding="utf-8")
     fake_jcli.chmod(0o755)
     runner = tmp_path / "runner.mjs"
     runner.write_text(_RUNNER, encoding="utf-8")
     calls_path = tmp_path / "calls.jsonl"
+    calls_path.touch()
     directory = tmp_path / "project"
     (directory / "nested").mkdir(parents=True)
 
@@ -178,6 +195,24 @@ def _run_plugin(
         json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()
     ]
     return output, calls
+
+
+@pytest.mark.parametrize("hooks", [False, True])
+@pytest.mark.parametrize("tools", [False, True])
+def test_installed_plugin_enables_only_selected_capabilities(tmp_path, hooks, tools):
+    from jupyter_jcli.commands.setup.common import Component
+    from jupyter_jcli.commands.setup.opencode import _render_source
+
+    selected = frozenset(
+        component
+        for component, enabled in ((Component.HOOK, hooks), (Component.TOOL, tools))
+        if enabled
+    )
+    output, calls = _run_plugin(
+        tmp_path, "capabilities", source=_render_source(selected)
+    )
+    assert output["tools"] == (["read_notebook_output"] if tools else [])
+    assert len(calls) == (3 if hooks else 0)
 
 
 def test_maps_tools_to_existing_guards(tmp_path):
