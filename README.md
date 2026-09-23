@@ -45,7 +45,7 @@ direnv allow
 
 ```bash
 # stdout is pipe-safe — the hint line goes to stderr
-$(j-cli serve-cmd --serve-backend lab)
+bash -c "$(j-cli serve-cmd --serve-backend lab)"
 ```
 
 This prints (and immediately executes) a command like:
