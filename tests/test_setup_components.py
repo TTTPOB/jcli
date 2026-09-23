@@ -21,6 +21,7 @@ def invoke(host: str, *args: str):
 def isolated(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
     monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
     monkeypatch.setenv("DSH_AGENTS_HOME", str(tmp_path / "agents-home"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))

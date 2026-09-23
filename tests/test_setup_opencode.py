@@ -22,6 +22,7 @@ class TestOpenCodeScopeRouting:
     def test_user_writes_global_plugin(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
         result = _invoke(CliRunner(), ["--user"])
         assert result.exit_code == 0
         assert (tmp_path / ".config" / "opencode" / "plugins" / "jcli.js").exists()
@@ -83,6 +84,7 @@ class TestOpenCodeInstall:
     def test_warns_when_other_scope_exists(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
         runner = CliRunner()
         assert _invoke(runner, []).exit_code == 0
         result = _invoke(runner, ["--user"])
