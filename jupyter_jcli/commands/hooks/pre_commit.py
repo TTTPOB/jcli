@@ -86,7 +86,35 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
         ]
 
     # ------------------------------------------------------------------
-    # Step 5: process each candidate
+    # Step 5: reject unstaged changes before synchronizing any candidate
+    # ------------------------------------------------------------------
+    if staged_py_rel:
+        try:
+            unstaged = subprocess.run(
+                ["git", "diff", "--name-only", "--", *staged_py_rel],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(repo_root),
+            )
+        except OSError as exc:
+            return HookOutcome.failure(f"could not check unstaged .py files: {exc}")
+        if unstaged.returncode != 0:
+            detail = (unstaged.stderr or unstaged.stdout or "git diff failed").strip()
+            return HookOutcome.failure(f"could not check unstaged .py files: {detail}")
+        unstaged_py = [p for p in unstaged.stdout.splitlines() if p.strip()]
+        if unstaged_py:
+            print(
+                "pre-commit-pair-sync: unstaged changes in staged .py files — "
+                "stage or discard them before syncing:",
+                file=sys.stderr,
+            )
+            for p in unstaged_py:
+                print(f"  {p}", file=sys.stderr)
+            return HookOutcome.failure("unstaged .py changes require manual resolution")
+
+    # ------------------------------------------------------------------
+    # Step 6: process each candidate
     # ------------------------------------------------------------------
     from jupyter_jcli.parser import find_pair
 
@@ -180,7 +208,7 @@ def _run_pre_commit_pair_sync(include_globs: tuple[str, ...]) -> HookOutcome:
             drifts.append((rel_path, ipynb_rel, result.diff_text))
 
     # ------------------------------------------------------------------
-    # Step 6: report and exit
+    # Step 7: report and exit
     # ------------------------------------------------------------------
     if conflicts:
         print(

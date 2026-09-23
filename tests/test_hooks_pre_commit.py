@@ -163,35 +163,63 @@ class TestInSync:
 
 
 # ---------------------------------------------------------------------------
-# Initial sync: .py missing on disk, .ipynb exists -> create .py + git add
+# Unstaged .py deletion must block initial sync
 # ---------------------------------------------------------------------------
 
 
 class TestInitialSync:
-    def test_initial_sync_creates_py(self, git_repo, monkeypatch):
+    def test_unstaged_deletion_blocks_initial_sync(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
 
-        # Stage foo.py temporarily, then delete it from disk
         _make_py(git_repo / "foo.py", "x = 1")
         _git(git_repo, "git", "add", "foo.py")
         (git_repo / "foo.py").unlink()
-
-        # Create the ipynb counterpart
         _make_ipynb(git_repo / "foo.ipynb", "x = 42")
 
-        runner = CliRunner()
-        result = _invoke(runner)
+        result = _invoke(CliRunner())
 
-        assert result.exit_code == 0
-        assert (git_repo / "foo.py").exists()
-        # foo.py must now be re-staged
-        assert "foo.py" in _staged_files(git_repo)
-        assert "initial sync" in (result.stderr or "")
+        assert result.exit_code == 1
+        assert "foo.py" in _combined(result)
+        assert "unstaged" in _combined(result)
+        assert not (git_repo / "foo.py").exists()
+        assert b"x = 1" in _git(git_repo, "git", "show", ":foo.py").stdout
 
 
 # ---------------------------------------------------------------------------
-# merged: py_needs_update -> write .py + git add, exit 0
+# Unstaged changes block sync; clean merges write .py and stage it
 # ---------------------------------------------------------------------------
+
+
+class TestUnstagedPyBlocked:
+    def test_all_candidates_checked_before_any_sync(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        for name in ("a", "b"):
+            _make_py(git_repo / f"{name}.py", "x = 1", "y = 2")
+            _make_ipynb(git_repo / f"{name}.ipynb", "x = 1", "y = 2")
+        _git(git_repo, "git", "add", "a.py", "a.ipynb", "b.py", "b.ipynb")
+        _git(git_repo, "git", "commit", "-m", "init")
+
+        _make_py(git_repo / "a.py", "x = 1", "y = 20")
+        _make_ipynb(git_repo / "a.ipynb", "x = 10", "y = 2")
+        _make_py(git_repo / "b.py", "x = 1", "y = 20")
+        _make_ipynb(git_repo / "b.ipynb", "x = 10", "y = 2")
+        _git(git_repo, "git", "add", "a.py", "b.py")
+        _make_py(git_repo / "b.py", "x = 1", "y = 30")
+        staged_a = _git(git_repo, "git", "show", ":a.py").stdout
+        staged_b = _git(git_repo, "git", "show", ":b.py").stdout
+        disk_a = (git_repo / "a.py").read_bytes()
+
+        result = _invoke(CliRunner())
+
+        assert result.exit_code == 1
+        assert "unstaged" in _combined(result)
+        assert "b.py" in _combined(result)
+        assert (git_repo / "a.py").read_bytes() == disk_a
+        assert _git(git_repo, "git", "show", ":a.py").stdout == staged_a
+        assert _git(git_repo, "git", "show", ":b.py").stdout == staged_b
+        assert b"y = 30" in (git_repo / "b.py").read_bytes()
+        nb = nbformat.read(str(git_repo / "a.ipynb"), as_version=4)
+        assert nb.cells[0].source == "x = 10"
 
 
 class TestMergedPyNeedsUpdate:
