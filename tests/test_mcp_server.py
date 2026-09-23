@@ -264,4 +264,4 @@ def test_cli_rejects_relative_root_and_guides_missing_dependency(
     monkeypatch.setattr(builtins, "__import__", import_without_mcp_server)
     missing = CliRunner().invoke(serve, ["--root", str(tmp_path)])
     assert missing.exit_code == 1
-    assert "install jupyter-jcli[mcp]" in missing.output
+    assert "reinstall jupyter-jcli" in missing.output

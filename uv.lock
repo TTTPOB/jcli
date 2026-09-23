@@ -1077,6 +1077,7 @@ dependencies = [
     { name = "click" },
     { name = "jupyter-kernel-client" },
     { name = "jupyter-server-client" },
+    { name = "mcp" },
     { name = "nbformat" },
     { name = "pyyaml" },
     { name = "tree-sitter" },
@@ -1085,9 +1086,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-mcp = [
-    { name = "mcp" },
-]
 test = [
     { name = "ipykernel" },
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1109,7 +1107,7 @@ requires-dist = [
     { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
     { name = "jupyter-server-client" },
     { name = "matplotlib", marker = "extra == 'test'" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.12,<2" },
+    { name = "mcp", specifier = ">=1.12,<2" },
     { name = "nbformat", specifier = ">=5" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'test'" },
@@ -1119,7 +1117,7 @@ requires-dist = [
     { name = "tree-sitter-bash", specifier = ">=0.22" },
     { name = "typing-extensions", specifier = ">=4.4" },
 ]
-provides-extras = ["mcp", "test"]
+provides-extras = ["test"]
 
 [[package]]
 name = "jupyter-kernel-client"

@@ -12,19 +12,15 @@ Check for the command before installing it:
 command -v j-cli > /dev/null && echo "installed" || echo "not installed"
 ```
 
-Install the base CLI only when it is absent:
+Install the CLI (including MCP support) only when it is absent:
 
 ```bash
 uv tool install jupyter-jcli
 j-cli --version
 ```
 
-The PyPI package is `jupyter-jcli`; the binary is `j-cli`. Claude Code and Codex
-need the MCP extra to expose `read_notebook_output`:
-
-```bash
-uv tool install 'jupyter-jcli[mcp]'
-```
+The PyPI package is `jupyter-jcli`; the binary is `j-cli`. The default installation
+includes MCP support for Claude Code and Codex `read_notebook_output`.
 
 ## Connect
 

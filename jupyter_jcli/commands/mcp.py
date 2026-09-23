@@ -29,7 +29,7 @@ def serve(roots: tuple[str, ...]) -> None:
     except ModuleNotFoundError as error:
         if error.name == "mcp" or (error.name or "").startswith("mcp."):
             raise click.ClickException(
-                "MCP support is not installed; install jupyter-jcli[mcp]"
+                "MCP support is not installed; reinstall jupyter-jcli"
             ) from error
         raise
     asyncio.run(serve_stdio(resolved_roots))

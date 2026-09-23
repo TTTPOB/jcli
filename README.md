@@ -19,11 +19,7 @@ j-cli --version
 
 Requires Python 3.10+.
 
-Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`. Claude Code and Codex notebook-output integration also needs the optional MCP dependencies:
-
-```bash
-uv tool install 'jupyter-jcli[mcp]'
-```
+Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`. MCP support for Claude Code and Codex notebook-output integration is included in the default installation.
 
 ## Recommended Workflow
 
@@ -271,7 +267,7 @@ j-cli setup claude --only skill --skill-dir ./agent-skills
 
 The install command is idempotent — re-running updates hooks in place without duplicating them. It uses the official `claude mcp add` command and rejects an existing `jcli-notebook-output` entry pointing to another command unless installation explicitly uses `--force`. The server exposes one read-only call, `read_notebook_output`, which lists a cell's saved outputs when `output_index` is omitted and reads one output when it is provided. Project and local installs explicitly allow the current project root; user installs defer root discovery to the MCP client's roots capability instead of binding the setup directory. A user-scoped server returns `ROOTS_REQUIRED` if the client provides no roots. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated user configuration and notebook output data. If the hook settings file becomes empty after removal it is deleted.
 
-The notebook-output server requires the optional MCP dependencies. Install them with `uv tool install 'jupyter-jcli[mcp]'` (or the equivalent extras-aware command for your environment). If the extra is missing, `j-cli mcp serve` reports that `jupyter-jcli[mcp]` is required.
+The notebook-output server is included in the default `jupyter-jcli` installation; no extra is needed.
 
 **What gets installed (5 hooks):**
 
@@ -334,7 +330,7 @@ j-cli setup codex --remove --only hook  # preserve skill and MCP tool
 
 **Prerequisites:** Codex hooks require `[features]\ncodex_hooks = true` in `.codex/config.toml`. `setup codex` checks for this and warns if missing. See [Codex hooks docs](https://developers.openai.com/codex/hooks).
 
-The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected unless installation explicitly uses `--force`. The server exposes the same single `read_notebook_output` call as Claude setup. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots and return `ROOTS_REQUIRED` if none are available. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated configuration and notebook output data. The MCP server requires the `jupyter-jcli[mcp]` extra described above.
+The install command is idempotent — re-running updates hooks in place without duplicating them. Codex's own MCP CLI writes the selected `config.toml`, preserving unrelated TOML content; an existing `jcli-notebook-output` entry with another command is rejected unless installation explicitly uses `--force`. The server exposes the same single `read_notebook_output` call as Claude setup. Project installs pass the current project as an explicit allowed root, while user installs defer to client-provided MCP roots and return `ROOTS_REQUIRED` if none are available. `--remove` removes the selected managed components (skill, hooks, and the matching MCP entry by default), preserving unrelated configuration and notebook output data. MCP support is included in the default `jupyter-jcli` installation.
 
 **What gets installed (4 hooks):**
 
@@ -386,8 +382,8 @@ modules (Node 24.19 is the tested runtime), and ensure its `PATH` resolves the
 updated `j-cli` installation. No compiler or package manager is needed at
 runtime. The native adapter also exposes the single read-only
 `read_notebook_output` tool with the same list-or-read arguments as the
-Claude/Codex MCP integration; it invokes the installed `j-cli` and does not
-require the MCP extra.
+Claude/Codex MCP integration; it invokes the installed `j-cli` and needs no
+separate MCP dependency installation.
 
 Re-running `setup dsh` migrates a managed legacy bridge row in place to the
 native row. An old `.dsh/jcli-hooks.json` (or the global file with the same name)
@@ -415,7 +411,7 @@ j-cli setup opencode --remove --only hook  # preserve tool and skill
 
 The installer normally updates only files carrying the j-cli managed marker. `--force` allows replacement of an unrelated `jcli.js` with the selected capabilities, but removal still requires ownership. Avoid installing both project and user copies because OpenCode loads both plugin directories.
 
-The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output. It also exposes the single read-only `read_notebook_output` tool, using OpenCode's normal read permission check and the shared list-or-read contract; it does not require the MCP extra.
+The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output. It also exposes the single read-only `read_notebook_output` tool, using OpenCode's normal read permission check and the shared list-or-read contract; it needs no separate MCP dependency installation.
 
 The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment. Removing the plugin removes managed integration files only; it does not delete notebooks or saved output data.
 

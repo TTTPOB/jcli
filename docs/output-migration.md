@@ -50,7 +50,7 @@ The equivalent environment settings are `JCLI_OUTPUT_RETENTION_DAYS` and `JCLI_O
 
 Claude Code, Codex, DSH, and OpenCode expose one `read_notebook_output` call. Omitting `output_index` lists the cell's saved outputs; providing it reads one output, with optional `mime_type`, `offset`, and `limit`.
 
-Claude Code and Codex use the `jcli-notebook-output` MCP server and need `jupyter-jcli[mcp]`. Project setup passes an explicit project root. User setup relies on client-provided roots and returns `ROOTS_REQUIRED` if the client provides none. DSH and OpenCode provide the same contract through native adapters. Every adapter is read-only: it does not execute cells, modify notebooks, create a cache, or run a background service.
+Claude Code and Codex use the `jcli-notebook-output` MCP server, included with the default `jupyter-jcli` installation. Project setup passes an explicit project root. User setup relies on client-provided roots and returns `ROOTS_REQUIRED` if the client provides none. DSH and OpenCode provide the same contract through native adapters. Every adapter is read-only: it does not execute cells, modify notebooks, create a cache, or run a background service.
 
 Removing a managed integration removes configuration only; it does not delete notebook or `.j-cli` output data.
 

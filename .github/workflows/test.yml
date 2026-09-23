@@ -26,13 +26,13 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test --extra mcp
+        run: uv sync --extra test
 
       - name: Run tests
         run: uv run pytest -n 4 --dist loadscope -v
         timeout-minutes: 10
 
-  cli-without-mcp:
+  cli-base-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,8 +46,8 @@ jobs:
       - name: Install base dependencies only
         run: uv sync --no-default-groups
 
-      - name: Check CLI without MCP
+      - name: Smoke-check CLI and MCP
         run: |
-          uv run --no-sync python -c "import importlib.util; assert importlib.util.find_spec('mcp') is None"
+          uv run --no-sync python -c "import mcp"
           uv run --no-sync j-cli --help
           uv run --no-sync j-cli mcp --help
