@@ -115,6 +115,20 @@ def resolve_notebook_cell(
     )
 
 
+def resolve_execution_notebook_cell(
+    file_path: str | Path, cell_index: int
+) -> ResolvedNotebookCell:
+    """Require matching source before writing newly executed outputs."""
+    resolved = resolve_notebook_cell(file_path, cell_index)
+    if resolved.requested_cell.source != resolved.notebook_cell.source:
+        raise OutputProtocolError(
+            "NOTEBOOK_OUT_OF_SYNC",
+            f"Python cell {cell_index} differs from its notebook cell; "
+            "synchronize the notebook before execution",
+        )
+    return resolved
+
+
 def list_notebook_outputs(
     file_path: str | Path,
     cell_index: int,

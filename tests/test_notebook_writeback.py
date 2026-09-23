@@ -5,9 +5,12 @@ import textwrap
 from unittest.mock import patch
 
 import nbformat
+import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.notebook_writer import write_outputs_to_notebook
+from jupyter_jcli.outputs.notebook import read_notebook_output
 
 
 def _jsonl_events(output: str) -> list[dict]:
@@ -396,6 +399,88 @@ class TestPyPercentWriteback:
         updated_nb = nbformat.read(nb_path, as_version=4)
         assert updated_nb.cells[0].cell_type == "markdown"
         assert any("mapped" in str(output) for output in updated_nb.cells[1].outputs)
+
+    def test_stale_id_source_blocks_execution_but_keeps_historical_outputs(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
+        py_file = tmp_path / "stale.py"
+        py_file.write_text(
+            '# %% id="first"\nprint("first")\n\n# %% id="stable"\nprint("new")\n'
+        )
+        old_output = nbformat.v4.new_output("stream", name="stdout", text="old output")
+        nb = nbformat.v4.new_notebook(
+            cells=[
+                nbformat.v4.new_code_cell('print("first")', id="first"),
+                nbformat.v4.new_code_cell('print("old")', id="stable"),
+            ]
+        )
+        nb.cells[1].outputs = [old_output]
+        nb_path = tmp_path / "stale.ipynb"
+        nbformat.write(nb, nb_path)
+
+        assert read_notebook_output(py_file, 1, 0)["stream"]["data"] == "old output"
+        client = mock_kernel_connection._manager.client
+        with patch.object(client, "execute", wraps=client.execute) as execute:
+            result = CliRunner().invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "--json",
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                    "--cell",
+                    "0:2",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "synchronize the notebook before execution" in result.output
+        execute.assert_not_called()
+        saved = nbformat.read(nb_path, as_version=4)
+        assert saved.cells[0].outputs == []
+        assert saved.cells[1].source == 'print("old")'
+        assert saved.cells[1].outputs[0].text == "old output"
+
+    @pytest.mark.parametrize("changed_field", ["id", "source"])
+    def test_writeback_rejects_changed_target(self, tmp_path, changed_field):
+        nb_path = tmp_path / "changed.ipynb"
+        cell = nbformat.v4.new_code_cell('print("original")', id="stable")
+        cell.outputs = [
+            nbformat.v4.new_output("stream", name="stdout", text="saved output")
+        ]
+        if changed_field == "id":
+            cell.id = "replacement"
+        else:
+            cell.source = 'print("replacement")'
+        nbformat.write(nbformat.v4.new_notebook(cells=[cell]), nb_path)
+
+        with pytest.raises(ValueError, match="synchronize before execution"):
+            write_outputs_to_notebook(
+                str(nb_path),
+                [
+                    {
+                        "cell_index": 0,
+                        "expected_cell_id": "stable",
+                        "expected_source": 'print("original")',
+                        "raw_outputs": [
+                            {
+                                "output_type": "stream",
+                                "name": "stdout",
+                                "text": "new output",
+                            }
+                        ],
+                        "execution_count": 1,
+                    }
+                ],
+            )
+
+        saved = nbformat.read(nb_path, as_version=4)
+        assert saved.cells[0].outputs[0].text == "saved output"
 
     def test_no_writeback_for_plain_script(
         self, live_session, mock_kernel_connection, tmp_path

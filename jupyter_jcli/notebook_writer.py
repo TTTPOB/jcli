@@ -73,6 +73,8 @@ def write_outputs_to_notebook(
         ipynb_path: Path to the .ipynb file.
         cell_results: List of dicts with keys:
             - cell_index: int
+            - expected_cell_id: str, ID of the notebook target at resolution
+            - expected_source: str, source of the executed cell
             - raw_outputs: list of raw kernel output dicts
             - execution_count: int or None
 
@@ -88,10 +90,18 @@ def write_outputs_to_notebook(
     for result in cell_results:
         idx = result["cell_index"]
         if idx < 0 or idx >= len(nb.cells):
-            continue
+            raise ValueError(
+                f"Notebook cell {idx} changed; synchronize before execution"
+            )
         cell = nb.cells[idx]
-        if cell.cell_type != CellType.CODE:
-            continue
+        if (
+            cell.cell_type != CellType.CODE
+            or cell.id != result["expected_cell_id"]
+            or cell.source != result["expected_source"]
+        ):
+            raise ValueError(
+                f"Notebook cell {idx} changed; synchronize before execution"
+            )
 
         cell.outputs = convert_to_nbformat_outputs(result["raw_outputs"])
         if result.get("execution_count") is not None:
