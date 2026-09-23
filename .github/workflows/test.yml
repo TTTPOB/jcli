@@ -26,8 +26,28 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test
+        run: uv sync --extra test --extra mcp
 
       - name: Run tests
         run: uv run pytest -n 4 --dist loadscope -v
         timeout-minutes: 10
+
+  cli-without-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install base dependencies only
+        run: uv sync --no-default-groups
+
+      - name: Check CLI without MCP
+        run: |
+          uv run --no-sync python -c "import importlib.util; assert importlib.util.find_spec('mcp') is None"
+          uv run --no-sync j-cli --help
+          uv run --no-sync j-cli mcp --help
