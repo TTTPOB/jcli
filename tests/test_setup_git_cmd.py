@@ -96,10 +96,13 @@ class TestLocalScope:
         runner = CliRunner()
         result = _invoke(runner, ["--local"])
 
-        assert result.exit_code == 0
-        combined = (result.output or "") + (result.stderr or "")
-        assert "overwrote" in combined.lower()
-        # Content should be replaced
+        assert result.exit_code == 1
+        assert "HOOK_CONFLICT" in result.output
+        assert hook.read_text() == "#!/bin/sh\necho old\n"
+
+        forced = _invoke(runner, ["--local", "--force"])
+        assert forced.exit_code == 0
+        assert "overwrote" in forced.output.lower()
         assert "j-cli _hooks pre-commit-pair-sync" in hook.read_text()
 
 
@@ -109,6 +112,23 @@ class TestLocalScope:
 
 
 class TestProjectScope:
+    def test_project_rejects_foreign_hook_until_forced(self, git_repo, monkeypatch):
+        monkeypatch.chdir(git_repo)
+        hook = git_repo / ".githooks" / "pre-commit"
+        hook.parent.mkdir(parents=True)
+        original = "#!/bin/sh\nj-cli _hooks pre-commit-pair-sync\necho custom\n"
+        hook.write_text(original, encoding="utf-8")
+
+        result = _invoke(CliRunner(), ["--project"])
+        assert result.exit_code == 1
+        assert "HOOK_CONFLICT" in result.output
+        assert hook.read_text(encoding="utf-8") == original
+        assert _hooks_path_config(git_repo) is None
+        assert not (git_repo / ".gitignore").exists()
+
+        assert _invoke(CliRunner(), ["--project", "--force"]).exit_code == 0
+        assert hook.read_text(encoding="utf-8") != original
+
     def test_project_creates_hook_in_scripts(self, git_repo, monkeypatch):
         monkeypatch.chdir(git_repo)
         runner = CliRunner()
@@ -389,6 +409,41 @@ class TestGitRemove:
         result = _invoke(runner, ["--local", "--remove"])
         assert result.exit_code == 0
         assert not hook.exists()
+
+    @pytest.mark.parametrize("scope", ["--local", "--project"])
+    def test_remove_preserves_hook_containing_jcli_command(
+        self, git_repo, monkeypatch, scope
+    ):
+        monkeypatch.chdir(git_repo)
+        hook = git_repo / (
+            ".git/hooks/pre-commit" if scope == "--local" else ".githooks/pre-commit"
+        )
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        original = "#!/bin/sh\necho custom\nj-cli _hooks pre-commit-pair-sync\n"
+        hook.write_text(original, encoding="utf-8")
+
+        result = _invoke(CliRunner(), [scope, "--remove"])
+        assert result.exit_code == 0
+        assert hook.read_text(encoding="utf-8") == original
+
+    def test_remove_project_preserves_hookspath_for_foreign_hook(
+        self, git_repo, monkeypatch
+    ):
+        monkeypatch.chdir(git_repo)
+        hook = git_repo / ".githooks" / "pre-commit"
+        hook.parent.mkdir(parents=True)
+        original = "#!/bin/sh\nj-cli _hooks pre-commit-pair-sync\necho custom\n"
+        hook.write_text(original, encoding="utf-8")
+        subprocess.run(
+            ["git", "config", "--local", "core.hooksPath", ".githooks"],
+            cwd=git_repo,
+            check=True,
+        )
+
+        result = _invoke(CliRunner(), ["--project", "--remove"])
+        assert result.exit_code == 0
+        assert hook.read_text(encoding="utf-8") == original
+        assert _hooks_path_config(git_repo) == ".githooks"
 
     def test_remove_skips_non_jcli_hook(self, git_repo, monkeypatch):
         """User's custom pre-commit is left intact; warning emitted."""
