@@ -111,8 +111,35 @@ class TestExecCode:
                 "1/0",
             ],
         )
-        assert result.exit_code == 0
-        assert "ZeroDivisionError" in result.output
+        assert result.exit_code == 1
+        assert "ZeroDivisionError" in result.stdout
+        assert "ERROR [EXECUTION_ERROR]: Code execution failed" in result.stderr
+
+    def test_json_error_output(self, live_session, mock_execute_code):
+        result = CliRunner().invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "--json",
+                "exec",
+                live_session["session_id"],
+                "--code",
+                "1/0",
+            ],
+        )
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["status"] == "error"
+        assert any("ZeroDivisionError" in str(output) for output in data["outputs"])
+        assert json.loads(result.stderr) == {
+            "status": "error",
+            "code": "EXECUTION_ERROR",
+            "message": "Code execution failed",
+        }
 
     def test_json_output(self, live_session, mock_execute_code):
         runner = CliRunner()

@@ -101,7 +101,10 @@ def _exec_code(
 
         stored = persist_inline_outputs(raw_outputs)
         outputs = stored.outputs if stored is not None else process_outputs(raw_outputs)
-        response = {"status": ResponseStatus.OK, "outputs": outputs}
+        status = (
+            ResponseStatus.OK if result.get("status") == "ok" else ResponseStatus.ERROR
+        )
+        response = {"status": status, "outputs": outputs}
         if stored is not None:
             response["output_manifest"] = str(stored.manifest_path)
 
@@ -114,6 +117,9 @@ def _exec_code(
                 text = f"{text}\n{saved}" if text else saved
             if text:
                 emit({"_human": text}, use_json=False)
+
+        if status != ResponseStatus.OK:
+            emit_error("EXECUTION_ERROR", "Code execution failed", ctx.use_json)
 
     except Exception as e:  # noqa: BLE001 - normalize execution failures for CLI output
         _emit_execution_error(ctx, e)
