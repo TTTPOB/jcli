@@ -7,6 +7,10 @@ import logging
 import typing as t
 from enum import Enum
 
+from jupyter_kernel_client.snippets import SNIPPETS_REGISTRY
+
+from jupyter_jcli.kernel import execute_with_timeout
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,12 +111,21 @@ def _normalise_dap_variable(v: dict) -> dict:
     }
 
 
-def _fallback_list_variables(kernel) -> list[dict]:
-    """Use the shell-channel snippet (kernel.list_variables()) as fallback.
-
-    Normalises VariableDescription objects into our canonical dict shape.
-    """
-    raw = kernel.list_variables()
+def _fallback_list_variables(kernel, *, timeout: float) -> list[dict]:
+    """Execute the shell-channel variable snippet with an explicit timeout."""
+    language = (kernel.kernel_info or {}).get("language_info", {}).get("name")
+    snippet = SNIPPETS_REGISTRY.get_list_variables(language)
+    execution = execute_with_timeout(kernel, snippet, timeout=timeout, silent=True)
+    if (
+        execution["status"] != "ok"
+        or not execution["outputs"]
+        or "application/json" not in execution["outputs"][-1]["data"]
+    ):
+        raise RuntimeError("Failed to list variables.")
+    raw = sorted(
+        execution["outputs"][-1]["data"]["application/json"],
+        key=lambda v: v["name"] if isinstance(v, dict) else v.name,
+    )
     result = []
     for v in raw:
         # VariableDescription is a TypedDict-like object; access via dict or attr
@@ -176,7 +189,7 @@ def list_variables(kernel, *, timeout: float = 5.0) -> dict[str, t.Any]:
 
     # Shell-channel fallback
     try:
-        variables = _fallback_list_variables(kernel)
+        variables = _fallback_list_variables(kernel, timeout=timeout)
         return {"variables": variables, "source": VariableSource.FALLBACK}
     except ValueError as e:
         raise VariablesUnavailable(str(e)) from e
@@ -251,7 +264,7 @@ def inspect_variable(
 
     # Fallback: list all and filter
     try:
-        variables = _fallback_list_variables(kernel)
+        variables = _fallback_list_variables(kernel, timeout=timeout)
         match = next((v for v in variables if v["name"] == name), None)
         if match is None:
             raise VariablesUnavailable(

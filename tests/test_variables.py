@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import jupyter_jcli.variables as variables_module
 from jupyter_jcli.variables import (
     VariableSource,
     VariablesUnavailable,
@@ -16,29 +17,135 @@ from jupyter_jcli.variables import (
 class TestFallbackListVariablesNormalisation:
     """Unit tests — no live kernel needed."""
 
-    def test_dict_branch_coerces_to_str(self):
-        class _FakeKernel:
-            def list_variables(self):
-                return [{"name": "lst", "type": "list", "value": [1, 2, 3]}]
+    def test_dict_branch_coerces_to_str(self, monkeypatch):
+        kernel = SimpleNamespace(kernel_info={"language_info": {"name": "python"}})
+        monkeypatch.setattr(
+            variables_module,
+            "execute_with_timeout",
+            lambda *args, **kwargs: {
+                "status": "ok",
+                "outputs": [
+                    {
+                        "data": {
+                            "application/json": [
+                                {"name": "lst", "type": "list", "value": [1, 2, 3]}
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
 
-        result = _fallback_list_variables(_FakeKernel())
+        result = _fallback_list_variables(kernel, timeout=1.5)
         assert len(result) == 1
         v = result[0]
         assert isinstance(v["name"], str)
         assert isinstance(v["type"], str)
         assert isinstance(v["value"], str)
 
-    def test_attr_branch_coerces_to_str(self):
-        class _FakeKernel:
-            def list_variables(self):
-                return [SimpleNamespace(name="arr", type="ndarray", value=[10, 20])]
+    def test_attr_branch_coerces_to_str(self, monkeypatch):
+        kernel = SimpleNamespace(kernel_info={"language_info": {"name": "python"}})
+        monkeypatch.setattr(
+            variables_module,
+            "execute_with_timeout",
+            lambda *args, **kwargs: {
+                "status": "ok",
+                "outputs": [
+                    {
+                        "data": {
+                            "application/json": [
+                                SimpleNamespace(
+                                    name="arr", type="ndarray", value=[10, 20]
+                                )
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
 
-        result = _fallback_list_variables(_FakeKernel())
+        result = _fallback_list_variables(kernel, timeout=1.5)
         assert len(result) == 1
         v = result[0]
         assert isinstance(v["name"], str)
         assert isinstance(v["type"], str)
         assert isinstance(v["value"], str)
+
+
+class TestFallbackTimeout:
+    @pytest.mark.parametrize("inspect", [False, True])
+    def test_requested_timeout_reaches_shell_execution(self, monkeypatch, inspect):
+        kernel = SimpleNamespace(kernel_info={"language_info": {"name": "python"}})
+        calls = []
+
+        def execute(kernel_arg, snippet, *, timeout, silent):
+            calls.append((kernel_arg, snippet, timeout, silent))
+            return {
+                "status": "ok",
+                "outputs": [
+                    {
+                        "data": {
+                            "application/json": [
+                                {"name": "answer", "type": "int", "value": "42"}
+                            ]
+                        }
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(variables_module, "execute_with_timeout", execute)
+        if inspect:
+            result = inspect_variable(kernel, "answer", timeout=0.25)
+            assert result["name"] == "answer"
+        else:
+            result = list_variables(kernel, timeout=0.25)
+            assert result["variables"][0]["name"] == "answer"
+        assert result["source"] is VariableSource.FALLBACK
+        assert len(calls) == 1
+        assert calls[0][0] is kernel
+        assert calls[0][1] == variables_module.SNIPPETS_REGISTRY.get_list_variables(
+            "python"
+        )
+        assert calls[0][2:] == (0.25, True)
+
+    def test_dap_failure_uses_same_timeout_for_fallback(self, monkeypatch):
+        kernel = SimpleNamespace(
+            kernel_info={
+                "supported_features": ["debugger"],
+                "language_info": {"name": "python"},
+            },
+            _manager=SimpleNamespace(client=object()),
+        )
+
+        def dap_timeout(wsc, *, timeout):
+            assert timeout == 0.2
+            raise TimeoutError("DAP deadline expired")
+
+        monkeypatch.setattr(variables_module, "_dap_inspect_variables", dap_timeout)
+        calls = []
+        monkeypatch.setattr(
+            variables_module,
+            "execute_with_timeout",
+            lambda kernel, snippet, *, timeout, silent: (
+                calls.append(timeout)
+                or {
+                    "status": "ok",
+                    "outputs": [{"data": {"application/json": []}}],
+                }
+            ),
+        )
+        assert list_variables(kernel, timeout=0.2)["source"] is VariableSource.FALLBACK
+        assert calls == [0.2]
+
+    def test_shell_timeout_is_reported_unavailable(self, monkeypatch):
+        kernel = SimpleNamespace(kernel_info={"language_info": {"name": "python"}})
+
+        def time_out(*args, **kwargs):
+            raise TimeoutError("deadline expired")
+
+        monkeypatch.setattr(variables_module, "execute_with_timeout", time_out)
+        with pytest.raises(VariablesUnavailable, match="deadline expired"):
+            list_variables(kernel, timeout=0.2)
 
 
 class TestListVariables:
