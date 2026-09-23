@@ -3,10 +3,11 @@
 import subprocess
 
 import nbformat
+import pytest
 
 from jupyter_jcli.diff import Conflict, InSync, check_drift
 from jupyter_jcli.formats import percent
-from jupyter_jcli.pairing import synchronize_pair
+from jupyter_jcli.pairing import PairPathConflictError, synchronize_pair
 
 
 def _init_repo(path):
@@ -44,6 +45,27 @@ def _notebook(name="esm_default", display="Default", language="python"):
         }
     )
     return notebook
+
+
+@pytest.mark.parametrize("authoritative", ["py", "ipynb"])
+def test_shared_conversion_rejects_hardlink_before_writing(tmp_path, authoritative):
+    if authoritative == "py":
+        source = tmp_path / "source.py"
+        source.write_text(_py_text(), encoding="utf-8")
+        alias = tmp_path / "alias.ipynb"
+        py_path, ipynb_path = source, alias
+    else:
+        source = tmp_path / "source.ipynb"
+        nbformat.write(_notebook(), source)
+        alias = tmp_path / "alias.py"
+        py_path, ipynb_path = alias, source
+    alias.hardlink_to(source)
+    original = source.read_bytes()
+
+    with pytest.raises(PairPathConflictError, match="different files"):
+        synchronize_pair(py_path, ipynb_path, authoritative=authoritative)
+
+    assert source.read_bytes() == original
 
 
 def test_existing_conversion_then_cell_sync_converges_and_is_idempotent(tmp_path):

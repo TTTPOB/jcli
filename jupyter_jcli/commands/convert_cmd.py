@@ -9,7 +9,7 @@ from jupyter_jcli.commands._display import display_path
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
-from jupyter_jcli.pairing import synchronize_pair
+from jupyter_jcli.pairing import PairPathConflictError, synchronize_pair
 from jupyter_jcli.parser import find_paired_ipynb, ipynb_path_for_py
 
 
@@ -49,12 +49,15 @@ def ipynb_to_py(in_ipynb: str, out_py: str) -> None:
     """Convert a .ipynb file to py:percent format."""
     in_ipynb_path = Path(in_ipynb)
     out_py_path = Path(out_py)
-    synchronize_pair(
-        out_py_path,
-        in_ipynb_path,
-        authoritative="ipynb",
-        persist_baseline=_is_canonical_pair(out_py_path, in_ipynb_path),
-    )
+    try:
+        synchronize_pair(
+            out_py_path,
+            in_ipynb_path,
+            authoritative="ipynb",
+            persist_baseline=_is_canonical_pair(out_py_path, in_ipynb_path),
+        )
+    except PairPathConflictError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(f"Wrote {display_path(out_py_path)}")
 
 
@@ -162,11 +165,14 @@ def py_to_ipynb(
     out_path = Path(out_ipynb)
 
     existed = out_path.exists()
-    synchronize_pair(
-        in_py_path,
-        out_path,
-        authoritative="py",
-        output_policy=OutputPolicy(output_policy),
-        persist_baseline=_is_canonical_pair(in_py_path, out_path),
-    )
+    try:
+        synchronize_pair(
+            in_py_path,
+            out_path,
+            authoritative="py",
+            output_policy=OutputPolicy(output_policy),
+            persist_baseline=_is_canonical_pair(in_py_path, out_path),
+        )
+    except PairPathConflictError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(f"{'Updated' if existed else 'Wrote'} {display_path(out_path)}")

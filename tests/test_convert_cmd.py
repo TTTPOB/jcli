@@ -73,6 +73,34 @@ def _make_ipynb(
     return nb
 
 
+@pytest.mark.parametrize("direction", ["ipynb-to-py", "py-to-ipynb"])
+@pytest.mark.parametrize("alias", ["same", "symlink", "hardlink"])
+def test_convert_rejects_same_file_before_writing(tmp_path, direction, alias):
+    if direction == "ipynb-to-py":
+        source = tmp_path / "source.ipynb"
+        nbformat.write(_make_ipynb([("code", "x = 1", ["1\n"])]), source)
+        target = tmp_path / "alias.py"
+    else:
+        source = tmp_path / "source.py"
+        source.write_text("# %%\nx = 1\n", encoding="utf-8")
+        target = tmp_path / "alias.ipynb"
+
+    if alias == "same":
+        target = source
+    elif alias == "symlink":
+        target.symlink_to(source)
+    else:
+        target.hardlink_to(source)
+    original = source.read_bytes()
+
+    result = _invoke("convert", direction, str(source), str(target))
+
+    assert result.exit_code == 1
+    assert "Error: Input and output must be different files" in result.output
+    assert source.read_bytes() == original
+    assert target.read_bytes() == original
+
+
 # ---------------------------------------------------------------------------
 # ipynb-to-py
 # ---------------------------------------------------------------------------

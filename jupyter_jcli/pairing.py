@@ -14,6 +14,10 @@ from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.pair_state import PairState, metadata_with_local_fields
 
 
+class PairPathConflictError(ValueError):
+    """Input and output paths identify the same file."""
+
+
 @dataclass(frozen=True)
 class PairSyncResult:
     """Outcome of one shared synchronization execution."""
@@ -36,6 +40,11 @@ def synchronize_pair(
     protected_path: Path | None = None,
 ) -> PairSyncResult:
     """Select, apply, verify, and baseline one target pair state."""
+    if py_path.resolve() == ipynb_path.resolve() or (
+        py_path.exists() and ipynb_path.exists() and py_path.samefile(ipynb_path)
+    ):
+        raise PairPathConflictError("Input and output must be different files")
+
     from jupyter_jcli.diff import (
         BaselineMissing,
         Conflict,
