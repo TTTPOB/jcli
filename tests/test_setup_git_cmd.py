@@ -382,6 +382,32 @@ class TestJsonOutput:
 
 
 class TestGitRemove:
+    @pytest.mark.parametrize(
+        ("installed", "removed"),
+        [
+            (["--project"], "--local"),
+            (["--project", "--local"], "--local"),
+            (["--local", "--project"], "--project"),
+        ],
+    )
+    def test_remove_retains_ignore_for_other_scope(
+        self, git_repo, monkeypatch, installed, removed
+    ):
+        monkeypatch.chdir(git_repo)
+        runner = CliRunner()
+        for scope in installed:
+            assert _invoke(runner, [scope]).exit_code == 0
+
+        result = _invoke(runner, [removed, "--remove"])
+        assert result.exit_code == 0
+        assert "# >>> jcli managed (git hooks) >>>" in (
+            git_repo / ".gitignore"
+        ).read_text(encoding="utf-8")
+        if len(installed) == 2:
+            remaining = "--project" if removed == "--local" else "--local"
+            assert _invoke(runner, [remaining, "--remove"]).exit_code == 0
+            assert not (git_repo / ".gitignore").exists()
+
     def test_remove_project_unsets_hookspath(self, git_repo, monkeypatch):
         """install --project then remove --project: hook gone, core.hooksPath unset."""
         monkeypatch.chdir(git_repo)

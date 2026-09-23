@@ -199,8 +199,18 @@ def git_setup(
             except (OSError, FileNotFoundError):
                 pass
 
+        other_hook = (
+            repo_root / ".githooks" / "pre-commit"
+            if scope_e == Scope.LOCAL
+            else repo_root / ".git" / "hooks" / "pre-commit"
+        )
+        other_installed = other_hook.exists() and _is_managed_shim(
+            other_hook.read_text(encoding="utf-8")
+        )
         gitignore_path = repo_root / ".gitignore"
-        gitignore_cleaned = _clean_gitignore_block(gitignore_path)
+        gitignore_cleaned = (
+            False if other_installed else _clean_gitignore_block(gitignore_path)
+        )
 
         noop = not hook_removed and not hookspath_unset and not gitignore_cleaned
         emit(
