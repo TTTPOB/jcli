@@ -454,6 +454,37 @@ class TestExecutionTimeoutUnit:
         ]
         assert kernel.interrupt_calls == 0
 
+    def test_timeout_carries_printed_output_but_unsent_request_does_not(self):
+        from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
+
+        client = _ExecutionClient(
+            iopub_after_execute=[
+                _kernel_message(
+                    "stream", name="stdout", text="printed before timeout\\n"
+                )
+            ]
+        )
+        kernel = _ExecutionKernel(
+            client,
+            interrupt_messages=[_kernel_message("status", execution_state="idle")],
+        )
+        with pytest.raises(ExecutionTimeout) as caught:
+            execute_with_timeout(kernel, "print('hello'); hang()", timeout=0.01)
+        assert caught.value.partial_result == {
+            "execution_count": None,
+            "outputs": [
+                {
+                    "output_type": "stream",
+                    "name": "stdout",
+                    "text": "printed before timeout\\n",
+                }
+            ],
+            "status": "error",
+        }
+        with pytest.raises(ExecutionTimeout) as unsent:
+            execute_with_timeout(kernel, "pass", timeout=0)
+        assert unsent.value.partial_result is None
+
     def test_deadline_interrupts_and_reports_timeout(self):
         from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
 
@@ -764,7 +795,7 @@ class TestExecutionTimeoutIntegration:
                     "exec",
                     sid,
                     "--code",
-                    "import time; time.sleep(30); timeout_sentinel = True",
+                    "import time; print('inline partial', flush=True); time.sleep(30); timeout_sentinel = True",
                     "--timeout",
                     "1",
                 ],
@@ -772,7 +803,11 @@ class TestExecutionTimeoutIntegration:
             elapsed = time.monotonic() - started
 
             assert timed_out.exit_code == 1, timed_out.output
-            error = json.loads(timed_out.output)
+            decoder = json.JSONDecoder()
+            first, offset = decoder.raw_decode(timed_out.output)
+            error = json.loads(timed_out.output[offset:])
+            assert first["status"] == "error"
+            assert "inline partial" in str(first["outputs"])
             assert error["code"] == "TIMEOUT"
             assert "returned to idle" in error["message"]
             assert elapsed < 10
@@ -818,7 +853,14 @@ class TestExecutionTimeoutIntegration:
 
         script = tmp_path / "timeout_cell.py"
         script.write_text(
-            "# %%\nimport time\ntime.sleep(30)\nfile_timeout_sentinel = True\n"
+            "# %%\nimport time\n"
+            "if globals().get('file_ran_before'):\n"
+            "    print('new partial output', flush=True)\n"
+            "    time.sleep(30)\n"
+            "    file_timeout_sentinel = True\n"
+            "else:\n"
+            "    print('old successful output')\n"
+            "    file_ran_before = True\n"
         )
         runner = CliRunner()
         created = runner.invoke(
@@ -839,27 +881,40 @@ class TestExecutionTimeoutIntegration:
         sid = json.loads(created.output)["session_id"]
 
         try:
-            timed_out = runner.invoke(
-                main,
-                [
-                    "-s",
-                    jupyter_server["url"],
-                    "-t",
-                    jupyter_server["token"],
-                    "--json",
-                    "exec",
-                    sid,
-                    "--file",
-                    str(script),
-                    "--cell",
-                    "0",
-                    "--timeout",
-                    "1",
-                ],
-            )
+            arguments = [
+                "-s",
+                jupyter_server["url"],
+                "-t",
+                jupyter_server["token"],
+                "--json",
+                "exec",
+                sid,
+                "--file",
+                str(script),
+                "--cell",
+                "0",
+                "--timeout",
+                "1",
+            ]
+            first = runner.invoke(main, arguments)
+            assert first.exit_code == 0, first.output
+            timed_out = runner.invoke(main, arguments)
 
             assert timed_out.exit_code == 1, timed_out.output
-            assert json.loads(timed_out.output)["code"] == "TIMEOUT"
+            lines = [json.loads(line) for line in timed_out.output.splitlines()]
+            assert lines[-1]["code"] == "TIMEOUT"
+            assert all(line.get("summary") is None for line in lines)
+            assert lines[0]["status"] == "error"
+            assert "new partial output" in str(lines[0]["cell"]["outputs"])
+            notebook = json.loads(script.with_suffix(".ipynb").read_text())
+            assert "new partial output" in str(notebook["cells"][0]["outputs"])
+            assert "old successful output" not in str(
+                [
+                    output
+                    for output in notebook["cells"][0]["outputs"]
+                    if output["output_type"] == "stream"
+                ]
+            )
 
             recovered = runner.invoke(
                 main,

@@ -150,6 +150,8 @@ def execute_file(
     error to a CLI response.
     """
     from jupyter_jcli.kernel import (
+        ExecutionTimeout,
+        KernelInterruptFailed,
         execute_with_timeout,
         expression_display_mode,
         kernel_connection,
@@ -183,7 +185,14 @@ def execute_file(
             else:
                 remaining = 10
 
-            result = execute_with_timeout(kernel, cell.source, timeout=remaining)
+            execution_error = None
+            try:
+                result = execute_with_timeout(kernel, cell.source, timeout=remaining)
+            except (ExecutionTimeout, KernelInterruptFailed) as error:
+                if error.partial_result is None:
+                    raise
+                execution_error = error
+                result = error.partial_result
             execution_status = (
                 ResponseStatus.OK
                 if result.get("status") == "ok"
@@ -251,6 +260,8 @@ def execute_file(
                 on_cell(event)
             notebook_created = None
 
+            if execution_error is not None:
+                raise execution_error
             if execution_status != ResponseStatus.OK:
                 raise CellExecutionFailed(cell.index)
 

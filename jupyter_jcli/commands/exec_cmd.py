@@ -123,6 +123,31 @@ def _exec_code(
             emit_error("EXECUTION_ERROR", "Code execution failed", ctx.use_json)
 
     except Exception as e:  # noqa: BLE001 - normalize execution failures for CLI output
+        from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
+
+        if (
+            isinstance(e, (ExecutionTimeout, KernelInterruptFailed))
+            and e.partial_result is not None
+        ):
+            raw_outputs = e.partial_result["outputs"]
+            from jupyter_jcli.outputs.store import persist_inline_outputs
+
+            stored = persist_inline_outputs(raw_outputs)
+            outputs = (
+                stored.outputs if stored is not None else process_outputs(raw_outputs)
+            )
+            if ctx.use_json:
+                response = {"status": ResponseStatus.ERROR, "outputs": outputs}
+                if stored is not None:
+                    response["output_manifest"] = str(stored.manifest_path)
+                emit(response, use_json=True)
+            else:
+                text = format_outputs_human(outputs)
+                if stored is not None:
+                    saved = f"Outputs saved: {stored.manifest_path}"
+                    text = f"{text}\n{saved}" if text else saved
+                if text:
+                    emit({"_human": text}, use_json=False)
         _emit_execution_error(ctx, e)
 
 

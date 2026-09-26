@@ -82,11 +82,19 @@ class _JCLIKernelWebSocketClient(KernelWebSocketClient):
 
 
 class ExecutionTimeout(TimeoutError):
-    """Raised after a timed-out execution has returned to idle."""
+    """Execution timed out, optionally carrying outputs from a sent request."""
+
+    def __init__(self, message: str, partial_result: dict | None = None):
+        super().__init__(message)
+        self.partial_result = partial_result
 
 
 class KernelInterruptFailed(RuntimeError):
-    """Raised when a timed-out execution could not be interrupted."""
+    """Interrupt failed, optionally carrying outputs from a sent request."""
+
+    def __init__(self, message: str, partial_result: dict | None = None):
+        super().__init__(message)
+        self.partial_result = partial_result
 
 
 def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
@@ -361,6 +369,15 @@ def execute_with_timeout(
         stop_on_error=stop_on_error,
     )
 
+    def partial_result() -> dict:
+        for output in outputs:
+            output.pop("transient", None)
+        return {
+            "execution_count": (reply or {}).get("content", {}).get("execution_count"),
+            "outputs": outputs,
+            "status": "error",
+        }
+
     while True:
         now = time.monotonic()
         active_deadline = recovery_deadline if timed_out else deadline
@@ -371,18 +388,21 @@ def execute_with_timeout(
             if timed_out:
                 raise KernelInterruptFailed(
                     "Execution deadline expired; the kernel did not return to idle "
-                    f"within {_KERNEL_INTERRUPT_RECOVERY_TIMEOUT:g} seconds"
+                    f"within {_KERNEL_INTERRUPT_RECOVERY_TIMEOUT:g} seconds",
+                    partial_result(),
                 )
             if idle_seen:
                 raise ExecutionTimeout(
                     "Execution deadline expired while waiting for the execute reply; "
-                    "the kernel returned to idle"
+                    "the kernel returned to idle",
+                    partial_result(),
                 )
             try:
                 kernel.interrupt(timeout=2)
             except Exception as exc:
                 raise KernelInterruptFailed(
-                    f"Execution deadline expired and the kernel interrupt failed: {exc}"
+                    f"Execution deadline expired and the kernel interrupt failed: {exc}",
+                    partial_result(),
                 ) from exc
             timed_out = True
             recovery_deadline = time.monotonic() + _KERNEL_INTERRUPT_RECOVERY_TIMEOUT
@@ -414,7 +434,8 @@ def execute_with_timeout(
 
         if timed_out and idle_seen:
             raise ExecutionTimeout(
-                "Execution deadline expired; the kernel was interrupted and returned to idle"
+                "Execution deadline expired; the kernel was interrupted and returned to idle",
+                partial_result(),
             )
         if not timed_out and idle_seen and reply is not None:
             for output in outputs:
