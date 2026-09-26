@@ -71,8 +71,7 @@ class TestLocateConflictCells:
             "# %%\n<<<<<<< py (current)\ny = 20\n=======\ny = 99\n>>>>>>> ipynb (current)\n\n"
         )
         indices = locate_conflict_cells(text)
-        assert 0 in indices
-        assert 1 in indices
+        assert indices == [0, 1]
 
     def test_only_conflict_cells_returned(self):
         text = (

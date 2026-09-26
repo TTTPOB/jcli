@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
-from importlib import metadata, resources
+from importlib import metadata
 from pathlib import Path
 
 import pytest
@@ -60,19 +60,6 @@ def _scalar(node: object) -> str:
     return node.value
 
 
-def _resource_exists() -> bool:
-    try:
-        resources.files("jupyter_jcli").joinpath("dsh_plugin.ts").read_text()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return False
-    return True
-
-
-def _require_resource():
-    if not _resource_exists():
-        pytest.skip("native dsh_plugin.ts resource is supplied by the adapter change")
-
-
 def test_missing_resource_fails_before_creating_any_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -90,7 +77,6 @@ def test_missing_resource_fails_before_creating_any_file(tmp_path, monkeypatch):
 
 @pytest.mark.usefixtures("isolated_dsh_environment")
 def test_native_resource_is_copied_with_generated_metadata(tmp_path):
-    _require_resource()
     result = _invoke(CliRunner(), ["--project"])
 
     assert result.exit_code == 0
@@ -120,7 +106,6 @@ def test_damaged_resource_header_fails_before_creating_any_file(monkeypatch, tmp
 
 
 def test_default_local_alias_writes_workspace_native_files(tmp_path):
-    _require_resource()
     result = _invoke(CliRunner(), [])
 
     assert result.exit_code == 0
@@ -140,7 +125,6 @@ def test_default_local_alias_writes_workspace_native_files(tmp_path):
 
 
 def test_project_aliases_and_local_share_workspace_target(tmp_path):
-    _require_resource()
     runner = CliRunner()
 
     project = _invoke(runner, ["--proj"])
@@ -159,7 +143,6 @@ def test_project_aliases_and_local_share_workspace_target(tmp_path):
 def test_global_and_user_alias_use_distinct_dsh_home_native_paths(
     tmp_path, monkeypatch
 ):
-    _require_resource()
     dsh_home = tmp_path / "custom-dsh"
     monkeypatch.setenv("DSH_HOME", str(dsh_home))
 
@@ -188,7 +171,6 @@ def test_global_and_user_alias_use_distinct_dsh_home_native_paths(
 
 
 def test_empty_flow_sequence_preserves_comments_and_parses(tmp_path):
-    _require_resource()
     config, _ = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text("# before\n[]\n# after\n", encoding="utf-8")
@@ -205,7 +187,6 @@ def test_empty_flow_sequence_preserves_comments_and_parses(tmp_path):
 
 @pytest.mark.parametrize("initial", ["---\n[]\n", "--- [] # comment\n"])
 def test_empty_document_install_idempotence_remove_cycle(tmp_path, initial):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text(initial, encoding="utf-8")
@@ -227,7 +208,6 @@ def test_empty_document_install_idempotence_remove_cycle(tmp_path, initial):
 
 
 def test_empty_dsh_home_uses_default_home(tmp_path, monkeypatch):
-    _require_resource()
     monkeypatch.setenv("DSH_HOME", "")
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -239,7 +219,6 @@ def test_empty_dsh_home_uses_default_home(tmp_path, monkeypatch):
 
 
 def test_preserves_yaml_comments_tags_and_user_rows(tmp_path):
-    _require_resource()
     config, _ = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     original = (
@@ -262,7 +241,6 @@ def test_preserves_yaml_comments_tags_and_user_rows(tmp_path):
 
 
 def test_install_replaces_stale_managed_bridge_row_in_place(tmp_path):
-    _require_resource()
     config, _ = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text(
@@ -296,7 +274,6 @@ def test_install_replaces_stale_managed_bridge_row_in_place(tmp_path):
 
 
 def test_migrates_legacy_json_and_warns_about_user_content(tmp_path):
-    _require_resource()
     config, _ = _workspace_paths(tmp_path)
     legacy = _legacy_path(tmp_path)
     config.parent.mkdir(parents=True)
@@ -342,7 +319,6 @@ def test_migrates_legacy_json_and_warns_about_user_content(tmp_path):
 
 
 def test_global_legacy_migration_keeps_user_content(tmp_path, monkeypatch):
-    _require_resource()
     dsh_home = tmp_path / "global-dsh"
     monkeypatch.setenv("DSH_HOME", str(dsh_home))
     config = dsh_home / "cordis.patch.yml"
@@ -375,7 +351,6 @@ def test_global_legacy_migration_keeps_user_content(tmp_path, monkeypatch):
 
 
 def test_empty_legacy_file_is_removed_as_migration_state(tmp_path):
-    _require_resource()
     legacy = _legacy_path(tmp_path)
     legacy.parent.mkdir(parents=True)
     legacy.write_text("  \n", encoding="utf-8")
@@ -387,7 +362,6 @@ def test_empty_legacy_file_is_removed_as_migration_state(tmp_path):
 
 
 def test_migrates_legacy_json_to_deletion_when_only_managed_entries(tmp_path):
-    _require_resource()
     legacy = _legacy_path(tmp_path)
     legacy.parent.mkdir(parents=True)
     legacy.write_text(
@@ -413,7 +387,6 @@ def test_migrates_legacy_json_to_deletion_when_only_managed_entries(tmp_path):
 
 
 def test_warns_when_workspace_and_global_rows_are_both_present(tmp_path, monkeypatch):
-    _require_resource()
     dsh_home = tmp_path / "home-dsh"
     monkeypatch.setenv("DSH_HOME", str(dsh_home))
     runner = CliRunner()
@@ -426,7 +399,6 @@ def test_warns_when_workspace_and_global_rows_are_both_present(tmp_path, monkeyp
 
 
 def test_invalid_yaml_fails_before_creating_plugin(tmp_path):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text("- id: [broken\n", encoding="utf-8")
@@ -440,7 +412,6 @@ def test_invalid_yaml_fails_before_creating_plugin(tmp_path):
 
 
 def test_invalid_legacy_json_fails_before_writing_plugin(tmp_path):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     legacy = _legacy_path(tmp_path)
     legacy.parent.mkdir(parents=True)
@@ -456,7 +427,6 @@ def test_invalid_legacy_json_fails_before_writing_plugin(tmp_path):
 
 
 def test_unmanaged_row_id_conflict_fails_without_writing(tmp_path):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     original = "- id: jcli-hooks\n  name: someone-else\n"
@@ -471,7 +441,6 @@ def test_unmanaged_row_id_conflict_fails_without_writing(tmp_path):
 
 
 def test_nonmanaged_plugin_conflict_fails_without_touching_config(tmp_path):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     plugin.parent.mkdir(parents=True)
     plugin.write_text("export const user = true;\n", encoding="utf-8")
@@ -498,7 +467,6 @@ def test_nonmanaged_plugin_cannot_be_removed(tmp_path):
 
 
 def test_atomic_plugin_write_failure_returns_error_and_no_row(tmp_path, monkeypatch):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
 
     def fail_replace(*args, **kwargs):
@@ -517,7 +485,6 @@ def test_atomic_plugin_write_failure_returns_error_and_no_row(tmp_path, monkeypa
 
 
 def test_atomic_replacement_preserves_existing_plugin_permissions(tmp_path):
-    _require_resource()
     _, plugin = _workspace_paths(tmp_path)
     assert _invoke(CliRunner(), ["--project"]).exit_code == 0
 
@@ -532,7 +499,6 @@ def test_atomic_replacement_preserves_existing_plugin_permissions(tmp_path):
 
 
 def test_remove_preserves_unrelated_config_and_user_legacy_content(tmp_path):
-    _require_resource()
     runner = CliRunner()
     assert _invoke(runner, ["--project"]).exit_code == 0
     config, plugin = _workspace_paths(tmp_path)
@@ -559,7 +525,6 @@ def test_remove_preserves_unrelated_config_and_user_legacy_content(tmp_path):
 
 
 def test_remove_keeps_comments_as_valid_empty_sequence(tmp_path):
-    _require_resource()
     config, plugin = _workspace_paths(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text(
