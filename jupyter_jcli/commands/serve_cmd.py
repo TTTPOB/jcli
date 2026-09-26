@@ -65,8 +65,10 @@ def serve_cmd(
 ) -> None:
     """Print a copy-pasteable Jupyter launch command that references env-var token.
 
-    The token is never inlined; the output always contains the literal string
-    "$JCLI_JUPYTER_SERVER_TOKEN" so the shell expands it at paste time.
+    Export a nonempty JCLI_JUPYTER_SERVER_TOKEN before running this command,
+    even if --token was given. The token is never inlined; the output contains
+    "$JCLI_JUPYTER_SERVER_TOKEN" for expansion at paste time. The selected
+    port is exact (port_retries=0), so an occupied port fails instead of moving.
 
     \b
     Example
@@ -74,7 +76,7 @@ def serve_cmd(
     $ export JCLI_JUPYTER_SERVER_TOKEN=mysecret
     $ j-cli serve-cmd --serve-backend lab
     jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \\
-        --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
+        --ServerApp.ip=localhost --ServerApp.port=8888 --ServerApp.port_retries=0 --no-browser
     """
     # Confirm token is available without inlining its value
     if not os.environ.get("JCLI_JUPYTER_SERVER_TOKEN"):
@@ -113,7 +115,11 @@ def serve_cmd(
 
     # Resolve port
     resolved_port: int = (
-        port if port is not None else (url_port or _SCHEME_PORTS.get(parsed.scheme, 80))
+        port
+        if port is not None
+        else (
+            url_port if url_port is not None else _SCHEME_PORTS.get(parsed.scheme, 80)
+        )
     )
 
     if not 1 <= resolved_port <= 65535:

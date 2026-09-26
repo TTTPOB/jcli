@@ -48,10 +48,10 @@ This prints (and immediately executes) a command like:
 
 ```
 jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \
-    --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
+    --ServerApp.ip=localhost --ServerApp.port=8888 --ServerApp.port_retries=0 --no-browser
 ```
 
-The token value is never inlined; it is always referenced as `$JCLI_JUPYTER_SERVER_TOKEN`.
+Export a nonempty `JCLI_JUPYTER_SERVER_TOKEN` before running `serve-cmd` (passing `-t` alone is not enough). The token value is never inlined; it is always referenced as `$JCLI_JUPYTER_SERVER_TOKEN`. The generated command sets `port_retries=0`, so an occupied port fails rather than silently choosing another. HTTPS connections verify server certificates by default.
 
 ### 3. Verify connectivity
 
@@ -440,7 +440,7 @@ export JCLI_JUPYTER_SERVER_TOKEN=your-token
 
 j-cli serve-cmd --serve-backend lab
 # → jupyter lab --ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN" \
-#       --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
+#       --ServerApp.ip=localhost --ServerApp.port=8888 --ServerApp.port_retries=0 --no-browser
 
 # override host / port / root dir
 j-cli serve-cmd --serve-backend lab --ip 0.0.0.0 --port 9000 --root-dir /work

@@ -3,10 +3,17 @@
 import json
 
 import pytest
-import requests
 from click.testing import CliRunner
+from jupyter_server_client.exceptions import (
+    AuthenticationError,
+    ForbiddenError,
+    JupyterConnectionError,
+    JupyterTimeoutError,
+    NotFoundError,
+)
 
 from jupyter_jcli.cli import main
+from jupyter_jcli.commands._server_errors import server_error_code
 from jupyter_jcli.server import ServerClient
 
 
@@ -30,8 +37,16 @@ def test_serve_requires_exported_nonempty_token_even_with_cli_token(monkeypatch)
     assert json.loads(result.stderr)["code"] == "SERVE_CMD_NO_TOKEN"
 
 
-@pytest.mark.parametrize("url", ["http://localhost:invalid", "http://localhost:65536"])
-def test_serve_invalid_url_port_is_structured_error(monkeypatch, url):
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:invalid",
+        "http://localhost:65536",
+        "http://localhost:0",
+        "http://[broken",
+    ],
+)
+def test_serve_invalid_url_is_structured_error(monkeypatch, url):
     monkeypatch.setenv("JCLI_JUPYTER_SERVER_TOKEN", "valid")
     result = CliRunner().invoke(
         main, ["-s", url, "--json", "serve-cmd", "--serve-backend", "lab"]
@@ -65,34 +80,36 @@ def test_server_uses_default_tls_verification():
 
 
 @pytest.mark.parametrize(
-    ("command", "not_found"),
+    ("error", "expected"),
     [
-        (["exec", "missing", "--code", "1"], "SESSION_NOT_FOUND"),
-        (["kernel", "interrupt", "missing"], "KERNEL_NOT_FOUND"),
-        (["session", "kill", "missing"], "SESSION_NOT_FOUND"),
+        (NotFoundError("missing"), "SESSION_NOT_FOUND"),
+        (AuthenticationError("unauthorized"), "AUTH_FAILED"),
+        (ForbiddenError("forbidden"), "AUTH_FAILED"),
+        (JupyterTimeoutError("slow"), "TIMEOUT"),
+        (JupyterConnectionError("offline"), "CONNECTION_FAILED"),
+        (ValueError("bad response"), "CONNECTION_FAILED"),
     ],
 )
-@pytest.mark.parametrize(
-    ("exception", "expected"),
-    [
-        (requests.exceptions.ConnectionError("offline"), "CONNECTION_FAILED"),
-        (requests.exceptions.Timeout("slow"), "TIMEOUT"),
-    ],
-)
-def test_selector_transport_error_is_not_missing(
-    monkeypatch, command, not_found, exception, expected
-):
+def test_classify_actual_rest_client_exceptions(error, expected):
+    assert server_error_code(error, "SESSION_NOT_FOUND") == expected
+
+
+@pytest.mark.parametrize("command", ["exec", "kernel", "session"])
+def test_selector_timeout_is_not_reported_missing(monkeypatch, command):
     def fail(*_args):
-        raise exception
+        raise JupyterTimeoutError("slow")
 
     monkeypatch.setattr("jupyter_jcli.server.ServerClient.list_sessions", fail)
-    error, _ = _error(command, monkeypatch)
-    assert error["code"] == expected
-    assert error["code"] != not_found
+    args = {
+        "exec": ["exec", "missing", "--code", "1"],
+        "kernel": ["kernel", "interrupt", "missing"],
+        "session": ["session", "kill", "missing"],
+    }[command]
+    error, _ = _error(args, monkeypatch)
+    assert error["code"] == "TIMEOUT"
 
 
-@pytest.mark.parametrize("operation", ["interrupt", "restart"])
-def test_kernel_operation_connection_failure(monkeypatch, operation):
+def test_kernel_operation_auth_failure(monkeypatch):
     monkeypatch.setattr(
         "jupyter_jcli.server.ServerClient.resolve_kernel",
         lambda _self, _selector: ("session-id", "kernel-id"),
@@ -103,8 +120,8 @@ def test_kernel_operation_connection_failure(monkeypatch, operation):
     )
 
     def fail(*_args):
-        raise requests.exceptions.ConnectionError("offline")
+        raise AuthenticationError("unauthorized")
 
-    monkeypatch.setattr(f"jupyter_jcli.server.ServerClient.{operation}_kernel", fail)
-    error, _ = _error(["kernel", operation, "session-id"], monkeypatch)
-    assert error["code"] == "CONNECTION_FAILED"
+    monkeypatch.setattr("jupyter_jcli.server.ServerClient.interrupt_kernel", fail)
+    error, _ = _error(["kernel", "interrupt", "session-id"], monkeypatch)
+    assert error["code"] == "AUTH_FAILED"

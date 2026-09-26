@@ -112,7 +112,10 @@ class _LazyGroup(click.Group):
 
 def _ensure_no_proxy(server_url: str) -> None:
     """Ensure local server URLs bypass HTTP proxy."""
-    host = urlparse(server_url).hostname or ""
+    try:
+        host = urlparse(server_url).hostname or ""
+    except ValueError:
+        return  # Command-specific URL validation reports the error.
     if host in ("127.0.0.1", "localhost", "::1"):
         no_proxy = os.environ.get("no_proxy", os.environ.get("NO_PROXY", ""))
         if host not in no_proxy:
