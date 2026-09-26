@@ -50,7 +50,7 @@ type UserMessage = {
   id: string
   role: 'user'
   content: TextBlock[]
-  source: { kind: 'plugin'; plugin: string }
+  source: { kind: 'jcli-dsh' }
 }
 
 type Session = {
@@ -315,7 +315,7 @@ function makeContext(text: string): UserMessage {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: name },
+    source: { kind: 'jcli-dsh' },
   }
 }
 

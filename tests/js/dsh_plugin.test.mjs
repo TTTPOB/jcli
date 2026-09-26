@@ -259,6 +259,7 @@ test('pre failures fail open, log, inject bounded diagnostics, and continue guar
   assert.equal(nextCalls, 1)
   assert.equal(h.calls.length, 2)
   assert.equal(agent.injected.length, 1)
+  assert.deepEqual(agent.injected[0].source, { kind: 'jcli-dsh' })
   assert.equal(textOf(agent.injected[0]).length <= 80, true)
   assert.match(textOf(agent.injected[0]), /exit code 1/)
   assert.match(h.logs[0], /exit code 1/)
@@ -307,7 +308,7 @@ test('post success prepends context while preserving downstream block, feedback,
   assert.equal(decision.additionalContexts.length, 2)
   assert.equal(textOf(decision.additionalContexts[0]), 'pair synced')
   assert.deepEqual(decision.additionalContexts[1], downstream.additionalContexts[0])
-  assert.deepEqual(decision.additionalContexts[0].source, { kind: 'plugin', plugin: 'jcli-dsh' })
+  assert.deepEqual(decision.additionalContexts[0].source, { kind: 'jcli-dsh' })
 })
 
 test('post failures never block and prepend bounded real process diagnostics', async () => {
@@ -329,6 +330,7 @@ test('post failures never block and prepend bounded real process diagnostics', a
   assert.equal(decision.kind, 'accept')
   assert.deepEqual(decision.value, { ok: true })
   assert.equal(decision.additionalContexts.length, 2)
+  assert.deepEqual(decision.additionalContexts[0].source, { kind: 'jcli-dsh' })
   assert.match(textOf(decision.additionalContexts[0]), /signal SIGTERM/)
   assert.match(textOf(decision.additionalContexts[0]), /post conflict details/)
   assert.equal(textOf(decision.additionalContexts[0]).length <= 100, true)

@@ -377,6 +377,9 @@ and workspace scopes always use separate adapter paths.
 The installer validates the packaged resource, every existing YAML/JSON input,
 and TS ownership before writing. Adapter replacement is atomic and an existing
 TS file without the j-cli managed header is overwritten only with `--force`; removal still requires ownership.
+After upgrading j-cli, re-run `j-cli setup dsh` in each workspace where it was installed
+(or `j-cli setup dsh --user` for a user installation) to refresh the copied adapter;
+upgrading the CLI alone does not update existing `.dsh/plugins/jcli.ts` files.
 Re-running is idempotent; YAML comments, `!!js` tags, explicit document markers,
 empty sequences, unrelated rows, and unrelated legacy settings are preserved.
 When both scopes are present, setup warns because DSH could run both adapters.
