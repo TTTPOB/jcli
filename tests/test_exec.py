@@ -16,11 +16,11 @@ def _jsonl_events(output: str) -> list[dict]:
 class TestExecCode:
     """Test inline --code execution.
 
-    Uses mock_execute_code so the CLI path reuses the persistent WebSocket
+    Uses mock_kernel_connection so the CLI path reuses the persistent WebSocket
     instead of opening a new connection for every test.
     """
 
-    def test_print(self, live_session, mock_execute_code):
+    def test_print(self, live_session, mock_kernel_connection):
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -38,7 +38,7 @@ class TestExecCode:
         assert result.exit_code == 0
         assert "hello jcli" in result.output
 
-    def test_expression(self, live_session, mock_execute_code):
+    def test_expression(self, live_session, mock_kernel_connection):
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -56,7 +56,9 @@ class TestExecCode:
         assert result.exit_code == 0
         assert "5" in result.output
 
-    def test_display_mode_applies_to_inline_code(self, live_session, mock_execute_code):
+    def test_display_mode_applies_to_inline_code(
+        self, live_session, mock_kernel_connection
+    ):
         runner = CliRunner()
         default_result = runner.invoke(
             main,
@@ -96,7 +98,7 @@ class TestExecCode:
         assert [output["text"] for output in default_outputs] == ["'second'"]
         assert [output["text"] for output in all_outputs] == ["'first'", "'second'"]
 
-    def test_error_output(self, live_session, mock_execute_code):
+    def test_error_output(self, live_session, mock_kernel_connection):
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -115,7 +117,7 @@ class TestExecCode:
         assert "ZeroDivisionError" in result.stdout
         assert "ERROR [EXECUTION_ERROR]: Code execution failed" in result.stderr
 
-    def test_json_error_output(self, live_session, mock_execute_code):
+    def test_json_error_output(self, live_session, mock_kernel_connection):
         result = CliRunner().invoke(
             main,
             [
@@ -141,7 +143,7 @@ class TestExecCode:
             "message": "Code execution failed",
         }
 
-    def test_json_output(self, live_session, mock_execute_code):
+    def test_json_output(self, live_session, mock_kernel_connection):
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -162,7 +164,10 @@ class TestExecCode:
         assert data["status"] == "ok"
         assert any(o["type"] == "stream" and "hi" in o["text"] for o in data["outputs"])
 
-    def test_image_output(self, live_session, mock_execute_code):
+    def test_image_output(
+        self, live_session, mock_kernel_connection, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         code = textwrap.dedent("""\
             %matplotlib inline

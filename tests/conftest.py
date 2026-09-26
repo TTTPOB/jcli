@@ -18,6 +18,15 @@ def isolated_user_config(tmp_path, monkeypatch):
     dsh_home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("DSH_HOME", str(dsh_home))
+    for name in (
+        "JCLI_JUPYTER_SERVER_TOKEN",
+        "JCLI_JUPYTER_SERVER_URL",
+        "JCLI_DEBUG_LOG_DIR",
+        "JCLI_OUTPUT_RETENTION_DAYS",
+        "JCLI_OUTPUT_MAX_RUNS",
+        "XDG_CONFIG_HOME",
+    ):
+        monkeypatch.delenv(name, raising=False)
     yield
 
 
@@ -163,8 +172,8 @@ def live_kernel(live_session):
 
     Opened once per test module and reused across all tests in that module.
     Tests that want to execute code or inspect variables should use
-    mock_kernel_connection or mock_execute_code so the CLI path reuses this
-    connection instead of opening a new one for every call.
+    mock_kernel_connection so the CLI path reuses this connection instead
+    of opening a new one for every call.
     """
     from jupyter_jcli.kernel import kernel_connection
     from jupyter_jcli.server import ServerClient
@@ -193,22 +202,4 @@ def mock_kernel_connection(live_kernel):
         yield live_kernel
 
     with patch("jupyter_jcli.kernel.kernel_connection", _reuse):
-        yield live_kernel
-
-
-@pytest.fixture
-def mock_execute_code(live_kernel):
-    """Patch execute_code so exec --code reuses live_kernel.
-
-    Use this for tests that invoke exec --code through the CLI.
-    """
-    from unittest.mock import patch
-
-    def _reuse(url, token, kid, code, timeout=300, display_mode="last_expr"):
-        from jupyter_jcli.kernel import expression_display_mode
-
-        with expression_display_mode(live_kernel, display_mode, timeout=timeout):
-            return live_kernel.execute(code, timeout=timeout)
-
-    with patch("jupyter_jcli.kernel.execute_code", side_effect=_reuse):
         yield live_kernel
