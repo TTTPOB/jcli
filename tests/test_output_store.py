@@ -8,7 +8,13 @@ import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from jupyter_jcli.outputs.store import OutputStoreError, persist_inline_outputs
+from jupyter_jcli.outputs.contracts import OutputProtocolError
+from jupyter_jcli.outputs.store import (
+    OutputStoreError,
+    list_stored_outputs,
+    persist_inline_outputs,
+    read_stored_output,
+)
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "outputs" / "mixed_outputs.json"
 
@@ -99,6 +105,29 @@ def test_output_show_lists_and_reads_all_mime_data(tmp_path):
     jpeg = json.loads(read_jpeg.output)
     assert jpeg["selected"]["data"] == raw_outputs[1]["data"]["image/jpeg"]
     assert json.loads(read_json.output)["selected"]["data"] == {"answer": 42}
+
+
+def test_stored_directory_and_text_ignore_unrelated_missing_image(tmp_path):
+    raw_outputs = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    stored = persist_inline_outputs(raw_outputs, cwd=tmp_path)
+    assert stored is not None
+    manifest = json.loads(stored.manifest_path.read_text(encoding="utf-8"))
+    Path(manifest["outputs"][1]["data"]["image/png"]["path"]).unlink()
+
+    with patch(
+        "jupyter_jcli.outputs.store.Path.read_bytes",
+        side_effect=AssertionError("image read"),
+    ):
+        directory = list_stored_outputs(stored.manifest_path)
+        text = read_stored_output(stored.manifest_path, 1, mime_type="text/plain")
+        stream = read_stored_output(stored.manifest_path, 0)
+
+    assert [entry["output_index"] for entry in directory["outputs"]] == [0, 1, 2, 3]
+    assert text["selected"]["data"] == "".join(raw_outputs[1]["data"]["text/plain"])
+    assert stream["output_type"] == "stream"
+    with pytest.raises(OutputProtocolError) as failure:
+        read_stored_output(stored.manifest_path, 1, mime_type="image/png")
+    assert failure.value.code == "OUTPUT_DATA_INVALID"
 
 
 def test_inline_save_failure_reports_executed_without_retry(live_session, monkeypatch):

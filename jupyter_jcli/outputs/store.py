@@ -21,7 +21,7 @@ from jupyter_jcli.outputs.contracts import (
     SCHEMA_VERSION,
     OutputProtocolError,
 )
-from jupyter_jcli.outputs.core import list_outputs, read_output
+from jupyter_jcli.outputs.core import list_outputs, read_output, select_mime_type
 
 INLINE_TEXT_BUDGET = 4_000
 _MANIFEST_NAME = "manifest.json"
@@ -167,9 +167,7 @@ def load_manifest(manifest_path: str | Path) -> dict[str, Any]:
 def list_stored_outputs(manifest_path: str | Path) -> dict[str, Any]:
     """List every physical output in a published inline run."""
     manifest = load_manifest(manifest_path)
-    return list_outputs(
-        _materialize_outputs(manifest, Path(manifest_path)), source=manifest["source"]
-    )
+    return list_outputs(manifest["outputs"], source=manifest["source"])
 
 
 def read_stored_output(
@@ -182,8 +180,21 @@ def read_stored_output(
 ) -> dict[str, Any]:
     """Read one stored output through the shared output protocol."""
     manifest = load_manifest(manifest_path)
+    outputs = manifest["outputs"]
+    if 0 <= output_index < len(outputs):
+        output = outputs[output_index]
+        if output.get("output_type") in ("display_data", "execute_result"):
+            data = output.get("data", {})
+            if isinstance(data, dict):
+                selected = select_mime_type(list(data), mime_type=mime_type)
+                if selected in RASTER_MIME_TYPES:
+                    outputs = list(outputs)
+                    outputs[output_index] = deepcopy(output)
+                    _materialize_image(
+                        outputs[output_index]["data"], selected, Path(manifest_path)
+                    )
     return read_output(
-        _materialize_outputs(manifest, Path(manifest_path)),
+        outputs,
         output_index,
         source=manifest["source"],
         mime_type=mime_type,
@@ -257,32 +268,29 @@ def _summary_outputs(stored_outputs: list[dict], manifest_path: str) -> list[dic
     return summarize_outputs(stored_outputs, full_output_location=manifest_path)
 
 
-def _materialize_outputs(manifest: dict[str, Any], manifest_path: Path) -> list[dict]:
-    outputs = deepcopy(manifest["outputs"])
-    run_dir = manifest_path.expanduser().resolve().parent
-    for output in outputs:
-        data = output.get("data")
-        if not isinstance(data, dict):
-            continue
-        for mime_type in RASTER_MIME_TYPES:
-            reference = data.get(mime_type)
-            if not isinstance(reference, dict) or reference.get("type") != "file":
-                continue
-            image_path = Path(str(reference.get("path", "")))
-            resolved = image_path.resolve()
-            if (
-                not image_path.is_absolute()
-                or resolved.parent != run_dir
-                or image_path.is_symlink()
-                or not resolved.is_file()
-                or reference.get("mime") != mime_type
-            ):
-                raise OutputProtocolError(
-                    "OUTPUT_DATA_INVALID",
-                    f"Invalid stored image reference: {image_path}",
-                )
-            data[mime_type] = base64.b64encode(resolved.read_bytes()).decode("ascii")
-    return outputs
+def _materialize_image(data: dict, mime_type: str, manifest_path: Path) -> None:
+    reference = data[mime_type]
+    if not isinstance(reference, dict) or reference.get("type") != "file":
+        return
+    image_path = Path(str(reference.get("path", "")))
+    resolved = image_path.resolve()
+    if (
+        not image_path.is_absolute()
+        or resolved.parent != manifest_path.expanduser().resolve().parent
+        or image_path.is_symlink()
+        or not resolved.is_file()
+        or reference.get("mime") != mime_type
+    ):
+        raise OutputProtocolError(
+            "OUTPUT_DATA_INVALID",
+            f"Invalid stored image reference: {image_path}",
+        )
+    try:
+        data[mime_type] = base64.b64encode(resolved.read_bytes()).decode("ascii")
+    except OSError as error:
+        raise OutputProtocolError(
+            "OUTPUT_DATA_INVALID", f"Could not read stored image: {image_path}: {error}"
+        ) from error
 
 
 def _text(value: Any) -> str:
