@@ -95,6 +95,28 @@ def load_settings(path: Path, use_json: bool) -> dict[str, Any]:
         emit_error("SETTINGS_INVALID", f"{path}: {exc}", use_json)
     if not isinstance(settings, dict):
         emit_error("SETTINGS_INVALID", f"{path}: expected a JSON object", use_json)
+    if "hooks" in settings:
+        hooks = settings["hooks"]
+        if not isinstance(hooks, dict):
+            emit_error("SETTINGS_INVALID", f"{path}: hooks must be an object", use_json)
+        for event, groups in hooks.items():
+            if not isinstance(groups, list):
+                emit_error(
+                    "SETTINGS_INVALID",
+                    f"{path}: hooks.{event} must be an array",
+                    use_json,
+                )
+            for index, group in enumerate(groups):
+                if (
+                    isinstance(group, dict)
+                    and "hooks" in group
+                    and not isinstance(group["hooks"], list)
+                ):
+                    emit_error(
+                        "SETTINGS_INVALID",
+                        f"{path}: hooks.{event}[{index}].hooks must be an array",
+                        use_json,
+                    )
     return settings
 
 
@@ -120,23 +142,31 @@ def merge_hook(settings: dict[str, Any], block: HookBlock, platform: str) -> Non
     event_list = hooks_map.setdefault(block.event, [])
 
     placed = False
-    for group in event_list:
-        if not isinstance(group, dict) or group.get("matcher") != block.matcher:
-            continue
-        updated = []
-        for current in group.get("hooks", []):
-            if (
-                isinstance(current, dict)
-                and current.get(_MANAGED_KEY) in managed_values
-            ):
-                if not placed:
-                    updated.append(entry)
-                    placed = True
-            else:
-                updated.append(current)
-        group["hooks"] = updated
+    for groups in hooks_map.values():
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            canonical = groups is event_list and group.get("matcher") == block.matcher
+            updated = []
+            for current in group.get("hooks", []):
+                if (
+                    isinstance(current, dict)
+                    and current.get(_MANAGED_KEY) in managed_values
+                ):
+                    if canonical and not placed:
+                        updated.append(entry)
+                        placed = True
+                else:
+                    updated.append(current)
+            if updated != group.get("hooks", []):
+                group["hooks"] = updated
     if not placed:
-        event_list.append({"matcher": block.matcher, "hooks": [entry]})
+        for group in event_list:
+            if isinstance(group, dict) and group.get("matcher") == block.matcher:
+                group.setdefault("hooks", []).append(entry)
+                break
+        else:
+            event_list.append({"matcher": block.matcher, "hooks": [entry]})
 
 
 def remove_managed_hooks(

@@ -31,7 +31,7 @@ def manage_claude_mcp(
     expected_args = _expected_args(resolved_scope, root)
     entry = _read_claude_entry(resolved_scope, root, use_json)
 
-    if entry is not None and not _is_managed_entry(entry, expected_args):
+    if entry is not None and not _is_managed_entry(entry, resolved_scope):
         if not force or remove:
             emit_error(
                 "MCP_NAME_CONFLICT",
@@ -57,7 +57,13 @@ def manage_claude_mcp(
         return "removed"
 
     if entry is not None:
-        return "unchanged"
+        if entry.get("args") == expected_args:
+            return "unchanged"
+        _run_claude(
+            ["claude", "mcp", "remove", "--scope", resolved_scope.value, _MCP_NAME],
+            root,
+            use_json,
+        )
 
     command = [
         "claude",
@@ -89,7 +95,7 @@ def manage_codex_mcp(
     entry = _read_codex_entry(config_dir, root, use_json)
     scope_label = "user" if resolved_scope == Scope.USER else "project"
 
-    if entry is not None and not _is_managed_entry(entry, expected_args):
+    if entry is not None and not _is_managed_entry(entry, resolved_scope):
         if not force or remove:
             emit_error(
                 "MCP_NAME_CONFLICT",
@@ -107,7 +113,9 @@ def manage_codex_mcp(
         return "removed"
 
     if entry is not None:
-        return "unchanged"
+        if entry.get("args") == expected_args:
+            return "unchanged"
+        _run_codex(["codex", "mcp", "remove", _MCP_NAME], root, config_dir, use_json)
 
     config_dir.mkdir(parents=True, exist_ok=True)
     _run_codex(
@@ -134,16 +142,25 @@ def _expected_args(scope: Scope, root: Path) -> list[str]:
     return args
 
 
-def _is_managed_entry(entry: object, expected_args: list[str]) -> bool:
+def _is_managed_entry(entry: object, scope: Scope) -> bool:
     if not isinstance(entry, dict):
         return False
-    entry_type = entry.get("type", "stdio")
-    env = entry.get("env", {})
+    args = entry.get("args")
+    if scope == Scope.USER:
+        valid_args = args == _MCP_BASE_ARGS
+    else:
+        valid_args = (
+            isinstance(args, list)
+            and len(args) == 4
+            and args[:3] == [*_MCP_BASE_ARGS, "--root"]
+            and isinstance(args[3], str)
+            and Path(args[3]).is_absolute()
+        )
     return (
-        entry_type == "stdio"
+        entry.get("type", "stdio") == "stdio"
         and entry.get("command") == _MCP_COMMAND
-        and entry.get("args") == expected_args
-        and (env is None or env == {})
+        and valid_args
+        and entry.get("env", {}) in (None, {})
     )
 
 

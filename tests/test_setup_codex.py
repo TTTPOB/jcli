@@ -239,6 +239,44 @@ class TestCodexJsonOutput:
         assert data["status"] == "ok"
 
 
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_moved_project_mcp_migrates_and_removes(tmp_path, monkeypatch, host):
+    root = tmp_path / "moved"
+    root.mkdir()
+    old_root = tmp_path / "old"
+    entry = {
+        "type": "stdio",
+        "command": "j-cli",
+        "args": ["mcp", "serve", "--root", str(old_root)],
+        "env": {},
+    }
+    calls = []
+    monkeypatch.setattr(setup_mcp, f"_read_{host}_entry", lambda *args: entry)
+    monkeypatch.setattr(
+        setup_mcp, f"_run_{host}", lambda command, *args: calls.append(command)
+    )
+    manage = getattr(setup_mcp, f"manage_{host}_mcp")
+    assert manage("project", root, False, False) == "installed"
+    assert [command[2] for command in calls] == ["remove", "add"]
+    assert calls[-1][-2:] == ["--root", str(root)]
+    calls.clear()
+    assert manage("project", root, True, False) == "removed"
+    assert [command[2] for command in calls] == ["remove"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["mcp", "serve", "--root", "relative"],
+        ["mcp", "serve", "--root", "/old", "--extra"],
+        ["mcp", "serve", "--other", "/old"],
+    ],
+)
+def test_mcp_foreign_argument_shape_is_not_owned(tmp_path, args):
+    entry = {"command": "j-cli", "args": args}
+    assert not setup_mcp._is_managed_entry(entry, setup_mcp.Scope.PROJECT)
+
+
 class TestCodexMcp:
     def test_project_install_targets_project_config_with_explicit_root(
         self, tmp_path, monkeypatch

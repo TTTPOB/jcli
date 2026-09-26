@@ -45,6 +45,41 @@ def test_settings_must_be_json_object(
     assert path.read_text(encoding="utf-8") == contents
 
 
+@pytest.mark.parametrize("platform", ["claude", "codex"])
+@pytest.mark.parametrize(
+    "hooks,field",
+    [
+        (None, "hooks must be an object"),
+        ({"PreToolUse": {}}, "hooks.PreToolUse must be an array"),
+        (
+            {"PreToolUse": [{"matcher": "Bash", "hooks": None}]},
+            "hooks.PreToolUse[0].hooks must be an array",
+        ),
+    ],
+)
+def test_invalid_hook_containers_precede_mcp(
+    tmp_path, monkeypatch, platform, hooks, field
+):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / (
+        ".claude/settings.json" if platform == "claude" else ".codex/hooks.json"
+    )
+    target.parent.mkdir()
+    original = json.dumps({"hooks": hooks})
+    target.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        f"jupyter_jcli.commands.setup.{platform}.manage_{platform}_mcp",
+        lambda *args, **kwargs: pytest.fail("MCP must not be changed"),
+    )
+    result = CliRunner().invoke(
+        main, ["--json", "setup", platform, "--project"], catch_exceptions=False
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.output)["code"] == "SETTINGS_INVALID"
+    assert field in result.output
+    assert target.read_text(encoding="utf-8") == original
+
+
 class TestScopeEnum:
     def test_members_exist(self):
         assert Scope.USER == "user"
@@ -321,6 +356,45 @@ class TestMerge:
         ]
         assert len(all_managed) == 1
         assert all_managed[0]["_jcli_managed"] == "notebook-exec-guard"
+
+    def test_moves_misplaced_managed_hook_without_touching_user_hook(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        target = tmp_path / ".claude" / "settings.local.json"
+        target.parent.mkdir()
+        target.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Read",
+                                "hooks": [
+                                    {
+                                        "_jcli_managed": "nbconvert-guard",
+                                        "command": "old",
+                                    },
+                                    {"type": "command", "command": "user"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert _invoke(CliRunner(), ["--local"]).exit_code == 0
+        hooks = _read_json(target)["hooks"]
+        assert hooks["PostToolUse"][0]["hooks"] == [
+            {"type": "command", "command": "user"}
+        ]
+        assert _count_managed({"hooks": hooks}, "notebook-exec-guard") == 1
+        assert not any(
+            entry.get("_jcli_managed") == "notebook-exec-guard"
+            for group in hooks["PostToolUse"]
+            for entry in group["hooks"]
+        )
 
     def test_corrupt_json_returns_error(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
