@@ -120,11 +120,5 @@ class TestMergeMode:
         (ResponseStatus.ERROR, "error"),
     ],
 )
-def test_external_enum_values(member, value):
-    assert member.value == value
-
-
-def test_enum_values_serialize_in_json_protocols():
-    assert json.dumps({"status": ResponseStatus.OK, "cell_type": CellType.CODE}) == (
-        '{"status": "ok", "cell_type": "code"}'
-    )
+def test_external_enum_values_serialize_as_protocol_strings(member, value):
+    assert json.loads(json.dumps(member)) == value
