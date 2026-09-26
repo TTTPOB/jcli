@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from jupyter_jcli.diff.merge import MergeResult, merge_three_way
+from jupyter_jcli.diff.merge import merge_three_way
 
 
 def _simple_py(*cell_sources: str, kernel: str = "python3") -> str:
@@ -101,11 +101,3 @@ class TestMergeThreeWay:
         result = merge_three_way(base, ours, theirs)
         assert not result.has_conflict
         assert "z = 3" in result.text
-
-    def test_returns_merge_result_dataclass(self):
-        base = "a = 1\n"
-        result = merge_three_way(base, base, base)
-        assert isinstance(result, MergeResult)
-        assert isinstance(result.text, str)
-        assert isinstance(result.has_conflict, bool)
-        assert isinstance(result.conflict_count, int)

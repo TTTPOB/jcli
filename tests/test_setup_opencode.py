@@ -13,12 +13,6 @@ def _invoke(runner: CliRunner, args: list[str]):
 
 
 class TestOpenCodeScopeRouting:
-    def test_project_is_default(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        result = _invoke(CliRunner(), [])
-        assert result.exit_code == 0
-        assert (tmp_path / ".opencode" / "plugins" / "jcli.js").exists()
-
     def test_user_writes_global_plugin(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -36,7 +30,7 @@ class TestOpenCodeScopeRouting:
 
 
 class TestOpenCodeInstall:
-    def test_installs_packaged_plugin(self, tmp_path, monkeypatch):
+    def test_default_installs_packaged_local_plugin(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result = _invoke(CliRunner(), [])
         assert result.exit_code == 0

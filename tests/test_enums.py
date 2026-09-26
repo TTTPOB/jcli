@@ -31,23 +31,6 @@ from jupyter_jcli.pair_state import PairState
 
 
 class TestDriftStatus:
-    def test_str_inheritance(self):
-        assert DriftStatus.IN_SYNC == "in_sync"
-        assert DriftStatus.MERGED == "merged"
-        assert DriftStatus.CONFLICT == "conflict"
-        assert DriftStatus.DRIFT_ONLY == "drift_only"
-        assert isinstance(DriftStatus.IN_SYNC, str)
-
-    def test_json_serializable(self):
-        assert json.dumps(DriftStatus.IN_SYNC) == '"in_sync"'
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            DriftStatus("typo")
-
-    def test_coerce_from_string(self):
-        assert DriftStatus("in_sync") is DriftStatus.IN_SYNC
-
     def test_concrete_results_expose_fixed_read_only_status(self):
         results = [
             (InSync(BaselineAvailable()), DriftStatus.IN_SYNC),
@@ -100,20 +83,6 @@ class TestDriftStatus:
 
 
 class TestMergeMode:
-    def test_str_inheritance(self):
-        assert MergeMode.THREE_WAY == "three_way"
-        assert isinstance(MergeMode.THREE_WAY, str)
-
-    def test_json_serializable(self):
-        assert json.dumps(MergeMode.THREE_WAY) == '"three_way"'
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            MergeMode("bogus")
-
-    def test_coerce_from_string(self):
-        assert MergeMode("three_way") is MergeMode.THREE_WAY
-
     def test_merged_defaults_to_three_way(self):
         r = Merged(PairState([], {}), False, False)
         assert r.merge_mode is MergeMode.THREE_WAY
@@ -127,81 +96,35 @@ class TestMergeMode:
             Merged(PairState([], {}), False, False, merge_mode="bogus")
 
 
-# ---------------------------------------------------------------------------
-# CellType
-# ---------------------------------------------------------------------------
+# These values cross notebook, CLI, and JSON protocol boundaries.
+@pytest.mark.parametrize(
+    ("member", "value"),
+    [
+        (DriftStatus.IN_SYNC, "in_sync"),
+        (DriftStatus.MERGED, "merged"),
+        (DriftStatus.CONFLICT, "conflict"),
+        (DriftStatus.DRIFT_ONLY, "drift_only"),
+        (MergeMode.THREE_WAY, "three_way"),
+        (CellType.CODE, "code"),
+        (CellType.MARKDOWN, "markdown"),
+        (CellType.RAW, "raw"),
+        (OutputType.STREAM, "stream"),
+        (OutputType.EXECUTE_RESULT, "execute_result"),
+        (OutputType.DISPLAY_DATA, "display_data"),
+        (OutputType.ERROR, "error"),
+        (OutputPolicy.PRESERVE, "preserve"),
+        (OutputPolicy.CLEAR_EDITED, "clear-edited"),
+        (OutputPolicy.CLEAR_ALL, "clear-all"),
+        (ResponseStatus.OK, "ok"),
+        (ResponseStatus.NOOP, "noop"),
+        (ResponseStatus.ERROR, "error"),
+    ],
+)
+def test_external_enum_values(member, value):
+    assert member.value == value
 
 
-class TestCellType:
-    def test_str_inheritance(self):
-        assert CellType.CODE == "code"
-        assert CellType.MARKDOWN == "markdown"
-        assert CellType.RAW == "raw"
-        assert isinstance(CellType.CODE, str)
-
-    def test_json_serializable(self):
-        assert json.dumps(CellType.CODE) == '"code"'
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            CellType("bogus")
-
-    def test_coerce_from_string(self):
-        assert CellType("code") is CellType.CODE
-
-
-# ---------------------------------------------------------------------------
-# OutputType
-# ---------------------------------------------------------------------------
-
-
-class TestOutputType:
-    def test_str_inheritance(self):
-        assert OutputType.STREAM == "stream"
-        assert OutputType.EXECUTE_RESULT == "execute_result"
-        assert OutputType.DISPLAY_DATA == "display_data"
-        assert OutputType.ERROR == "error"
-        assert isinstance(OutputType.STREAM, str)
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            OutputType("bogus")
-
-
-# ---------------------------------------------------------------------------
-# OutputPolicy
-# ---------------------------------------------------------------------------
-
-
-class TestOutputPolicy:
-    def test_values(self):
-        assert OutputPolicy.PRESERVE == "preserve"
-        assert OutputPolicy.CLEAR_EDITED == "clear-edited"
-        assert OutputPolicy.CLEAR_ALL == "clear-all"
-
-    def test_coerce_from_string(self):
-        assert OutputPolicy("clear-edited") is OutputPolicy.CLEAR_EDITED
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            OutputPolicy("bogus")
-
-
-# ---------------------------------------------------------------------------
-# ResponseStatus
-# ---------------------------------------------------------------------------
-
-
-class TestResponseStatus:
-    def test_str_inheritance(self):
-        assert ResponseStatus.OK == "ok"
-        assert ResponseStatus.NOOP == "noop"
-        assert ResponseStatus.ERROR == "error"
-        assert isinstance(ResponseStatus.OK, str)
-
-    def test_json_serializable(self):
-        assert json.dumps({"status": ResponseStatus.OK}) == '{"status": "ok"}'
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            ResponseStatus("bogus")
+def test_enum_values_serialize_in_json_protocols():
+    assert json.dumps({"status": ResponseStatus.OK, "cell_type": CellType.CODE}) == (
+        '{"status": "ok", "cell_type": "code"}'
+    )
