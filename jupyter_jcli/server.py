@@ -1,5 +1,7 @@
 """Jupyter Server REST API client wrapping jupyter-server-client."""
 
+from uuid import uuid4
+
 from jupyter_server_client import JupyterServerClient
 
 from jupyter_jcli.session_selector import resolve_session_selector, short_session_ids
@@ -47,7 +49,7 @@ class ServerClient:
     ) -> dict:
         """Create a new session with the given kernel spec."""
         session = self._client.sessions.create_session(
-            path=session_name or "",
+            path=f"jcli-{uuid4().hex}",
             kernel={"name": kernel_name},
             name=session_name,
         )

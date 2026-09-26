@@ -102,6 +102,54 @@ def test_session_create_and_list(jupyter_server):
     assert "Killed" in result.output
 
 
+def test_session_create_is_new_and_name_conflicts(jupyter_server):
+    runner = CliRunner()
+    base = ["-s", jupyter_server["url"], "-t", jupyter_server["token"], "--json"]
+    created = []
+
+    def create(*options):
+        result = runner.invoke(main, [*base, "session", "create", *options])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.output)
+
+    try:
+        first = create("--kernel", "python3")
+        created.append(first["session_id"])
+        second = create("--kernel", "python3")
+        created.append(second["session_id"])
+        assert first["session_id"] != second["session_id"]
+        assert first["kernel_id"] != second["kernel_id"]
+
+        named = create("--kernel", "python3", "--name", "unique-test-name")
+        created.append(named["session_id"])
+        conflict = runner.invoke(
+            main,
+            [
+                *base,
+                "session",
+                "create",
+                "--kernel",
+                "python3",
+                "--name",
+                "unique-test-name",
+            ],
+        )
+        assert conflict.exit_code != 0
+        error = json.loads(conflict.output)
+        assert error["code"] == "SESSION_NAME_CONFLICT"
+        assert named["session_selector"] in error["message"]
+
+        invalid = runner.invoke(
+            main,
+            [*base, "session", "create", "--kernel", "nonexistent-jcli-kernel"],
+        )
+        assert invalid.exit_code != 0
+        assert json.loads(invalid.output)["code"] == "SESSION_CREATE_FAILED"
+    finally:
+        for session_id in created:
+            runner.invoke(main, [*base, "session", "kill", session_id])
+
+
 def test_session_create_human(jupyter_server):
     runner = CliRunner()
     result = runner.invoke(

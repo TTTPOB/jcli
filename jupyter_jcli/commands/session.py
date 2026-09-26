@@ -63,6 +63,16 @@ def create(ctx: CliContext, kernel: str, name: str | None):
     """Create a new session with the given kernel."""
     try:
         active_sessions = ctx.server.list_sessions()
+        if name is not None:
+            existing = next((s for s in active_sessions if s.get("name") == name), None)
+            if existing is not None:
+                selector = short_session_ids(active_sessions)[existing["session_id"]]
+                emit_error(
+                    "SESSION_NAME_CONFLICT",
+                    f"Session name {name!r} already exists (selector: {selector}). "
+                    "Choose another name or select the existing session.",
+                    ctx.use_json,
+                )
         info = ctx.server.create_session(kernel, name)
         info = with_session_selectors([*active_sessions, info])[-1]
         emit(

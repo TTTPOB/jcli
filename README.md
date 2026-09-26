@@ -130,6 +130,7 @@ j-cli -j kernelspec inspect-file analysis.py
 ### `session`
 
 ```bash
+j-cli session create --kernel python3
 j-cli session create --kernel python3 --name my-session
 j-cli session list
 j-cli session kill <session_selector>
@@ -137,7 +138,9 @@ j-cli session kill <session_selector>
 
 JSON output from `session create` and `session list` includes both the stable full
 `session_id` and the shortest unique `session_selector` accepted by subsequent
-commands. Human output uses the same short selector.
+commands. Human output uses the same short selector. Each create starts a new
+session and kernel, including unnamed creates. Names must be unique among active
+sessions; use the existing session's selector instead of creating it again.
 
 ### `kernel`
 
