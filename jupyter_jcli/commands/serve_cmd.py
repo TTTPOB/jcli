@@ -1,5 +1,6 @@
 """jcli serve-cmd — print a Jupyter launch command with env-var token reference."""
 
+import os
 import re
 import shlex
 from enum import Enum
@@ -76,7 +77,7 @@ def serve_cmd(
         --ServerApp.ip=localhost --ServerApp.port=8888 --no-browser
     """
     # Confirm token is available without inlining its value
-    if ctx.config.token is None:
+    if not os.environ.get("JCLI_JUPYTER_SERVER_TOKEN"):
         emit_error(
             "SERVE_CMD_NO_TOKEN",
             "JCLI_JUPYTER_SERVER_TOKEN is not set. Export it before using serve-cmd.",
@@ -85,7 +86,11 @@ def serve_cmd(
         return
 
     # Resolve hostname
-    parsed = urlparse(ctx.config.server_url)
+    try:
+        parsed = urlparse(ctx.config.server_url)
+        url_port = parsed.port
+    except ValueError:
+        emit_error("SERVE_CMD_BAD_URL", "Invalid Jupyter server URL", ctx.use_json)
     if ip is None:
         raw_host = parsed.hostname or ""
         if not raw_host or not _SAFE_HOST_RE.match(raw_host):
@@ -108,10 +113,13 @@ def serve_cmd(
 
     # Resolve port
     resolved_port: int = (
-        port
-        if port is not None
-        else (parsed.port or _SCHEME_PORTS.get(parsed.scheme, 80))
+        port if port is not None else (url_port or _SCHEME_PORTS.get(parsed.scheme, 80))
     )
+
+    if not 1 <= resolved_port <= 65535:
+        emit_error(
+            "SERVE_CMD_BAD_URL", "Port must be between 1 and 65535", ctx.use_json
+        )
 
     # Build the shell command string.  Token reference uses double quotes so
     # the shell expands $JCLI_JUPYTER_SERVER_TOKEN at paste time.  Host and
@@ -122,6 +130,7 @@ def serve_cmd(
         '--ServerApp.token="$JCLI_JUPYTER_SERVER_TOKEN"',
         f"--ServerApp.ip={shlex.quote(resolved_host)}",
         f"--ServerApp.port={shlex.quote(str(resolved_port))}",
+        "--ServerApp.port_retries=0",
     ]
     if root_dir:
         parts.append(f"--ServerApp.root_dir={shlex.quote(root_dir)}")
@@ -137,6 +146,7 @@ def serve_cmd(
         "--ServerApp.token=$JCLI_JUPYTER_SERVER_TOKEN",
         f"--ServerApp.ip={resolved_host}",
         f"--ServerApp.port={resolved_port}",
+        "--ServerApp.port_retries=0",
     ]
     if root_dir:
         argv_template.append(f"--ServerApp.root_dir={root_dir}")

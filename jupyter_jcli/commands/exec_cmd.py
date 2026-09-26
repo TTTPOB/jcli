@@ -10,6 +10,7 @@ import click
 from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.commands._display import display_path
+from jupyter_jcli.commands._server_errors import server_error_code
 from jupyter_jcli.executor import format_outputs_human, process_outputs
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 from jupyter_jcli.output import emit, emit_error
@@ -69,7 +70,7 @@ def exec_cmd(
         emit_error(e.code, str(e), ctx.use_json)
         return
     except Exception as e:  # noqa: BLE001 - normalize command failures for CLI output
-        emit_error("SESSION_NOT_FOUND", str(e), ctx.use_json)
+        emit_error(server_error_code(e, "SESSION_NOT_FOUND"), str(e), ctx.use_json)
         return  # unreachable but helps type checker
 
     # Direct code execution

@@ -14,7 +14,6 @@ class ServerClient:
         self._client = JupyterServerClient(
             base_url=server_url,
             token=token,
-            verify_ssl=False,
         )
         # Bypass proxy for local connections
         self._client.http_client.session.trust_env = False
