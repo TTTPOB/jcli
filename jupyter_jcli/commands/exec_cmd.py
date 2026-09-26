@@ -87,16 +87,27 @@ def _exec_code(
 ):
     """Execute inline code."""
     try:
-        from jupyter_jcli.kernel import execute_code
-
-        result = execute_code(
-            ctx.config.server_url,
-            ctx.config.token,
-            kernel_id,
-            code,
-            timeout if timeout is not None else 10,
-            display_mode,
+        from jupyter_jcli.kernel import (
+            ExecutionTimeout,
+            KernelInterruptFailed,
+            execute_code,
         )
+
+        execution_error = None
+        try:
+            result = execute_code(
+                ctx.config.server_url,
+                ctx.config.token,
+                kernel_id,
+                code,
+                timeout if timeout is not None else 10,
+                display_mode,
+            )
+        except (ExecutionTimeout, KernelInterruptFailed) as error:
+            if error.partial_result is None:
+                raise
+            execution_error = error
+            result = error.partial_result
         raw_outputs = result.get("outputs", [])
         from jupyter_jcli.outputs.store import persist_inline_outputs
 
@@ -119,35 +130,12 @@ def _exec_code(
             if text:
                 emit({"_human": text}, use_json=False)
 
+        if execution_error is not None:
+            _emit_execution_error(ctx, execution_error)
         if status != ResponseStatus.OK:
             emit_error("EXECUTION_ERROR", "Code execution failed", ctx.use_json)
 
     except Exception as e:  # noqa: BLE001 - normalize execution failures for CLI output
-        from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
-
-        if (
-            isinstance(e, (ExecutionTimeout, KernelInterruptFailed))
-            and e.partial_result is not None
-        ):
-            raw_outputs = e.partial_result["outputs"]
-            from jupyter_jcli.outputs.store import persist_inline_outputs
-
-            stored = persist_inline_outputs(raw_outputs)
-            outputs = (
-                stored.outputs if stored is not None else process_outputs(raw_outputs)
-            )
-            if ctx.use_json:
-                response = {"status": ResponseStatus.ERROR, "outputs": outputs}
-                if stored is not None:
-                    response["output_manifest"] = str(stored.manifest_path)
-                emit(response, use_json=True)
-            else:
-                text = format_outputs_human(outputs)
-                if stored is not None:
-                    saved = f"Outputs saved: {stored.manifest_path}"
-                    text = f"{text}\n{saved}" if text else saved
-                if text:
-                    emit({"_human": text}, use_json=False)
         _emit_execution_error(ctx, e)
 
 

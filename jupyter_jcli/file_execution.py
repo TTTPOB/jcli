@@ -199,6 +199,17 @@ def execute_file(
                 else ResponseStatus.ERROR
             )
             raw_outputs = result.get("outputs", [])
+            if execution_error is not None and not any(
+                output.get("output_type") == "error" for output in raw_outputs
+            ):
+                raw_outputs.append(
+                    {
+                        "output_type": "error",
+                        "ename": type(execution_error).__name__,
+                        "evalue": str(execution_error),
+                        "traceback": [],
+                    }
+                )
 
             notebook_cell_index, expected_cell_id = notebook_cell_targets.get(
                 cell.index, (cell.index, None)

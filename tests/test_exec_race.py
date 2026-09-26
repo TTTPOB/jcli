@@ -15,12 +15,14 @@ server-side nudge setup, j-cli closes it and retries with a fresh WebSocket.
 The retry is safe because no user code is sent until the probe succeeds.
 """
 
+import json
 import queue
 import signal
 import socket
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -538,6 +540,60 @@ class TestExecutionTimeoutUnit:
 
         assert client.execute_calls == []
         assert kernel.interrupt_calls == 0
+
+
+def test_file_timeout_marks_notebook_failure_and_unsent_keeps_outputs(tmp_path):
+    from jupyter_jcli.file_execution import execute_file
+    from jupyter_jcli.kernel import ExecutionTimeout
+
+    script = tmp_path / "partial.py"
+    script.write_text("# %%\nprint('output')\n")
+    old_output = {"output_type": "stream", "name": "stdout", "text": "old\n"}
+    partial_output = {"output_type": "stream", "name": "stdout", "text": "partial\n"}
+    outcome = [
+        {"status": "ok", "outputs": [old_output], "execution_count": 1},
+        ExecutionTimeout(
+            "interrupted",
+            {"status": "error", "outputs": [partial_output], "execution_count": None},
+        ),
+        ExecutionTimeout("before the request was sent"),
+    ]
+
+    def fake_execute(*args, **kwargs):
+        result = outcome.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    with (
+        patch("jupyter_jcli.kernel.kernel_connection", return_value=nullcontext(None)),
+        patch(
+            "jupyter_jcli.kernel.expression_display_mode", return_value=nullcontext()
+        ),
+        patch("jupyter_jcli.kernel.execute_with_timeout", side_effect=fake_execute),
+    ):
+
+        def execute():
+            return execute_file(
+                "url", None, "kernel", str(script), "0", "last_expr", None
+            )
+
+        execute()
+        notebook = script.with_suffix(".ipynb")
+        assert "old" in str(json.loads(notebook.read_text())["cells"][0]["outputs"])
+        with pytest.raises(ExecutionTimeout, match="interrupted"):
+            execute()
+        outputs = json.loads(notebook.read_text())["cells"][0]["outputs"]
+        assert "".join(outputs[0]["text"]) == "partial\n"
+        assert outputs[-1] == {
+            "output_type": "error",
+            "ename": "ExecutionTimeout",
+            "evalue": "interrupted",
+            "traceback": [],
+        }
+        with pytest.raises(ExecutionTimeout, match="before the request was sent"):
+            execute()
+        assert json.loads(notebook.read_text())["cells"][0]["outputs"] == outputs
 
 
 # ---------------------------------------------------------------------------
