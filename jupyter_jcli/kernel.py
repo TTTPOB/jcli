@@ -369,7 +369,10 @@ def execute_with_timeout(
         stop_on_error=stop_on_error,
     )
 
-    def partial_result() -> dict:
+    def partial_result() -> dict | None:
+        # Silent setup/cleanup requests are not user-code execution results.
+        if silent:
+            return None
         for output in outputs:
             output.pop("transient", None)
         return {

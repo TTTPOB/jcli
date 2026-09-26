@@ -487,7 +487,8 @@ class TestExecutionTimeoutUnit:
             execute_with_timeout(kernel, "pass", timeout=0)
         assert unsent.value.partial_result is None
 
-    def test_deadline_interrupts_and_reports_timeout(self):
+    @pytest.mark.parametrize("silent", [False, True])
+    def test_deadline_interrupts_and_reports_timeout(self, silent):
         from jupyter_jcli.kernel import ExecutionTimeout, execute_with_timeout
 
         client = _ExecutionClient()
@@ -496,9 +497,12 @@ class TestExecutionTimeoutUnit:
             interrupt_messages=[_kernel_message("status", execution_state="idle")],
         )
 
-        with pytest.raises(ExecutionTimeout, match="interrupted and returned to idle"):
-            execute_with_timeout(kernel, "long_running()", timeout=0.01)
+        with pytest.raises(
+            ExecutionTimeout, match="interrupted and returned to idle"
+        ) as caught:
+            execute_with_timeout(kernel, "long_running()", timeout=0.01, silent=silent)
 
+        assert (caught.value.partial_result is None) == silent
         assert kernel.interrupt_calls == 1
 
     def test_interrupt_failure_is_distinct(self):
