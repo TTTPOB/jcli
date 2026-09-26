@@ -110,7 +110,7 @@ type ShellRunResult = {
 type ShellExecutor = {
   sandboxMode?: string
   resolve(request: ShellRequest): unknown
-  run(spec: unknown): Promise<ShellRunResult>
+  execute(spec: unknown): Promise<{ result(): Promise<ShellRunResult> }>
 }
 
 type Logger = {
@@ -379,7 +379,7 @@ async function runGuard(
   try {
     throwIfAborted(exec.signal)
     const request = requestFor(ctx, exec, config, guard, event)
-    result = await ctx.shell.run(ctx.shell.resolve(request))
+    result = await (await ctx.shell.execute(ctx.shell.resolve(request))).result()
     if (result?.aborted) throw abortError()
     throwIfAborted(exec.signal)
   } catch (error: unknown) {
@@ -547,7 +547,7 @@ async function runOutputCommand(
   let result: ShellRunResult
   try {
     const request = outputRequestFor(ctx, exec, config, args)
-    result = await ctx.shell.run(ctx.shell.resolve(request))
+    result = await (await ctx.shell.execute(ctx.shell.resolve(request))).result()
   } catch (error: unknown) {
     if (exec.signal.aborted || isAbortError(error)) throw abortError()
     throw new Error(`jcli-dsh: read_notebook_output command failed: ${errorText(error)}`)

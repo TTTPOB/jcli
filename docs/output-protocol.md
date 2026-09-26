@@ -85,7 +85,7 @@ Claude Code, Codex, DSH, and OpenCode expose one tool named `read_notebook_outpu
 
 Claude Code and Codex use the `jcli-notebook-output` stdio MCP server installed by their setup commands; MCP support is included with the default `jupyter-jcli` installation. Project setup passes the project root explicitly. User setup depends on roots supplied by the MCP client and fails with `ROOTS_REQUIRED` when none are available. Paths outside trusted roots fail instead of being read. Removing any host integration removes only managed configuration and never deletes notebooks or saved output data.
 
-DSH and OpenCode use native adapters with the same one-tool contract. Contract and local adapter tests cover all four integrations; external end-to-end runs in the four host applications are not claimed here and remain a separate integration check. The shared MCP contract tests currently use MCP Python SDK 1.30.0 as a validation version, not as a statement of the minimum supported host version.
+DSH and OpenCode use native adapters with the same one-tool contract. The DSH adapter requires a shell service with `resolve(request)`, `execute(spec)`, and an execution handle's async `result()` method; both guards and notebook-output reads await that result. Contract and local adapter tests cover all four integrations, including a simulated DSH execution handle; external end-to-end runs in the four host applications are not claimed here and remain a separate integration check. The shared MCP contract tests currently use MCP Python SDK 1.30.0 as a validation version, not as a statement of the minimum supported host version.
 
 ## MIME rules
 

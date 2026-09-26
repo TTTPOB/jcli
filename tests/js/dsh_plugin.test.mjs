@@ -54,11 +54,15 @@ function harness({ results = [], shellMode, policy, attachments, config, shellRu
       calls.push(request)
       return request
     },
-    async run(spec) {
-      if (shellRun) return shellRun(spec)
-      const next = results[index++]
-      if (next instanceof Error) throw next
-      return next ?? result()
+    async execute(spec) {
+      return {
+        async result() {
+          if (shellRun) return shellRun(spec)
+          const next = results[index++]
+          if (next instanceof Error) throw next
+          return next ?? result()
+        },
+      }
     },
   }
   const ctx = {
@@ -135,6 +139,16 @@ test('filters unrelated tools without invoking a guard', async () => {
   assert.deepEqual(decision, { kind: 'allow' })
   assert.equal(nextCalls, 1)
   assert.equal(h.calls.length, 0)
+})
+
+test('guards and notebook output await the shell execution result handle', async () => {
+  let resultsRead = 0
+  const h = harness({ shellRun: () => { resultsRead++; return result(0, JSON.stringify({ schema_version: 1, status: 'ok', outputs: [] })) } })
+  assert.deepEqual(await h.pre(exec('write', { file_path: 'x.py' }), async () => ({ kind: 'allow' })), { kind: 'allow' })
+  assert.deepEqual(await h.tools[0].execute({ file_path: 'book.ipynb', cell_index: 0 }, { signal: new AbortController().signal }), {
+    schema_version: 1, status: 'ok', outputs: [],
+  })
+  assert.equal(resultsRead, 2)
 })
 
 test('runs both bash guards with Claude-shaped stdin and session policy', async () => {
@@ -391,18 +405,20 @@ test('real POSIX shell validates executable quoting for spaces, apostrophes, and
   const shell = {
     sandboxMode: undefined,
     resolve(request) { return request },
-    async run(spec) {
-      const child = spawnSync('/bin/bash', ['-c', spec.command], {
-        cwd: root,
-        input: spec.stdin,
-        encoding: 'utf8',
-      })
-      return result(child.status, child.stdout, child.stderr, {
-        signal: child.signal,
-      })
+    async execute(spec) {
+      return {
+        async result() {
+          const child = spawnSync('/bin/bash', ['-c', spec.command], {
+            cwd: root,
+            input: spec.stdin,
+            encoding: 'utf8',
+          })
+          return result(child.status, child.stdout, child.stderr, { signal: child.signal })
+        },
+      }
     },
   }
-  const h = harness({ shellRun: spec => shell.run(spec), config: { executable } })
+  const h = harness({ shellRun: async spec => (await shell.execute(spec)).result(), config: { executable } })
   const decision = await h.pre(exec('write', { file_path: 'x.py', content: 'x' }), async () => ({ kind: 'allow' }))
   assert.deepEqual(decision, { kind: 'allow' })
   assert.equal(h.calls.length, 1)
