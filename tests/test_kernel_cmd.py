@@ -4,13 +4,12 @@ import json
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from jupyter_jcli.cli import main
-from tests.test_exec_race import _wait_for_kernel_state
+from tests.helpers import wait_for_kernel_state
 
 
 def _create_session(runner, url, token):
@@ -48,10 +47,6 @@ def _invoke(runner, jupyter_server, *args):
     )
 
 
-def _jcli_bin() -> str:
-    return str(Path(sys.executable).parent / "j-cli")
-
-
 def test_kernel_restart_clears_variables_and_keeps_session_usable(jupyter_server):
     runner = CliRunner()
     info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
@@ -75,7 +70,7 @@ def test_kernel_restart_clears_variables_and_keeps_session_usable(jupyter_server
         assert "Restarted" in result.output
 
         # The restarted kernel is only usable once the server reports it idle.
-        _wait_for_kernel_state(jupyter_server, session_id, "idle")
+        wait_for_kernel_state(jupyter_server, session_id, "idle")
 
         checked = _invoke(
             runner,
@@ -95,18 +90,23 @@ def test_kernel_restart_clears_variables_and_keeps_session_usable(jupyter_server
         )
 
 
-def test_kernel_interrupt_stops_running_code_and_keeps_session_usable(jupyter_server):
+def test_kernel_interrupt_stops_running_code_and_keeps_session_usable(
+    jupyter_server, tmp_path
+):
     runner = CliRunner()
     info = _create_session(runner, jupyter_server["url"], jupyter_server["token"])
     session_id = info["session_id"]
     proc = None
+    started_file = tmp_path / "execution-started"
 
     try:
         # A real exec subprocess keeps the kernel busy in a long sleep; the
         # exec timeout is far above the sleep so only our interrupt can end it.
         proc = subprocess.Popen(
             [
-                _jcli_bin(),
+                sys.executable,
+                "-m",
+                "jupyter_jcli",
                 "-s",
                 jupyter_server["url"],
                 "-t",
@@ -114,29 +114,38 @@ def test_kernel_interrupt_stops_running_code_and_keeps_session_usable(jupyter_se
                 "exec",
                 session_id,
                 "--code",
-                "import time; time.sleep(60)",
+                (
+                    "import time; from pathlib import Path; "
+                    f"Path({str(started_file)!r}).touch(); time.sleep(60)"
+                ),
                 "--timeout",
                 "120",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        _wait_for_kernel_state(jupyter_server, session_id, "busy")
-        started = time.monotonic()
+        # Wait for user code, not the transient busy status of a readiness probe.
+        deadline = time.monotonic() + 15
+        while not started_file.exists():
+            assert proc.poll() is None, "exec exited before user code started"
+            if time.monotonic() >= deadline:
+                pytest.fail("kernel did not start the interrupt target")
+            time.sleep(0.05)
 
         result = _invoke(runner, jupyter_server, "kernel", "interrupt", session_id)
         assert result.exit_code == 0, result.output
         assert "Interrupted" in result.output
 
         try:
-            proc.communicate(timeout=15)
+            stdout, stderr = proc.communicate(timeout=15)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
             pytest.fail("exec subprocess kept running after kernel interrupt")
-        assert time.monotonic() - started < 30
+        assert proc.returncode == 1, (stdout, stderr)
+        assert b"KeyboardInterrupt" in stdout + stderr
 
-        _wait_for_kernel_state(jupyter_server, session_id, "idle")
+        wait_for_kernel_state(jupyter_server, session_id, "idle")
 
         recovered = _invoke(
             runner,
