@@ -261,58 +261,146 @@ def test_session_list_no_vars_flag(jupyter_server):
         )
 
 
-def test_session_list_vars_preview_present(monkeypatch):
-    """Default (without --no-vars) should include vars_preview in JSON output."""
-    runner = CliRunner()
+def _session(session_id: str, kernel_id: str, state: str = "idle") -> dict:
+    return {
+        "session_id": session_id,
+        "kernel_id": kernel_id,
+        "kernel_name": "python3",
+        "kernel_state": state,
+        "name": "",
+    }
 
-    sessions = [
-        {
-            "session_id": "session-1",
-            "kernel_id": "kernel-1",
-            "kernel_name": "python3",
-            "kernel_state": "idle",
-            "name": "",
-        }
-    ]
+
+def _install_vars_stubs(monkeypatch, sessions, list_variables):
+    """Patch the kernel/list_variables boundary; _enrich_with_vars runs for real."""
+    import contextlib
+
+    opened: list[str] = []
+    call_log: list[str] = []
+
     monkeypatch.setattr(
         "jupyter_jcli.server.ServerClient.list_sessions", lambda _self: sessions
     )
+
+    @contextlib.contextmanager
+    def fake_connection(_url, _token, kernel_id):
+        opened.append(kernel_id)
+        yield kernel_id
+
+    def recording_list_variables(kernel, *, timeout):
+        call_log.append(kernel)
+        return list_variables(kernel, timeout=timeout)
+
     monkeypatch.setattr(
-        "jupyter_jcli.commands.session._enrich_with_vars",
-        lambda _ctx, items: items[0].update(
-            vars_preview={"names": ["answer"], "total": 1}
-        ),
+        "jupyter_jcli.kernel.kernel_connection", fake_connection, raising=True
+    )
+    monkeypatch.setattr(
+        "jupyter_jcli.variables.list_variables", recording_list_variables, raising=True
+    )
+    return opened, call_log
+
+
+def test_session_list_vars_preview_truncates_names_and_reports_total(monkeypatch):
+    """vars_preview keeps the first names and still reports the full total."""
+    runner = CliRunner()
+    sessions = [_session("session-alpha", "kernel-alpha")]
+    variables = [{"name": f"var{i}", "type": "int", "value": str(i)} for i in range(7)]
+    opened, call_log = _install_vars_stubs(
+        monkeypatch,
+        sessions,
+        lambda _kernel, *, timeout: {"variables": variables, "source": "fallback"},
     )
 
     result = runner.invoke(main, ["--json", "session", "list"])
-    assert result.exit_code == 0
+
+    assert result.exit_code == 0, result.output
     assert json.loads(result.output)["sessions"][0]["vars_preview"] == {
-        "names": ["answer"],
-        "total": 1,
+        "names": ["var0", "var1", "var2", "var3", "var4"],
+        "total": 7,
     }
+    assert opened == ["kernel-alpha"]
+    assert call_log == ["kernel-alpha"]
+
+
+def test_session_list_vars_preview_skips_busy_dead_unknown(monkeypatch):
+    """Non-idle kernels are never queried for variables."""
+    runner = CliRunner()
+    sessions = [
+        _session("session-alpha", "kernel-alpha"),
+        _session("session-beta", "kernel-beta", "busy"),
+        _session("session-gamma", "kernel-gamma", "dead"),
+        _session("session-delta", "kernel-delta", "unknown"),
+    ]
+    opened, call_log = _install_vars_stubs(
+        monkeypatch,
+        sessions,
+        lambda _kernel, *, timeout: {"variables": [], "source": "fallback"},
+    )
+
+    result = runner.invoke(main, ["--json", "session", "list"])
+
+    assert result.exit_code == 0, result.output
+    previews = {
+        item["session_id"]: item["vars_preview"]
+        for item in json.loads(result.output)["sessions"]
+    }
+    assert previews["session-alpha"] == {"names": [], "total": 0}
+    for session_id in ("session-beta", "session-gamma", "session-delta"):
+        assert previews[session_id] == {
+            "names": [],
+            "total": -1,
+            "unavailable": True,
+        }
+    assert opened == ["kernel-alpha"]
+    assert call_log == ["kernel-alpha"]
+
+
+def test_session_list_vars_preview_isolates_single_session_failure(monkeypatch):
+    """One failing kernel marks only its own session as unavailable."""
+    runner = CliRunner()
+    sessions = [
+        _session("session-alpha", "kernel-alpha"),
+        _session("session-beta", "kernel-beta"),
+    ]
+
+    def list_variables(kernel, *, timeout):
+        if kernel == "kernel-alpha":
+            raise RuntimeError("alpha kernel failed")
+        return {
+            "variables": [{"name": "answer", "type": "int", "value": "42"}],
+            "source": "fallback",
+        }
+
+    opened, _call_log = _install_vars_stubs(monkeypatch, sessions, list_variables)
+
+    result = runner.invoke(main, ["--json", "session", "list"])
+
+    assert result.exit_code == 0, result.output
+    previews = {
+        item["session_id"]: item["vars_preview"]
+        for item in json.loads(result.output)["sessions"]
+    }
+    assert previews["session-alpha"] == {
+        "names": [],
+        "total": -1,
+        "unavailable": True,
+    }
+    assert previews["session-beta"] == {"names": ["answer"], "total": 1}
+    # Order-independent: both kernels were queried by the thread pool.
+    assert sorted(opened) == ["kernel-alpha", "kernel-beta"]
 
 
 def test_session_list_human_hint(monkeypatch):
     """Human output should include the hint line pointing at j-cli vars."""
     runner = CliRunner()
-
-    sessions = [
-        {
-            "session_id": "session-1",
-            "kernel_id": "kernel-1",
-            "kernel_name": "python3",
-            "kernel_state": "idle",
-            "name": "",
-        }
-    ]
-    monkeypatch.setattr(
-        "jupyter_jcli.server.ServerClient.list_sessions", lambda _self: sessions
-    )
-    monkeypatch.setattr(
-        "jupyter_jcli.commands.session._enrich_with_vars",
-        lambda _ctx, items: items[0].update(vars_preview={"names": [], "total": 0}),
+    sessions = [_session("session-alpha", "kernel-alpha")]
+    _install_vars_stubs(
+        monkeypatch,
+        sessions,
+        lambda _kernel, *, timeout: {"variables": [], "source": "fallback"},
     )
 
     result = runner.invoke(main, ["session", "list"])
-    assert result.exit_code == 0
+
+    assert result.exit_code == 0, result.output
     assert "j-cli vars" in result.output

@@ -421,14 +421,9 @@ class TestPyPercentWriteback:
         nb_path = tmp_path / "invalid_output.ipynb"
         nbformat.write(nb, nb_path)
 
-        with (
-            patch(
-                "jupyter_jcli.file_execution.summarize_outputs",
-                side_effect=ValueError("invalid output"),
-            ),
-            patch(
-                "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook"
-            ) as writeback,
+        with patch(
+            "jupyter_jcli.file_execution.summarize_outputs",
+            side_effect=ValueError("invalid output"),
         ):
             result = runner.invoke(
                 main,
@@ -451,10 +446,17 @@ class TestPyPercentWriteback:
         assert "execution completed and raw outputs were saved" in error["message"]
         assert f"{nb_path} cell 0" in error["message"]
         assert "invalid output" in error["message"]
-        writeback.assert_called_once()
-        assert writeback.call_args.args[1][0]["raw_outputs"]
+
+        # The real writeback must have persisted the kernel output before the
+        # summarizing failure, so the notebook is not left empty.
         updated_nb = nbformat.read(nb_path, as_version=4)
-        assert updated_nb.cells[0].outputs == []  # mocked writeback records only
+        cell0 = updated_nb.cells[0]
+        assert cell0.execution_count is not None
+        assert any(
+            output.get("output_type") == "stream"
+            and "invalid output" in output.get("text", "")
+            for output in cell0.outputs
+        )
 
     def test_py_cell_maps_to_reordered_notebook_before_execution(
         self, live_session, mock_kernel_connection, tmp_path

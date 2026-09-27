@@ -24,7 +24,7 @@ import sys
 import time
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -60,10 +60,61 @@ class _FakeChannel:
         return self.messages.get(timeout=timeout)
 
 
+class _FakeClock:
+    """Injectable monotonic clock for deterministic ready-probe deadlines."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _ProbeChannel:
+    """Non-blocking ready-probe channel driven by an injected clock.
+
+    Queued messages are returned immediately (no clock advance).  An empty
+    channel advances the clock by the timeout a real blocking read would have
+    consumed, then raises queue.Empty — so probe progress depends only on the
+    fake clock, never on wall-clock time.
+    """
+
+    def __init__(self, messages=None, *, clock: _FakeClock) -> None:
+        self.messages = list(messages or [])
+        self.clock = clock
+        self.get_calls = 0
+
+    def get_msg(self, timeout=None):
+        self.get_calls += 1
+        if self.messages:
+            return self.messages.pop(0)
+        if timeout:
+            self.clock.advance(timeout)
+        raise queue.Empty
+
+
+class _EndlessProbeChannel:
+    """Always-ready channel that advances the injected clock on every read."""
+
+    def __init__(self, clock: _FakeClock, *, step: float, message: dict) -> None:
+        self.clock = clock
+        self.step = step
+        self.message = message
+        self.get_calls = 0
+
+    def get_msg(self, timeout=None):
+        self.get_calls += 1
+        self.clock.advance(self.step)
+        return self.message
+
+
 class _FakeClient:
-    def __init__(self, shell_messages=None, iopub_messages=None):
-        self.shell_channel = _FakeChannel(shell_messages)
-        self.iopub_channel = _FakeChannel(iopub_messages)
+    def __init__(self, shell_messages=None, iopub_messages=None, *, clock):
+        self.shell_channel = _ProbeChannel(shell_messages, clock=clock)
+        self.iopub_channel = _ProbeChannel(iopub_messages, clock=clock)
         self.sent_msg_ids = []
         self.handled_kernel_info_reply = None
 
@@ -78,6 +129,22 @@ class _FakeClient:
 
 class TestKernelWebsocketReadyProbe:
     """Verify kernel_connection waits for shell and IOPub round-trips."""
+
+    def _run_probe(self, client, clock, *, timeout=0.01, expect_timeout=False):
+        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+
+        kernel = MagicMock()
+        kernel._manager.client = client
+        fake_time = SimpleNamespace(monotonic=clock.monotonic)
+        with patch("jupyter_jcli.kernel.time", fake_time):
+            if expect_timeout:
+                with pytest.raises(
+                    TimeoutError,
+                    match=f"Kernel didn't respond in {timeout:g} seconds",
+                ):
+                    _wait_for_kernel_websocket_ready(kernel, timeout=timeout)
+            else:
+                _wait_for_kernel_websocket_ready(kernel, timeout=timeout)
 
     def test_kernel_connection_calls_ready_probe(self):
         """kernel_connection uses j-cli's ready probe after start."""
@@ -191,8 +258,7 @@ class TestKernelWebsocketReadyProbe:
 
     def test_ready_probe_accepts_matching_shell_reply_and_iopub_idle(self):
         """The probe ignores unrelated messages before both channels succeed."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
-
+        clock = _FakeClock()
         matching_reply = {
             "msg_type": "kernel_info_reply",
             "parent_header": {"msg_id": "probe-0"},
@@ -221,33 +287,27 @@ class TestKernelWebsocketReadyProbe:
                     "content": {"execution_state": "idle"},
                 },
             ],
+            clock=clock,
         )
-        kernel = MagicMock()
-        kernel._manager.client = client
 
-        _wait_for_kernel_websocket_ready(kernel, timeout=1)
+        self._run_probe(client, clock, timeout=1)
 
         assert client.sent_msg_ids == ["probe-0"]
         assert client.handled_kernel_info_reply is matching_reply
-        assert client.iopub_channel.messages.empty()
+        assert client.iopub_channel.messages == []
 
     def test_ready_probe_times_out_without_matching_shell_reply(self):
         """The probe fails clearly if shell forwarding never becomes ready."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
+        clock = _FakeClock()
+        client = _FakeClient(clock=clock)
 
-        client = _FakeClient()
-        kernel = MagicMock()
-        kernel._manager.client = client
-
-        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
-            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+        self._run_probe(client, clock, expect_timeout=True)
 
         assert client.sent_msg_ids == ["probe-0"]
 
     def test_ready_probe_drains_iopub_backlog_before_timeout(self):
         """Queued unrelated traffic cannot hide the matching idle status."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
-
+        clock = _FakeClock()
         client = _FakeClient(
             shell_messages=[
                 {
@@ -271,19 +331,17 @@ class TestKernelWebsocketReadyProbe:
                     "content": {"execution_state": "idle"},
                 }
             ],
+            clock=clock,
         )
-        kernel = MagicMock()
-        kernel._manager.client = client
 
-        _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+        self._run_probe(client, clock)
 
         assert client.handled_kernel_info_reply is not None
-        assert client.iopub_channel.messages.empty()
+        assert client.iopub_channel.messages == []
 
     def test_ready_probe_honors_timeout_while_iopub_remains_busy(self):
         """Continuous unrelated IOPub traffic cannot bypass the deadline."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
-
+        clock = _FakeClock()
         client = _FakeClient(
             shell_messages=[
                 {
@@ -291,26 +349,26 @@ class TestKernelWebsocketReadyProbe:
                     "parent_header": {"msg_id": "probe-0"},
                     "content": {"protocol_version": "5.3"},
                 }
-            ]
+            ],
+            clock=clock,
         )
-        client.iopub_channel = MagicMock()
-        client.iopub_channel.get_msg.return_value = {
-            "msg_type": "status",
-            "parent_header": {"msg_id": "unrelated"},
-            "content": {"execution_state": "idle"},
-        }
-        kernel = MagicMock()
-        kernel._manager.client = client
+        client.iopub_channel = _EndlessProbeChannel(
+            clock,
+            step=0.004,
+            message={
+                "msg_type": "status",
+                "parent_header": {"msg_id": "unrelated"},
+                "content": {"execution_state": "idle"},
+            },
+        )
 
-        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
-            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+        self._run_probe(client, clock, expect_timeout=True)
 
-        assert client.iopub_channel.get_msg.call_count > 1
+        assert client.iopub_channel.get_calls > 1
 
     def test_ready_probe_times_out_without_iopub_idle(self):
         """A shell round-trip alone does not prove execution can complete."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
-
+        clock = _FakeClock()
         client = _FakeClient(
             shell_messages=[
                 {
@@ -318,20 +376,17 @@ class TestKernelWebsocketReadyProbe:
                     "parent_header": {"msg_id": "probe-0"},
                     "content": {"protocol_version": "5.3"},
                 }
-            ]
+            ],
+            clock=clock,
         )
-        kernel = MagicMock()
-        kernel._manager.client = client
 
-        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
-            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+        self._run_probe(client, clock, expect_timeout=True)
 
         assert client.handled_kernel_info_reply is None
 
     def test_ready_probe_requires_both_channels_for_same_request(self):
         """Replies from different requests cannot jointly satisfy readiness."""
-        from jupyter_jcli.kernel import _wait_for_kernel_websocket_ready
-
+        clock = _FakeClock()
         client = _FakeClient(
             shell_messages=[
                 {
@@ -347,12 +402,10 @@ class TestKernelWebsocketReadyProbe:
                     "content": {"execution_state": "idle"},
                 }
             ],
+            clock=clock,
         )
-        kernel = MagicMock()
-        kernel._manager.client = client
 
-        with pytest.raises(TimeoutError, match="Kernel didn't respond in 0.01 seconds"):
-            _wait_for_kernel_websocket_ready(kernel, timeout=0.01)
+        self._run_probe(client, clock, expect_timeout=True)
 
         assert client.handled_kernel_info_reply is None
 
@@ -1187,6 +1240,7 @@ class TestSigintHandlerUnit:
 
         with (
             patch("jupyter_jcli.kernel.urllib.request.urlopen") as mock_urlopen,
+            patch("jupyter_jcli.kernel.signal.signal"),
             patch("jupyter_jcli.kernel.sys.exit") as mock_exit,
         ):
             handler = _make_interrupt_handler("http://srv:8888", "tok", "kid-1")
@@ -1203,19 +1257,32 @@ class TestSigintHandlerUnit:
 
             mock_exit.assert_called_once_with(128 + signal.SIGINT)
 
-    def test_handler_second_signal_restores_default(self):
-        """Second signal restores SIG_DFL before exit."""
+    def test_handler_restores_sigint_default_before_interrupt_request(self):
+        """The handler's first action is SIG_DFL, already installed at urlopen time."""
         from jupyter_jcli.kernel import _make_interrupt_handler
 
-        with (
-            patch("jupyter_jcli.kernel.urllib.request.urlopen"),
-            patch("jupyter_jcli.kernel.sys.exit"),
-            patch("jupyter_jcli.kernel.signal.signal") as mock_signal,
-        ):
-            handler = _make_interrupt_handler("http://srv:8888", "tok", "kid-1")
-            handler(signal.SIGINT, None)
+        original = signal.getsignal(signal.SIGINT)
+        handler_at_urlopen = {}
 
-            mock_signal.assert_called_with(signal.SIGINT, signal.SIG_DFL)
+        def record_urlopen(*_args, **_kwargs):
+            handler_at_urlopen["value"] = signal.getsignal(signal.SIGINT)
+            return MagicMock()
+
+        try:
+            with (
+                patch(
+                    "jupyter_jcli.kernel.urllib.request.urlopen",
+                    side_effect=record_urlopen,
+                ),
+                patch("jupyter_jcli.kernel.sys.exit") as mock_exit,
+            ):
+                handler = _make_interrupt_handler("http://srv:8888", "tok", "kid-1")
+                handler(signal.SIGINT, None)
+        finally:
+            signal.signal(signal.SIGINT, original)
+
+        assert handler_at_urlopen["value"] is signal.SIG_DFL
+        assert mock_exit.call_args_list == [call(128 + signal.SIGINT)]
 
     def test_handler_no_token(self):
         """Handler works without a token (no Authorization header)."""
@@ -1223,6 +1290,7 @@ class TestSigintHandlerUnit:
 
         with (
             patch("jupyter_jcli.kernel.urllib.request.urlopen") as mock_urlopen,
+            patch("jupyter_jcli.kernel.signal.signal"),
             patch("jupyter_jcli.kernel.sys.exit"),
         ):
             handler = _make_interrupt_handler("http://srv:8888", None, "kid-1")
@@ -1231,8 +1299,8 @@ class TestSigintHandlerUnit:
             req = mock_urlopen.call_args[0][0]
             assert req.get_header("Authorization") is None
 
-    def test_handler_http_error_is_silent(self):
-        """HTTP errors are silently ignored — exit still happens."""
+    def test_handler_http_error_is_silent(self, capsys):
+        """HTTP errors are silently ignored — exit still happens with no output."""
         from jupyter_jcli.kernel import _make_interrupt_handler
 
         with (
@@ -1240,13 +1308,16 @@ class TestSigintHandlerUnit:
                 "jupyter_jcli.kernel.urllib.request.urlopen",
                 side_effect=OSError("connection refused"),
             ),
-            patch("jupyter_jcli.kernel.sys.exit") as mock_exit,
+            patch("jupyter_jcli.kernel.signal.signal"),
         ):
             handler = _make_interrupt_handler("http://srv:8888", "tok", "kid-1")
-            handler(signal.SIGINT, None)
+            with pytest.raises(SystemExit) as caught:
+                handler(signal.SIGINT, None)
 
-            # Must still exit even though the HTTP request failed
-            mock_exit.assert_called_once()
+        captured = capsys.readouterr()
+        assert caught.value.code == 128 + signal.SIGINT
+        assert captured.out == ""
+        assert captured.err == ""
 
     def test_signal_handler_set_and_restored(self):
         """kernel_connection covers the ready probe and restores handlers."""
