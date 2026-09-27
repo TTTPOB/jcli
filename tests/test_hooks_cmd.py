@@ -11,17 +11,16 @@ from jupyter_jcli.cli import main
 # Helper
 # ---------------------------------------------------------------------------
 
+_ALL_GUARDS = [
+    "notebook-exec-guard",
+    "python-run-guard",
+    "pair-drift-guard-pre",
+    "pair-drift-guard-post",
+    "notebook-edit-guard",
+]
 
-@pytest.mark.parametrize(
-    "guard",
-    [
-        "notebook-exec-guard",
-        "python-run-guard",
-        "pair-drift-guard-pre",
-        "pair-drift-guard-post",
-        "notebook-edit-guard",
-    ],
-)
+
+@pytest.mark.parametrize("guard", _ALL_GUARDS)
 def test_unknown_platform_rejected_before_reading_payload(guard):
     result = CliRunner().invoke(
         main, ["_hooks", guard, "--platform", "typo"], input="not json"
@@ -137,9 +136,20 @@ def test_guard_decisions(command: str, should_deny: bool):
     ],
 )
 def test_malformed_stdin_fails(raw_input: str):
+    """Shared parse categories are exercised once, completely."""
     runner = CliRunner()
     result = runner.invoke(
         main, ["_hooks", "notebook-exec-guard"], input=raw_input, catch_exceptions=False
+    )
+    assert result.exit_code == 1
+    assert "malformed hook payload" in (result.stderr or result.output)
+
+
+@pytest.mark.parametrize("guard", _ALL_GUARDS)
+def test_each_guard_rejects_malformed_stdin(guard: str):
+    """Every guard wires malformed stdin to an operation failure, not an allow."""
+    result = CliRunner().invoke(
+        main, ["_hooks", guard], input="not json at all", catch_exceptions=False
     )
     assert result.exit_code == 1
     assert "malformed hook payload" in (result.stderr or result.output)
@@ -160,6 +170,7 @@ def test_malformed_dsh_payload_is_nonzero():
 @pytest.mark.parametrize(
     ("hook", "payload"),
     [
+        # One case per shared / platform-specific extraction category.
         (
             "notebook-exec-guard",
             {"tool_input": {"command": 42}},
@@ -173,15 +184,7 @@ def test_malformed_dsh_payload_is_nonzero():
             {"cwd": 42, "tool_input": {"command": "echo ok"}},
         ),
         (
-            "python-run-guard",
-            {"tool_input": {"command": ["bash", "-c", "echo ok"]}},
-        ),
-        (
             "pair-drift-guard-pre",
-            {"tool_input": {"file_path": None}},
-        ),
-        (
-            "pair-drift-guard-post",
             {"tool_input": {"file_path": None}},
         ),
         (

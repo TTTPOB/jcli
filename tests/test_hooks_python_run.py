@@ -132,30 +132,6 @@ def test_non_match_allow(command: str, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Fail-open on malformed stdin
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "raw_input",
-    [
-        "not json at all",
-        "",
-        "null",
-        '{"tool_input": null}',
-        '{"tool_input": {"command": null}}',
-    ],
-)
-def test_malformed_stdin_fails(raw_input: str):
-    runner = CliRunner()
-    result = runner.invoke(
-        main, ["_hooks", "python-run-guard"], input=raw_input, catch_exceptions=False
-    )
-    assert result.exit_code == 1
-    assert "malformed hook payload" in (result.stderr or result.output)
-
-
-# ---------------------------------------------------------------------------
 # Decision shape test
 # ---------------------------------------------------------------------------
 

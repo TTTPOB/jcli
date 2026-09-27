@@ -246,12 +246,23 @@ def test_dsh_rejects_non_boolean_capability_flags(isolated):
     assert "DSH_CONFIG_INVALID" in result.stderr
 
 
-@pytest.mark.parametrize("host", ["claude", "codex", "dsh", "opencode"])
-def test_force_is_allowed_without_selecting_skill(isolated, host):
+@pytest.mark.parametrize(
+    ("host", "skill_root", "hook_artifact"),
+    [
+        ("claude", ".claude", ".claude/settings.json"),
+        ("codex", ".agents", ".codex/hooks.json"),
+        ("dsh", ".agents", ".dsh/cordis.yml"),
+        ("opencode", ".agents", ".opencode/plugins/jcli.js"),
+    ],
+)
+def test_force_is_allowed_without_selecting_skill(
+    isolated, host, skill_root, hook_artifact
+):
     result = invoke(host, "--project", "--only", "hook", "--force")
 
     assert result.exit_code == 0
-    assert not (isolated / ".agents" / "skills" / "j-cli").exists()
+    assert not (isolated / skill_root / "skills" / "j-cli").exists()
+    assert (isolated / hook_artifact).exists()
 
 
 @pytest.mark.parametrize("host", ["claude", "codex", "dsh", "opencode"])

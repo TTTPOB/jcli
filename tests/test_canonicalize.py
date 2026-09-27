@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jupyter_jcli.formats.percent import canonicalize as canonicalize_py_text
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 
@@ -19,28 +21,43 @@ def _py_text(*cell_sources: str, kernel: str = "python3") -> str:
     return "".join(lines)
 
 
+_CANONICAL_FRONT_MATTER = (
+    "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
+)
+
+
 class TestCanonicalizePyText:
-    def test_idempotent_basic(self):
-        text = _py_text("x = 1")
-        r1 = canonicalize_py_text(text)
-        r2 = canonicalize_py_text(r1)
-        assert r1 == r2
-
-    def test_idempotent_markdown_cell(self):
-        text = (
-            "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
-            "# %%\nx = 1\n\n"
-            "# %% [markdown]\n# ## Title\n\n"
-        )
-        r1 = canonicalize_py_text(text)
-        r2 = canonicalize_py_text(r1)
-        assert r1 == r2
-
-    def test_idempotent_multiple_cells(self):
-        text = _py_text("x = 1\ny = 2", "z = 3")
-        r1 = canonicalize_py_text(text)
-        r2 = canonicalize_py_text(r1)
-        assert r1 == r2
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param(
+                _CANONICAL_FRONT_MATTER + "# %%  \nx = 1\n\n\n",
+                _CANONICAL_FRONT_MATTER + "# %%\nx = 1\n",
+                id="basic-trailing-marker-and-eof-whitespace",
+            ),
+            pytest.param(
+                _CANONICAL_FRONT_MATTER
+                + "# %%\nx = 1\n\n"
+                + "# %% [markdown]\n# ## Title\n\n",
+                _CANONICAL_FRONT_MATTER
+                + "# %%\nx = 1\n\n# %% [markdown]\n# ## Title\n",
+                id="markdown",
+            ),
+            pytest.param(
+                _py_text("x = 1\ny = 2", "z = 3"),
+                _CANONICAL_FRONT_MATTER + "# %%\nx = 1\ny = 2\n\n# %%\nz = 3\n",
+                id="multiple",
+            ),
+            pytest.param(
+                "# %%\nx = 1", "# %%\nx = 1\n", id="marker-only-no-eof-newline"
+            ),
+            pytest.param("# %%\nx = 1\n\n\n", "# %%\nx = 1\n", id="eof-blank-lines"),
+        ],
+    )
+    def test_canonical_form_is_explicit_and_stable(self, text, expected):
+        result = canonicalize_py_text(text)
+        assert result == expected
+        assert canonicalize_py_text(result) == expected
 
     def test_non_py_percent_returned_as_is(self):
         text = "import os\n\ndef main():\n    pass\n"
@@ -63,25 +80,6 @@ class TestCanonicalizePyText:
         result = canonicalize_py_text(text)
         parsed = parse_py_percent_text(result)
         assert parsed.kernel_name == "ir"
-
-    def test_normalizes_trailing_spaces_on_marker(self):
-        text = (
-            "# ---\n# jupyter:\n#   kernelspec:\n#     name: python3\n# ---\n\n"
-            "# %%  \nx = 1\n\n"
-        )
-        result = canonicalize_py_text(text)
-        assert "# %%  \n" not in result
-        assert "# %%\nx = 1\n" in result
-
-    def test_normalizes_formatter_eof_whitespace(self):
-        variants = [
-            "# %%\nx = 1",
-            "# %%\nx = 1\n",
-            "# %%\nx = 1\n\n",
-            "# %%\nx = 1\n\n\n",
-        ]
-
-        assert len({canonicalize_py_text(text) for text in variants}) == 1
 
     def test_empty_cells_preserved(self):
         text = (

@@ -406,31 +406,11 @@ class TestConflict:
 
 
 # ---------------------------------------------------------------------------
-# Fail-open on bad input / exceptions
+# Fail-open on unexpected handler exceptions
 # ---------------------------------------------------------------------------
 
 
 class TestFailOpen:
-    @pytest.mark.parametrize(
-        "raw_input",
-        [
-            "not json",
-            "",
-            "null",
-            '{"tool_name": null}',
-        ],
-    )
-    def test_malformed_stdin_fails(self, raw_input: str):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["_hooks", "pair-drift-guard-pre"],
-            input=raw_input,
-            catch_exceptions=False,
-        )
-        assert result.exit_code == 1
-        assert "malformed hook payload" in (result.stderr or result.output)
-
     def test_drift_exception_allows(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
@@ -495,17 +475,6 @@ class TestNotebookEditGuard:
         assert code == 0
         assert _decision(out) is None  # allow
 
-    def test_malformed_stdin_fails(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["_hooks", "notebook-edit-guard"],
-            input="not json",
-            catch_exceptions=False,
-        )
-        assert result.exit_code == 1
-        assert "malformed hook payload" in (result.stderr or result.output)
-
     def test_message_contains_three_step_workflow(self):
         payload = {"tool_name": "NotebookEdit", "tool_input": {}}
         _code, out = _invoke(payload, "notebook-edit-guard")
@@ -566,6 +535,11 @@ class TestPairDriftGuardPost:
 
         assert code == 0
         assert _decision(out) is None
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
         ctx = _additional_context(out)
         assert "Auto-synced" in ctx
         assert "nb.py" in ctx
@@ -600,7 +574,13 @@ class TestPairDriftGuardPost:
 
         assert code == 1
         assert _decision(out) is None
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
         ctx = _additional_context(out)
+        assert "drift detected" in ctx
         assert "j-cli convert" in ctx
         assert _event_name(out) == "PostToolUse"
 
@@ -618,7 +598,13 @@ class TestPairDriftGuardPost:
 
         assert code == 1
         assert _decision(out) is None
+        assert out is not None
+        hso = out["hookSpecificOutput"]
+        assert "additionalContext" in hso
+        assert "permissionDecision" not in hso
+        assert "decision" not in out
         ctx = _additional_context(out)
+        assert "drift detected" in ctx
         assert "j-cli convert" in ctx
         assert _event_name(out) == "PostToolUse"
 
@@ -650,17 +636,6 @@ class TestPairDriftGuardPost:
         )
         assert code == 0
         assert _decision(out) is None
-
-    def test_malformed_stdin_fails(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["_hooks", "pair-drift-guard-post"],
-            input="not json",
-            catch_exceptions=False,
-        )
-        assert result.exit_code == 1
-        assert "malformed hook payload" in (result.stderr or result.output)
 
     def test_post_exception_is_visible(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
@@ -1296,81 +1271,3 @@ class TestGcPairSyncRefsFailures:
             )
         assert result.exit_code == 1
         assert "git operation failed" in (result.stderr or result.output)
-
-
-# ---------------------------------------------------------------------------
-# PostToolUse wire schema — assert additionalContext, no permissionDecision
-# ---------------------------------------------------------------------------
-
-
-class TestPostToolUseSchema:
-    """PostToolUse hook must emit additionalContext, never permissionDecision."""
-
-    def test_conflict_post_schema(self, tmp_path):
-        from tests.helpers import make_py_text
-
-        base_py = make_py_text("x = 1")
-        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 99"])
-
-        def _git_side(path: Path) -> str | None:
-            return base_py if path.suffix == ".py" else None
-
-        with patch(
-            "jupyter_jcli.diff.drift._get_git_base_text_strict", side_effect=_git_side
-        ):
-            code, out = _invoke(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
-                "pair-drift-guard-post",
-            )
-
-        assert code == 1
-        assert out is not None
-        hso = out["hookSpecificOutput"]
-        assert "additionalContext" in hso
-        assert "drift detected" in hso["additionalContext"]
-        assert "j-cli convert" in hso["additionalContext"]
-        assert "permissionDecision" not in hso
-        assert "decision" not in out
-
-    def test_drift_only_post_schema(self, tmp_path):
-        py, _ipynb = _make_pair(tmp_path, ["x = 10", "y = 20"], ["x = 99"])
-
-        with patch(
-            "jupyter_jcli.diff.drift._get_git_base_text_strict", return_value=None
-        ):
-            code, out = _invoke(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
-                "pair-drift-guard-post",
-            )
-
-        assert code == 1
-        assert out is not None
-        hso = out["hookSpecificOutput"]
-        assert "additionalContext" in hso
-        assert "drift detected" in hso["additionalContext"]
-        assert "j-cli convert" in hso["additionalContext"]
-        assert "permissionDecision" not in hso
-        assert "decision" not in out
-
-    def test_auto_synced_post_schema(self, tmp_path):
-        from tests.helpers import make_py_text
-
-        base_py = make_py_text("x = 1")
-        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
-
-        with patch(
-            "jupyter_jcli.diff.drift._get_git_base_text_strict",
-            side_effect=lambda p: base_py if p.suffix == ".py" else None,
-        ):
-            code, out = _invoke(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
-                "pair-drift-guard-post",
-            )
-
-        assert code == 0
-        assert out is not None
-        hso = out["hookSpecificOutput"]
-        assert "additionalContext" in hso
-        assert "Auto-synced" in hso["additionalContext"]
-        assert "permissionDecision" not in hso
-        assert "decision" not in out

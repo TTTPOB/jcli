@@ -27,13 +27,13 @@ class TestRenderNoBaselineDiff:
         assert "+x = 99" in diff
 
     def test_includes_labels(self):
-        ours = _py_text("x = 1")
-        theirs = _py_text("x = 2")
         diff = render_no_baseline_diff(
-            ours, theirs, ours_label="py", theirs_label="ipynb"
+            _py_text("x = 1"),
+            _py_text("x = 2"),
+            ours_label="py-current",
+            theirs_label="ipynb-staged",
         )
-        assert "py" in diff
-        assert "ipynb" in diff
+        assert diff.startswith("--- py-current\n+++ ipynb-staged\n")
 
     def test_empty_when_identical(self):
         text = _py_text("x = 1")

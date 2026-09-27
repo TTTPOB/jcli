@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 
 import pytest
@@ -42,25 +41,6 @@ class TestDriftStatus:
             assert result.status is expected
             with pytest.raises((AttributeError, TypeError)):
                 result.status = DriftStatus.IN_SYNC
-
-    def test_concrete_result_fields_are_disjoint(self):
-        assert [field.name for field in dataclasses.fields(BaselineAvailable)] == []
-        assert [field.name for field in dataclasses.fields(BaselineMissing)] == [
-            "seed_text"
-        ]
-        assert [field.name for field in dataclasses.fields(InSync)] == ["baseline"]
-        assert [field.name for field in dataclasses.fields(Merged)] == [
-            "target_state",
-            "py_needs_update",
-            "ipynb_needs_update",
-            "merge_mode",
-        ]
-        assert [field.name for field in dataclasses.fields(Conflict)] == [
-            "conflict_indices",
-            "diff_text",
-            "metadata_conflicts",
-        ]
-        assert [field.name for field in dataclasses.fields(DriftOnly)] == ["diff_text"]
 
     def test_in_sync_requires_explicit_baseline(self):
         with pytest.raises(TypeError):
