@@ -1,10 +1,14 @@
 """Py/ipynb pair drift checks and synchronization for agent hooks."""
 
+from __future__ import annotations
+
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
+if TYPE_CHECKING:
+    from jupyter_jcli.diff import Conflict
 
 from .decision import HookOutcome
 
@@ -37,6 +41,8 @@ def _run_pre_drift_check(path: Path, logger=None) -> str | None:
 
     if not py_path.exists() or not ipynb_path.exists():
         return None
+
+    from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 
     try:
         from jupyter_jcli.pairing import synchronize_pair
@@ -204,6 +210,7 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
         return None
 
     from jupyter_jcli import pair_baseline
+    from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 
     old_baseline_text = pair_baseline.read_baseline(py_path, strict=True)
     try:

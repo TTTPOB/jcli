@@ -123,6 +123,74 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
+const pre = (toolName, args) => hooks["tool.execute.before"](
+  { tool: toolName }, { args },
+)
+const post = (toolName, args, output = { output: "done" }) =>
+  hooks["tool.execute.after"]({ tool: toolName, args }, output)
+const guardsSince = (start) => calls().slice(start).map((call) => call.argv[1])
+
+test("edit and write skip unrelated paths but retain malformed diagnostics", async () => {
+  const start = calls().length
+  for (const filePath of ["notes.txt", "folder/."]) {
+    await pre("edit", { filePath })
+    await post("write", { filePath })
+  }
+  expect(guardsSince(start)).toEqual([])
+
+  for (const filePath of ["analysis.py", "analysis.ipynb"]) {
+    await pre("edit", { filePath })
+    await post("write", { filePath })
+  }
+  expect(guardsSince(start)).toEqual([
+    "pair-drift-guard-pre", "pair-drift-guard-post",
+    "pair-drift-guard-pre",
+  ])
+
+  for (const filePath of [undefined, "", 17]) {
+    await pre("write", { filePath })
+    await post("edit", { filePath })
+  }
+  expect(guardsSince(start).slice(3)).toEqual([
+    "pair-drift-guard-pre", "pair-drift-guard-post",
+    "pair-drift-guard-pre", "pair-drift-guard-post",
+    "pair-drift-guard-pre", "pair-drift-guard-post",
+  ])
+})
+
+test("apply_patch filters only explicit file directives and retains original patch", async () => {
+  const start = calls().length
+  const text = "*** Begin Patch\n*** Update File: notes.txt\n+print('analysis.py')\n*** End Patch"
+  await pre("apply_patch", { patchText: text })
+  await post("apply_patch", { patchText: text })
+  expect(guardsSince(start)).toEqual([])
+
+  const mixed = "*** Begin Patch\n*** Add File: notes.txt\n*** Update File: analysis.py\n*** End Patch"
+  await pre("apply_patch", { patchText: mixed })
+  await post("apply_patch", { patchText: mixed })
+  const notebookMove = "**_ Update File: notes.txt\n**_ Move to: analysis.ipynb"
+  await pre("apply_patch", { patchText: notebookMove })
+  await post("apply_patch", { patchText: notebookMove })
+  const pythonMove = "*** Update File: notes.txt\n*** Move to: analysis.py"
+  await pre("apply_patch", { patchText: pythonMove })
+  await post("apply_patch", { patchText: pythonMove })
+  expect(guardsSince(start)).toEqual([
+    "pair-drift-guard-pre", "pair-drift-guard-post",
+    "pair-drift-guard-pre", "pair-drift-guard-pre",
+    "pair-drift-guard-post",
+  ])
+  expect(calls().slice(start).map((call) => call.payload.tool_input.command[1])).toEqual([
+    mixed, mixed, notebookMove, pythonMove, pythonMove,
+  ])
+
+  for (const patchText of [undefined, 42, "", "*** Begin Patch\n*** End Patch", "*** Add File: "]) {
+    await pre("apply_patch", { patchText })
+    await post("apply_patch", { patchText })
+  }
+  expect(guardsSince(start).slice(5)).toEqual(Array.from({ length: 10 }, (_, i) =>
+    i % 2 === 0 ? "pair-drift-guard-pre" : "pair-drift-guard-post"))
+})
+
 test("registers a directory/read tool using invocation cwd and read permission", async () => {
   permissions = []
   writeResponse({

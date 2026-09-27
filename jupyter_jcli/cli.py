@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from functools import cached_property
 from importlib import import_module
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -124,13 +124,22 @@ def _ensure_no_proxy(server_url: str) -> None:
             os.environ["NO_PROXY"] = new
 
 
-@dataclass
 class CliContext:
     """Shared context passed to all commands."""
 
-    config: AppConfig
-    use_json: bool
-    server: ServerClient
+    def __init__(
+        self, config: AppConfig, use_json: bool, server: ServerClient | None = None
+    ) -> None:
+        self.config = config
+        self.use_json = use_json
+        if server is not None:
+            self.server = server
+
+    @cached_property
+    def server(self) -> ServerClient:
+        from jupyter_jcli.server import ServerClient
+
+        return ServerClient(self.config.server_url, self.config.token)
 
 
 pass_ctx = click.make_pass_decorator(CliContext)
@@ -161,13 +170,7 @@ pass_ctx = click.make_pass_decorator(CliContext)
 @click.pass_context
 def main(ctx, server_url, token, use_json):
     """CLI tool for LLM agents to operate Jupyter Lab servers."""
-    from jupyter_jcli.server import ServerClient
-
     config = AppConfig.from_env(server_url=server_url, token=token)
     _ensure_no_proxy(config.server_url)
     ctx.ensure_object(dict)
-    ctx.obj = CliContext(
-        config=config,
-        use_json=use_json,
-        server=ServerClient(config.server_url, config.token),
-    )
+    ctx.obj = CliContext(config=config, use_json=use_json)

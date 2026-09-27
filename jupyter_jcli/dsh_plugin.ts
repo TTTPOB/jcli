@@ -1,6 +1,7 @@
 // Managed by j-cli setup dsh.
 
 import { randomUUID } from 'node:crypto'
+import { extname, resolve } from 'node:path'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 120_000
@@ -780,6 +781,16 @@ function registerOutputTool(ctx: Context, config: NormalizedConfig): void {
   })
 }
 
+/** Skip unrelated files without spawning Python; the CLI owns pair discovery and validation. */
+function needsPairGuard(exec: ToolExecution, phase: 'pre' | 'post'): boolean {
+  if (exec.name !== 'edit' && exec.name !== 'write') return false
+  const path = isRecord(exec.arguments) ? exec.arguments.file_path : undefined
+  // Let the CLI diagnose malformed payloads rather than silently skipping them.
+  if (typeof path !== 'string' || path.length === 0) return true
+  const suffix = extname(resolve(path))
+  return suffix === '.py' || (phase === 'pre' && suffix === '.ipynb')
+}
+
 export function apply(ctx: Context, config?: Config): void {
   ensureSandboxPolicy(ctx)
   const normalized = normalizeConfig(config)
@@ -799,7 +810,7 @@ export function apply(ctx: Context, config?: Config): void {
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision> => {
     const guards = exec.name === 'bash'
       ? [GUARDS.notebook, GUARDS.python]
-      : exec.name === 'edit' || exec.name === 'write'
+      : needsPairGuard(exec, 'pre')
         ? [GUARDS.pairPre]
         : []
     for (const guard of guards) {
@@ -821,14 +832,17 @@ export function apply(ctx: Context, config?: Config): void {
   ): Promise<PostToolDecision> => {
     if (exec.name !== 'edit' && exec.name !== 'write') return next()
 
-    const outcome = await runGuard(ctx, exec, normalized, GUARDS.pairPost, 'PostToolUse', false)
+    throwIfAborted(exec.signal)
+    const outcome = needsPairGuard(exec, 'post')
+      ? await runGuard(ctx, exec, normalized, GUARDS.pairPost, 'PostToolUse', false)
+      : undefined
     throwIfAborted(exec.signal)
     const downstream = await next()
     throwIfAborted(exec.signal)
-    if (outcome.kind === 'ok' && outcome.context !== undefined) {
+    if (outcome?.kind === 'ok' && outcome.context !== undefined) {
       return prependContext(makeContext(outcome.context), downstream)
     }
-    if (outcome.kind === 'failure') {
+    if (outcome?.kind === 'failure') {
       logFailure(ctx, outcome.diagnostic)
       return prependContext(makeContext(outcome.diagnostic), downstream)
     }

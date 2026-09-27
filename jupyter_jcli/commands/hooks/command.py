@@ -40,7 +40,6 @@ from .payload import (
     _extract_file_path_claude,
     _extract_file_paths_codex,
 )
-from .pre_commit import _run_pre_commit_pair_sync
 
 _T = TypeVar("_T")
 
@@ -632,6 +631,8 @@ def pre_commit_pair_sync(
         "pre-commit-pair-sync", enabled=debug, log_dir=ctx.config.debug_log_dir
     ) as log:
         try:
+            from .pre_commit import _run_pre_commit_pair_sync
+
             outcome = _run_pre_commit_pair_sync(include_globs)
         except Exception as exc:  # noqa: BLE001
             log.record_exception(exc)

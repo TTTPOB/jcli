@@ -357,6 +357,25 @@ export const JcliPlugin = async ({ client, directory }) => {
     cwd: directory,
   })
 
+  const relevantFilePath = (filePath, extensions) => {
+    if (typeof filePath !== "string" || !filePath.trim()) return true
+    return extensions.includes(path.extname(path.resolve(filePath)))
+  }
+
+  const relevantPatch = (patchText, extensions) => {
+    if (typeof patchText !== "string") return true
+    // Match only column-zero file directives, as in payload.py's Codex parser.
+    const directive = /^(?:\*{3}|\*{2}_) (?:Update|Add|Delete) File: |^(?:\*{3}|\*{2}_) Move to: /
+    let found = false
+    for (const line of patchText.split(/\r?\n/)) {
+      const match = directive.exec(line)
+      if (!match) continue
+      found = true
+      if (relevantFilePath(line.slice(match[0].length).trim(), extensions)) return true
+    }
+    return !found
+  }
+
   const patchPayload = (args, event) => ({
     hook_event_name: event,
     tool_name: "apply_patch",
@@ -386,11 +405,13 @@ export const JcliPlugin = async ({ client, directory }) => {
       }
 
       if (input.tool === "edit" || input.tool === "write") {
+        if (!relevantFilePath(output.args?.filePath, [".py", ".ipynb"])) return
         denyIfRequested(await runGuard("pair-drift-guard-pre", editPayload(input.tool, output.args), directory))
         return
       }
 
       if (input.tool === "apply_patch") {
+        if (!relevantPatch(output.args?.patchText, [".py", ".ipynb"])) return
         denyIfRequested(
           await runGuard("pair-drift-guard-pre", patchPayload(output.args, "PreToolUse"), directory, "codex"),
         )
@@ -400,6 +421,7 @@ export const JcliPlugin = async ({ client, directory }) => {
     "tool.execute.after": async (input, output) => {
       if (!enabledCapabilities.hook) return
       if (input.tool === "edit" || input.tool === "write") {
+        if (!relevantFilePath(input.args?.filePath, [".py"])) return
         const payload = editPayload(input.tool, input.args)
         payload.hook_event_name = "PostToolUse"
         appendContext(await runGuard("pair-drift-guard-post", payload, directory), output)
@@ -407,6 +429,7 @@ export const JcliPlugin = async ({ client, directory }) => {
       }
 
       if (input.tool === "apply_patch") {
+        if (!relevantPatch(input.args?.patchText, [".py"])) return
         appendContext(
           await runGuard("pair-drift-guard-post", patchPayload(input.args, "PostToolUse"), directory, "codex"),
           output,

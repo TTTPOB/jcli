@@ -1,9 +1,12 @@
 """CLI selectors, pair discovery, and format auto-detection."""
 
-from pathlib import Path
+from __future__ import annotations
 
-from jupyter_jcli.formats import ipynb, percent
-from jupyter_jcli.formats.model import ParsedFile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from jupyter_jcli.formats.model import ParsedFile
 
 
 def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
@@ -54,7 +57,11 @@ def find_pair(path: Path) -> Path | None:
 def parse_file(path: str) -> ParsedFile:
     """Parse a supported file and attach pair discovery information."""
     if path.endswith(".ipynb"):
+        from jupyter_jcli.formats import ipynb
+
         return ipynb.load(path)
+    from jupyter_jcli.formats import percent
+
     parsed = percent.load(path)
     py_path = Path(path)
     paired = find_paired_ipynb(py_path)

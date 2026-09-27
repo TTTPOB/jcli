@@ -391,6 +391,14 @@ runtime. The native adapter also exposes the single read-only
 Claude/Codex MCP integration; it invokes the installed `j-cli` and needs no
 separate MCP dependency installation.
 
+The native adapter skips pair-guard subprocesses for edits to files other than
+`.py` and `.ipynb`. Python edits retain pre/post checks; direct `.ipynb` edits
+retain the pre-hook refusal and need no post-hook synchronization. The CLI
+checks for a pair before loading notebook diff/sync dependencies, and hook
+commands do not initialize a Jupyter server client. Bash guards still inspect
+every command through the existing shell parser; batching edits with `run_code`
+does not bypass the guards for individual Python edits.
+
 Re-running `setup dsh` migrates a managed legacy bridge row in place to the
 native row. An old `.dsh/jcli-hooks.json` (or the global file with the same name)
 is cleaned only of j-cli-managed entries; user entries remain in place. If custom
@@ -419,7 +427,20 @@ The installer normally updates only files carrying the j-cli managed marker. `--
 
 The plugin covers OpenCode's `bash`, `edit`, `write`, and `apply_patch` tools. It resolves `bash` paths against the tool's `workdir`, passes edits through the existing j-cli guards, converts deny decisions into tool errors, and appends post-edit sync notices to the tool output. It also exposes the single read-only `read_notebook_output` tool, using OpenCode's normal read permission check and the shared list-or-read contract; it needs no separate MCP dependency installation.
 
+The plugin skips pair-guard subprocesses for unrelated file edits and text-only
+patches. A mixed `apply_patch` still passes the complete patch to the guard when
+any file needs checking, including rename destinations. Direct `.ipynb` edits
+retain their pre-hook refusal; only Python edits need post-hook synchronization.
+
 The plugin runs `j-cli` from `PATH`. Set `JCLI_BIN=/absolute/path/to/j-cli` before starting OpenCode when the executable is installed in another environment. Removing the plugin removes managed integration files only; it does not delete notebooks or saved output data.
+
+All integrations share the same lightweight CLI guard path: unrelated files
+and Python files without a pair return before loading notebook parsing or diff
+modules, and guards do not initialize a Jupyter server client. Claude Code and
+Codex command hooks still start the CLI; their tool-name matchers do not perform
+the native plugins' file-path filtering. No daemon or persistent guard cache is
+required. After upgrading, re-run the relevant `setup` command to refresh copied
+DSH/OpenCode plugins; existing Claude/Codex hook commands use the updated CLI.
 
 The internal `_hooks --platform` option selects the **hook input format**, not
 all supported integrations. It accepts `claude` (default), `codex`, and `dsh`;

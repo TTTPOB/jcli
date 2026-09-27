@@ -141,6 +141,57 @@ test('filters unrelated tools without invoking a guard', async () => {
   assert.equal(h.calls.length, 0)
 })
 
+test('unrelated file edits skip both guards and preserve downstream decisions', async () => {
+  const h = harness()
+  const pre = { kind: 'deny', reason: 'downstream policy' }
+  const post = { kind: 'block', feedback: [{ type: 'text', text: 'downstream feedback' }] }
+  let nextCalls = 0
+  for (const name of ['edit', 'write']) {
+    for (const file_path of ['notes.md', 'manifest.json', 'dir.py/notes.txt', 'book.py.bak']) {
+      const call = exec(name, { file_path })
+      assert.equal(await h.pre(call, async () => { nextCalls++; return pre }), pre)
+      assert.equal(await h.post(call, {}, async () => { nextCalls++; return post }), post)
+    }
+  }
+  assert.equal(nextCalls, 16)
+  assert.deepEqual(h.calls, [])
+})
+
+test('pair routing preserves notebook refusal and Python guards for normalized paths', async () => {
+  for (const [file_path, expectedGuards] of [
+    ['book.ipynb', ['pair-drift-guard-pre']],
+    ['book.ipynb/.', ['pair-drift-guard-pre']],
+    ['book.dummy.py', ['pair-drift-guard-pre', 'pair-drift-guard-post']],
+  ]) {
+    const h = harness({ results: [result(2, '', 'guard refusal')] })
+    const call = exec('edit', { file_path })
+    assert.deepEqual(await h.pre(call, async () => assert.fail('must deny')), {
+      kind: 'deny', reason: 'guard refusal',
+    })
+    await h.post(call, {}, async () => ({ kind: 'accept' }))
+    assert.deepEqual(h.calls.map(call => call.command), expectedGuards.map(guard => `j-cli _hooks ${guard} --platform dsh`))
+  }
+})
+
+test('malformed file paths still reach guard diagnostics', async () => {
+  const agent = makeAgent()
+  const h = harness({ results: [result(1, '', 'malformed hook payload')] })
+  await h.pre(exec('edit', { file_path: 42 }, { agent }), async () => ({ kind: 'allow' }))
+  assert.equal(h.calls.length, 1)
+  assert.match(textOf(agent.injected[0]), /malformed hook payload/)
+})
+
+test('skipped file guards still propagate cancellation', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const h = harness()
+  const call = exec('edit', { file_path: 'notes.md' }, { signal: controller.signal })
+  const next = async () => assert.fail('cancelled calls must not delegate')
+  await assert.rejects(h.pre(call, next), error => error.name === 'AbortError')
+  await assert.rejects(h.post(call, {}, next), error => error.name === 'AbortError')
+  assert.deepEqual(h.calls, [])
+})
+
 test('guards and notebook output await the shell execution result handle', async () => {
   let resultsRead = 0
   const h = harness({ shellRun: () => { resultsRead++; return result(0, JSON.stringify({ schema_version: 1, status: 'ok', outputs: [] })) } })
