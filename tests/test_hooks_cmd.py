@@ -136,7 +136,7 @@ def test_guard_decisions(command: str, should_deny: bool):
     ],
 )
 def test_malformed_stdin_fails(raw_input: str):
-    """Shared parse categories are exercised once, completely."""
+    """Shared JSON-shape parse failures are covered once for this guard."""
     runner = CliRunner()
     result = runner.invoke(
         main, ["_hooks", "notebook-exec-guard"], input=raw_input, catch_exceptions=False

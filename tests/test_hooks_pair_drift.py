@@ -406,22 +406,30 @@ class TestConflict:
 
 
 # ---------------------------------------------------------------------------
-# Fail-open on unexpected handler exceptions
+# Guard failures surface as visible operation failures
 # ---------------------------------------------------------------------------
 
 
-class TestFailOpen:
-    def test_drift_exception_allows(self, tmp_path):
+class TestVisibleOperationFailures:
+    def test_drift_exception_is_visible_failure(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
         with patch(
             "jupyter_jcli.commands.hooks.command._run_pre_drift_check",
             side_effect=RuntimeError("boom"),
         ):
-            code, out = _invoke(
-                {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+            result = CliRunner().invoke(
+                main,
+                ["_hooks", "pair-drift-guard-pre"],
+                input=json.dumps(
+                    {"tool_name": "Edit", "tool_input": {"file_path": str(py)}}
+                ),
+                catch_exceptions=False,
             )
-        assert code == 1
-        assert _decision(out) is None
+        assert result.exit_code == 1
+        assert "pair-drift-guard-pre: boom" in (result.stderr or result.output)
+        assert not any(
+            line.strip().startswith("{") for line in result.output.splitlines()
+        )
 
     def test_pre_baseline_read_failure_is_not_treated_as_missing(self, tmp_path):
         py, _ipynb = _make_pair(tmp_path, ["x = 1"], ["x = 1"])
