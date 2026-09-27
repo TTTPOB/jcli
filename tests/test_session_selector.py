@@ -374,7 +374,7 @@ def test_exec_and_vars_resolve_name_to_full_id(monkeypatch):
     )
     monkeypatch.setattr(
         "jupyter_jcli.kernel.execute_code",
-        lambda *args: {"status": "ok", "outputs": []},
+        lambda *args, **kwargs: {"status": "ok", "outputs": []},
     )
     monkeypatch.setattr(
         "jupyter_jcli.kernel.kernel_connection", lambda *args: nullcontext(object())

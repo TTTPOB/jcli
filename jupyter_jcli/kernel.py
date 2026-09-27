@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import urllib.request
+from collections.abc import Callable
 from contextlib import contextmanager, suppress
 from uuid import uuid4
 
@@ -95,6 +96,27 @@ class KernelInterruptFailed(RuntimeError):
     def __init__(self, message: str, partial_result: dict | None = None):
         super().__init__(message)
         self.partial_result = partial_result
+
+
+class ExecutionObserverError(RuntimeError):
+    """An observer failed after execution was drained to a safe boundary."""
+
+    def __init__(
+        self,
+        observer_error: Exception,
+        result: dict | None,
+        kernel_error: Exception | None = None,
+    ) -> None:
+        message = f"Execution observer failed: {observer_error}"
+        if kernel_error is not None:
+            message += f"; execution also failed: {kernel_error}"
+        super().__init__(message)
+        self.observer_error = observer_error
+        self.result = result
+        self.kernel_error = kernel_error
+
+
+ExecutionObserver = Callable[[dict | None, list[dict], set[int], int | None], None]
 
 
 def _make_interrupt_handler(server_url: str, token: str | None, kernel_id: str):
@@ -335,6 +357,7 @@ def execute_with_timeout(
     store_history: bool = True,
     user_expressions: dict | None = None,
     stop_on_error: bool = True,
+    observer: ExecutionObserver | None = None,
 ) -> dict:
     """Execute code and interrupt the remote kernel when the deadline expires."""
     if timeout <= 0:
@@ -348,6 +371,7 @@ def execute_with_timeout(
     deadline = time.monotonic() + timeout
     outputs: list[dict] = []
     reply: dict | None = None
+    execution_count: int | None = None
     idle_seen = False
     timed_out = False
     recovery_deadline: float | None = None
@@ -375,38 +399,109 @@ def execute_with_timeout(
             return None
         for output in outputs:
             output.pop("transient", None)
+        reply_count = (reply or {}).get("content", {}).get("execution_count")
         return {
-            "execution_count": (reply or {}).get("content", {}).get("execution_count"),
+            "execution_count": (
+                reply_count if reply_count is not None else execution_count
+            ),
             "outputs": outputs,
             "status": "error",
         }
 
+    observer_error: Exception | None = None
+    observer_interrupt_sent = False
+    pending_clear = False
+
+    def notify(message: dict | None, changed_indices: set[int] | None = None) -> None:
+        nonlocal observer_error
+        if observer is None or silent or observer_error is not None:
+            return
+        try:
+            observer(message, outputs, changed_indices or set(), execution_count)
+        except Exception as exc:  # noqa: BLE001 - drain the kernel before surfacing
+            observer_error = exc
+
+    def observe_iopub(message: dict) -> None:
+        nonlocal execution_count, pending_clear
+        msg_type = message.get("header", {}).get("msg_type")
+        content = message.get("content", {})
+        if msg_type in ("execute_input", "execute_result"):
+            count = content.get("execution_count")
+            if count is not None:
+                execution_count = count
+
+        if msg_type == "clear_output":
+            if content.get("wait", False):
+                pending_clear = True
+                notify(message)
+                return
+            pending_clear = False
+
+        output_messages = {
+            "stream",
+            "execute_result",
+            "display_data",
+            "error",
+        }
+        if pending_clear and msg_type in output_messages:
+            clear_message = {
+                "header": {"msg_type": "clear_output"},
+                "content": {"wait": False},
+            }
+            changed = output_hook(outputs, clear_message)
+            pending_clear = False
+            notify(clear_message, changed)
+
+        changed = output_hook(outputs, message)
+        notify(message, changed)
+
     while True:
         now = time.monotonic()
-        active_deadline = recovery_deadline if timed_out else deadline
+        active_deadline = (
+            recovery_deadline if timed_out or observer_interrupt_sent else deadline
+        )
         assert active_deadline is not None
         remaining = active_deadline - now
 
         if remaining <= 0:
-            if timed_out:
-                raise KernelInterruptFailed(
-                    "Execution deadline expired; the kernel did not return to idle "
-                    f"within {_KERNEL_INTERRUPT_RECOVERY_TIMEOUT:g} seconds",
+            if timed_out or observer_interrupt_sent:
+                reason = (
+                    "Observer failed; the kernel did not return to idle"
+                    if observer_interrupt_sent and not timed_out
+                    else "Execution deadline expired; the kernel did not return to idle"
+                )
+                error = KernelInterruptFailed(
+                    f"{reason} within {_KERNEL_INTERRUPT_RECOVERY_TIMEOUT:g} seconds",
                     partial_result(),
                 )
+                if observer_error is not None:
+                    raise ExecutionObserverError(
+                        observer_error, error.partial_result, error
+                    ) from observer_error
+                raise error
             if idle_seen:
-                raise ExecutionTimeout(
+                error = ExecutionTimeout(
                     "Execution deadline expired while waiting for the execute reply; "
                     "the kernel returned to idle",
                     partial_result(),
                 )
+                if observer_error is not None:
+                    raise ExecutionObserverError(
+                        observer_error, error.partial_result, error
+                    ) from observer_error
+                raise error
             try:
                 kernel.interrupt(timeout=2)
             except Exception as exc:
-                raise KernelInterruptFailed(
+                error = KernelInterruptFailed(
                     f"Execution deadline expired and the kernel interrupt failed: {exc}",
                     partial_result(),
-                ) from exc
+                )
+                if observer_error is not None:
+                    raise ExecutionObserverError(
+                        observer_error, error.partial_result, error
+                    ) from observer_error
+                raise error from exc
             timed_out = True
             recovery_deadline = time.monotonic() + _KERNEL_INTERRUPT_RECOVERY_TIMEOUT
             continue
@@ -417,8 +512,11 @@ def execute_with_timeout(
         except (queue.Empty, TimeoutError):
             msg = None
 
-        if msg is not None and msg.get("parent_header", {}).get("msg_id") == msg_id:
-            output_hook(outputs, msg)
+        matched_iopub = (
+            msg is not None and msg.get("parent_header", {}).get("msg_id") == msg_id
+        )
+        if matched_iopub:
+            observe_iopub(msg)
             if (
                 msg.get("header", {}).get("msg_type") == "status"
                 and msg.get("content", {}).get("execution_state") == "idle"
@@ -434,21 +532,63 @@ def execute_with_timeout(
             and shell_msg.get("parent_header", {}).get("msg_id") == msg_id
         ):
             reply = shell_msg
+            reply_count = shell_msg.get("content", {}).get("execution_count")
+            if reply_count is not None:
+                execution_count = reply_count
 
+        if not matched_iopub:
+            notify(None)
+
+        if (
+            observer_error is not None
+            and not observer_interrupt_sent
+            and not timed_out
+            and not idle_seen
+        ):
+            observer_interrupt_sent = True
+            try:
+                kernel.interrupt(timeout=2)
+            except Exception as exc:  # noqa: BLE001 - normalize interrupt failures
+                raise ExecutionObserverError(
+                    observer_error,
+                    partial_result(),
+                    KernelInterruptFailed(
+                        f"Observer failed and the kernel interrupt failed: {exc}",
+                        partial_result(),
+                    ),
+                ) from observer_error
+            recovery_deadline = time.monotonic() + _KERNEL_INTERRUPT_RECOVERY_TIMEOUT
+
+        if observer_interrupt_sent and idle_seen:
+            raise ExecutionObserverError(
+                observer_error, partial_result()
+            ) from observer_error
         if timed_out and idle_seen:
-            raise ExecutionTimeout(
+            error = ExecutionTimeout(
                 "Execution deadline expired; the kernel was interrupted and returned to idle",
                 partial_result(),
             )
+            if observer_error is not None:
+                raise ExecutionObserverError(
+                    observer_error, error.partial_result, error
+                ) from observer_error
+            raise error
         if not timed_out and idle_seen and reply is not None:
             for output in outputs:
                 output.pop("transient", None)
             content = reply["content"]
-            return {
-                "execution_count": content.get("execution_count"),
+            result = {
+                "execution_count": (
+                    content.get("execution_count")
+                    if content.get("execution_count") is not None
+                    else execution_count
+                ),
                 "outputs": outputs,
                 "status": content["status"],
             }
+            if observer_error is not None:
+                raise ExecutionObserverError(observer_error, result) from observer_error
+            return result
 
 
 def execute_code(
@@ -458,6 +598,8 @@ def execute_code(
     code: str,
     timeout: int = 300,
     display_mode: str = "last_expr",
+    *,
+    observer: ExecutionObserver | None = None,
 ) -> dict:
     """Execute code in a kernel and return raw result.
 
@@ -470,4 +612,4 @@ def execute_code(
     ):
         deadline = time.monotonic() + timeout
         remaining = max(deadline - time.monotonic(), 0)
-        return execute_with_timeout(kernel, code, timeout=remaining)
+        return execute_with_timeout(kernel, code, timeout=remaining, observer=observer)

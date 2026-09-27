@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import click
@@ -11,7 +12,11 @@ from jupyter_jcli._enums import ResponseStatus
 from jupyter_jcli.cli import CliContext, pass_ctx
 from jupyter_jcli.commands._display import display_path
 from jupyter_jcli.commands._server_errors import server_error_code
-from jupyter_jcli.executor import format_outputs_human, process_outputs
+from jupyter_jcli.executor import (
+    format_outputs_human,
+    process_outputs,
+    summarize_outputs,
+)
 from jupyter_jcli.notebook_writer import write_outputs_to_notebook
 from jupyter_jcli.output import emit, emit_error
 from jupyter_jcli.session_selector import SessionSelectorError
@@ -35,6 +40,12 @@ if TYPE_CHECKING:
     help="IPython expression display mode for code and file execution",
 )
 @click.option(
+    "--stream/--no-stream",
+    default=True,
+    show_default=True,
+    help="Show human output live and periodically save notebook output",
+)
+@click.option(
     "--timeout",
     default=None,
     type=int,
@@ -53,6 +64,7 @@ def exec_cmd(
     cell: str | None,
     display_mode: str,
     timeout: int | None,
+    stream: bool,
 ):
     """Execute code in a session selected by ID, short ID, or name.
 
@@ -75,25 +87,44 @@ def exec_cmd(
 
     # Direct code execution
     if code:
-        _exec_code(ctx, kernel_id, code, display_mode, timeout)
+        _exec_code(ctx, kernel_id, code, display_mode, timeout, stream)
         return
 
     # File-based execution
-    _exec_file(ctx, kernel_id, file_path, cell, display_mode, timeout)
+    _exec_file(ctx, kernel_id, file_path, cell, display_mode, timeout, stream)
 
 
 def _exec_code(
-    ctx: CliContext, kernel_id: str, code: str, display_mode: str, timeout: int | None
+    ctx: CliContext,
+    kernel_id: str,
+    code: str,
+    display_mode: str,
+    timeout: int | None,
+    stream: bool,
 ):
     """Execute inline code."""
     try:
         from jupyter_jcli.kernel import (
+            ExecutionObserverError,
             ExecutionTimeout,
             KernelInterruptFailed,
             execute_code,
         )
 
+        live_output = None
+        if stream and not ctx.use_json:
+            from jupyter_jcli.streaming import HumanOutputStreamer
+
+            live_output = HumanOutputStreamer()
+
+        observer = None
+        if live_output is not None:
+            observer = lambda message, outputs, changed, count: live_output.observe(
+                None, message, outputs, changed, count
+            )
+
         execution_error = None
+        observer_failure = None
         try:
             result = execute_code(
                 ctx.config.server_url,
@@ -102,7 +133,17 @@ def _exec_code(
                 code,
                 timeout if timeout is not None else 10,
                 display_mode,
+                observer=observer,
             )
+        except ExecutionObserverError as error:
+            if error.result is None:
+                raise
+            observer_failure = error
+            result = error.result
+            if isinstance(
+                error.kernel_error, (ExecutionTimeout, KernelInterruptFailed)
+            ):
+                execution_error = error.kernel_error
         except (ExecutionTimeout, KernelInterruptFailed) as error:
             if error.partial_result is None:
                 raise
@@ -112,7 +153,12 @@ def _exec_code(
         from jupyter_jcli.outputs.store import persist_inline_outputs
 
         stored = persist_inline_outputs(raw_outputs)
-        outputs = stored.outputs if stored is not None else process_outputs(raw_outputs)
+        if stored is not None:
+            outputs = stored.outputs
+        elif live_output is not None:
+            outputs = summarize_outputs(raw_outputs)
+        else:
+            outputs = process_outputs(raw_outputs)
         status = (
             ResponseStatus.OK if result.get("status") == "ok" else ResponseStatus.ERROR
         )
@@ -122,6 +168,19 @@ def _exec_code(
 
         if ctx.use_json:
             emit(response, use_json=True)
+        elif live_output is not None:
+            live_output.finish_inline(
+                raw_outputs,
+                outputs,
+                output_manifest=str(stored.manifest_path)
+                if stored is not None
+                else None,
+            )
+            if live_output.truncated and stored is None:
+                stored = persist_inline_outputs(raw_outputs, text_budget=0)
+                if stored is not None:
+                    response["output_manifest"] = str(stored.manifest_path)
+                    live_output.report_outputs_saved(str(stored.manifest_path))
         else:
             text = format_outputs_human(outputs)
             if stored is not None:
@@ -130,6 +189,8 @@ def _exec_code(
             if text:
                 emit({"_human": text}, use_json=False)
 
+        if observer_failure is not None:
+            _emit_execution_error(ctx, observer_failure)
         if execution_error is not None:
             _emit_execution_error(ctx, execution_error)
         if status != ResponseStatus.OK:
@@ -146,6 +207,7 @@ def _exec_file(
     cell_spec: str | None,
     display_mode: str,
     timeout: int | None,
+    stream: bool,
 ):
     """Execute cells from a file.
 
@@ -155,6 +217,23 @@ def _exec_file(
     """
     try:
         from jupyter_jcli.file_execution import execute_file
+        from jupyter_jcli.streaming import HumanOutputStreamer
+
+        live_output = HumanOutputStreamer() if stream and not ctx.use_json else None
+        observer = None
+        if live_output is not None:
+
+            def observe_cell(
+                cell_index, message, outputs, changed_indices, execution_count
+            ):
+                live_output.observe(
+                    cell_index, message, outputs, changed_indices, execution_count
+                )
+
+            observer = observe_cell
+
+        def emit_cell(event):
+            _emit_file_cell_result(ctx, event, live_output=live_output)
 
         summary = execute_file(
             ctx.config.server_url,
@@ -164,8 +243,11 @@ def _exec_file(
             cell_spec,
             display_mode,
             timeout,
-            on_cell=lambda event: _emit_file_cell_result(ctx, event),
+            on_cell=emit_cell,
+            on_cell_start=(live_output.start_cell if live_output is not None else None),
+            observer=observer,
             writeback=write_outputs_to_notebook,
+            periodic_writeback=stream,
         )
         if ctx.use_json:
             summary_data = {"cells_executed": summary.cells_executed}
@@ -186,7 +268,11 @@ def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
         OutputSummaryError,
         TotalExecutionTimeout,
     )
-    from jupyter_jcli.kernel import ExecutionTimeout, KernelInterruptFailed
+    from jupyter_jcli.kernel import (
+        ExecutionObserverError,
+        ExecutionTimeout,
+        KernelInterruptFailed,
+    )
     from jupyter_jcli.outputs.store import OutputStoreError
 
     if isinstance(error, OutputStoreError):
@@ -209,6 +295,12 @@ def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
         emit_error("OUTPUT_SUMMARY_FAILED", str(error), ctx.use_json)
     if isinstance(error, NoCodeCellsError):
         emit_error("PARSE_ERROR", str(error), ctx.use_json)
+    if isinstance(error, ExecutionObserverError):
+        if isinstance(error.kernel_error, ExecutionTimeout):
+            emit_error("TIMEOUT", str(error), ctx.use_json)
+        if isinstance(error.kernel_error, KernelInterruptFailed):
+            emit_error("INTERRUPT_FAILED", str(error), ctx.use_json)
+        emit_error("EXECUTION_ERROR", str(error), ctx.use_json)
     if isinstance(error, ExecutionTimeout):
         emit_error("TIMEOUT", str(error), ctx.use_json)
     if isinstance(error, TotalExecutionTimeout):
@@ -220,7 +312,12 @@ def _emit_execution_error(ctx: CliContext, error: Exception) -> None:
     emit_error("EXECUTION_ERROR", str(error), ctx.use_json)
 
 
-def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
+def _emit_file_cell_result(
+    ctx: CliContext,
+    event: FileCellEvent,
+    *,
+    live_output=None,
+) -> None:
     if ctx.use_json:
         cell_payload = {
             "cell_index": event.cell_index,
@@ -241,6 +338,34 @@ def _emit_file_cell_result(ctx: CliContext, event: FileCellEvent) -> None:
         if event.output_manifest:
             data["output_manifest"] = event.output_manifest
         _emit_jsonl(data)
+        return
+
+    if live_output is not None:
+        location = event.output_manifest
+        if event.notebook_updated:
+            notebook_cell_index = (
+                event.notebook_cell_index
+                if event.notebook_cell_index is not None
+                else event.cell_index
+            )
+            location = f"{event.notebook_updated}#cell={notebook_cell_index}"
+        live_output.finish_cell(
+            replace(
+                event,
+                notebook_created=(
+                    display_path(event.notebook_created)
+                    if event.notebook_created
+                    else None
+                ),
+            ),
+            location=location,
+        )
+        if live_output.truncated and location is None:
+            from jupyter_jcli.outputs.store import persist_inline_outputs
+
+            stored = persist_inline_outputs(event.raw_outputs, text_budget=0)
+            if stored is not None:
+                live_output.report_outputs_saved(str(stored.manifest_path))
         return
 
     parts = [f"--- cell {event.cell_index} ---"]

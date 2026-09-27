@@ -545,6 +545,171 @@ class TestExecutionTimeoutUnit:
         assert client.execute_calls == []
         assert kernel.interrupt_calls == 0
 
+    def test_output_observer_tracks_clear_wait_and_display_updates(self):
+        from copy import deepcopy
+
+        from jupyter_jcli.kernel import execute_with_timeout
+
+        client = _ExecutionClient(
+            iopub_after_execute=[
+                _kernel_message(
+                    "display_data",
+                    data={"text/plain": "old"},
+                    metadata={},
+                    transient={"display_id": "display-1"},
+                ),
+                _kernel_message(
+                    "update_display_data",
+                    data={"text/plain": "new"},
+                    metadata={},
+                    transient={"display_id": "display-1"},
+                ),
+                _kernel_message("clear_output", wait=True),
+                _kernel_message("stream", name="stdout", text="after clear\\n"),
+                _kernel_message("status", execution_state="idle"),
+            ],
+            shell_after_execute=[
+                _kernel_message("execute_reply", status="ok", execution_count=8)
+            ],
+        )
+        observations = []
+
+        def observe(message, outputs, changed, execution_count):
+            observations.append(
+                (
+                    message,
+                    deepcopy(outputs),
+                    changed,
+                    execution_count,
+                )
+            )
+
+        result = execute_with_timeout(
+            _ExecutionKernel(client), "display()", timeout=1, observer=observe
+        )
+
+        update = next(
+            item
+            for item in observations
+            if item[0] and item[0]["header"]["msg_type"] == "update_display_data"
+        )
+        assert update[1][0]["data"] == {"text/plain": "new"}
+        deferred_clear = next(
+            item
+            for item in observations
+            if item[0]
+            and item[0]["header"]["msg_type"] == "clear_output"
+            and item[0]["content"].get("wait") is True
+        )
+        assert len(deferred_clear[1]) == 1
+        applied_clear = next(
+            item
+            for item in observations
+            if item[0]
+            and item[0]["header"]["msg_type"] == "clear_output"
+            and item[0]["content"].get("wait") is False
+        )
+        assert applied_clear[1] == []
+        assert result["execution_count"] == 8
+        assert result["outputs"] == [
+            {"output_type": "stream", "name": "stdout", "text": "after clear\\n"}
+        ]
+
+    def test_wait_clear_does_not_erase_display_update(self):
+        from jupyter_jcli.kernel import execute_with_timeout
+
+        client = _ExecutionClient(
+            iopub_after_execute=[
+                _kernel_message(
+                    "display_data",
+                    data={"text/plain": "old"},
+                    metadata={},
+                    transient={"display_id": "d"},
+                ),
+                _kernel_message("clear_output", wait=True),
+                _kernel_message(
+                    "update_display_data",
+                    data={"text/plain": "new"},
+                    metadata={},
+                    transient={"display_id": "d"},
+                ),
+                _kernel_message("status", execution_state="idle"),
+            ],
+            shell_after_execute=[_kernel_message("execute_reply", status="ok")],
+        )
+        result = execute_with_timeout(_ExecutionKernel(client), "pass", timeout=1)
+        assert result["outputs"][0]["data"]["text/plain"] == "new"
+
+    def test_observer_failure_drains_execution_before_raising(self):
+        from jupyter_jcli.kernel import ExecutionObserverError, execute_with_timeout
+
+        client = _ExecutionClient(
+            iopub_after_execute=[
+                _kernel_message("stream", name="stdout", text="before failure\\n"),
+                _kernel_message("status", execution_state="idle"),
+            ],
+            shell_after_execute=[
+                _kernel_message("execute_reply", status="ok", execution_count=9)
+            ],
+        )
+        kernel = _ExecutionKernel(client)
+
+        def fail_observer(*_args):
+            raise OSError("checkpoint failed")
+
+        with pytest.raises(ExecutionObserverError, match="checkpoint failed") as caught:
+            execute_with_timeout(
+                kernel, "print('x')", timeout=1, observer=fail_observer
+            )
+
+        assert caught.value.result["status"] == "error"
+        assert caught.value.result["execution_count"] == 9
+        assert caught.value.kernel_error is None
+        assert kernel.interrupt_calls == 1
+        assert client.iopub_channel.messages.empty()
+
+    def test_observer_interrupt_failure_keeps_original_error(self):
+        from jupyter_jcli.kernel import (
+            ExecutionObserverError,
+            KernelInterruptFailed,
+            execute_with_timeout,
+        )
+
+        client = _ExecutionClient(
+            iopub_after_execute=[_kernel_message("stream", name="stdout", text="x")]
+        )
+        kernel = _ExecutionKernel(client, interrupt_error=OSError("interrupt refused"))
+
+        def fail(*_args):
+            raise OSError("checkpoint failed")
+
+        with pytest.raises(ExecutionObserverError, match="checkpoint failed") as caught:
+            execute_with_timeout(kernel, "pass", timeout=1, observer=fail)
+        assert isinstance(caught.value.kernel_error, KernelInterruptFailed)
+        assert "interrupt refused" in str(caught.value)
+        assert kernel.interrupt_calls == 1
+
+    def test_silent_execution_does_not_notify_observer(self):
+        from jupyter_jcli.kernel import execute_with_timeout
+
+        client = _ExecutionClient(
+            iopub_after_execute=[_kernel_message("status", execution_state="idle")],
+            shell_after_execute=[
+                _kernel_message("execute_reply", status="ok", execution_count=1)
+            ],
+        )
+        observed = []
+        result = execute_with_timeout(
+            _ExecutionKernel(client),
+            "setup()",
+            timeout=1,
+            silent=True,
+            observer=lambda *args: observed.append(args),
+        )
+
+        assert result["status"] == "ok"
+        assert observed == []
+
 
 def test_file_timeout_marks_notebook_failure_and_unsent_keeps_outputs(tmp_path):
     from jupyter_jcli.file_execution import execute_file

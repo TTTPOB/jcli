@@ -3,6 +3,7 @@
 import json
 import os
 import textwrap
+import time
 
 from click.testing import CliRunner
 
@@ -37,6 +38,61 @@ class TestExecCode:
         )
         assert result.exit_code == 0
         assert "hello jcli" in result.output
+
+    def test_live_stream_does_not_repeat_completed_output(
+        self, live_session, mock_kernel_connection, monkeypatch
+    ):
+        from jupyter_jcli.streaming import HumanOutputStreamer
+
+        writes = []
+        original = HumanOutputStreamer._write_stdout
+
+        def record(text):
+            writes.append((time.monotonic(), text))
+            original(text)
+
+        monkeypatch.setattr(HumanOutputStreamer, "_write_stdout", staticmethod(record))
+        result = CliRunner().invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--code",
+                "import time; print('live-start', flush=True); time.sleep(0.4); print('live-end', flush=True)",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.output.count("live-start") == 1
+        assert result.output.count("live-end") == 1
+        first = min(stamp for stamp, text in writes if "live-start" in text)
+        last = min(stamp for stamp, text in writes if "live-end" in text)
+        assert last - first >= 0.15
+
+    def test_no_stream_keeps_completed_output_path(
+        self, live_session, mock_kernel_connection
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--code",
+                "print('completed-only')",
+                "--no-stream",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.output.count("completed-only") == 1
 
     def test_expression(self, live_session, mock_kernel_connection):
         runner = CliRunner()
@@ -242,6 +298,30 @@ class TestExecFile:
         )
         assert result.exit_code == 0
         assert "cell zero" in result.output
+
+    def test_live_file_stream_does_not_repeat_completed_outputs(
+        self, live_session, mock_kernel_connection, tmp_path
+    ):
+        script = tmp_path / "live_file.py"
+        script.write_text('# %%\nprint("file-live", flush=True)\n')
+
+        result = CliRunner().invoke(
+            main,
+            [
+                "-s",
+                live_session["url"],
+                "-t",
+                live_session["token"],
+                "exec",
+                live_session["session_id"],
+                "--file",
+                str(script),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.output.count("file-live") == 1
+        assert result.output.count("--- cell 0 ---") == 1
 
     def test_py_percent_cell_range(
         self, live_session, mock_kernel_connection, tmp_path

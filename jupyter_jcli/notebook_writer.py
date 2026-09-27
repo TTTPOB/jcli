@@ -1,5 +1,6 @@
 """Write execution outputs back to .ipynb files."""
 
+from copy import deepcopy
 from pathlib import Path
 
 import nbformat
@@ -35,8 +36,8 @@ def convert_to_nbformat_outputs(raw_outputs: list[dict]) -> list:
             nb_outputs.append(
                 nbformat.v4.new_output(
                     output_type=OutputType.EXECUTE_RESULT.value,
-                    data=output.get("data", {}),
-                    metadata=output.get("metadata", {}),
+                    data=deepcopy(output.get("data", {})),
+                    metadata=deepcopy(output.get("metadata", {})),
                     execution_count=output.get("execution_count"),
                 )
             )
@@ -45,8 +46,8 @@ def convert_to_nbformat_outputs(raw_outputs: list[dict]) -> list:
             nb_outputs.append(
                 nbformat.v4.new_output(
                     output_type=OutputType.DISPLAY_DATA.value,
-                    data=output.get("data", {}),
-                    metadata=output.get("metadata", {}),
+                    data=deepcopy(output.get("data", {})),
+                    metadata=deepcopy(output.get("metadata", {})),
                 )
             )
 

@@ -75,6 +75,10 @@ class FileExecutionSummary:
 
 
 CellEventSink = Callable[[FileCellEvent], None]
+CellStartSink = Callable[[int], None]
+CellExecutionObserver = Callable[
+    [int, dict | None, list[dict], set[int], int | None], None
+]
 NotebookWriteback = Callable[[str, list[dict]], str | None]
 
 
@@ -113,19 +117,27 @@ def _notebook_cell_targets(
     selected: list,
     ipynb_path: str | None,
     notebook_created: str | None,
-) -> dict[int, tuple[int, str | None]]:
+) -> dict[int, tuple[int, str | None, bool]]:
     """Validate selected sources and resolve write targets before execution."""
     if ipynb_path is None:
         return {}
     source_path = Path(file_path)
     if source_path.suffix == ".ipynb" or notebook_created is not None:
-        return {cell.index: (cell.index, cell.node.id) for cell in selected}
+        return {
+            cell.index: (
+                cell.index,
+                cell.node.id,
+                bool(cell.node.get("outputs", [])),
+            )
+            for cell in selected
+        }
     targets = {}
     for cell in selected:
         resolved = resolve_execution_notebook_cell(source_path, cell.index)
         targets[cell.index] = (
             resolved.notebook_cell_index,
             resolved.notebook_cell.node.id,
+            bool(resolved.notebook_cell.node.get("outputs", [])),
         )
     return targets
 
@@ -140,7 +152,10 @@ def execute_file(
     timeout: int | None,
     *,
     on_cell: CellEventSink | None = None,
+    on_cell_start: CellStartSink | None = None,
+    observer: CellExecutionObserver | None = None,
     writeback: NotebookWriteback | None = None,
+    periodic_writeback: bool = True,
 ) -> FileExecutionSummary:
     """Execute selected file cells while keeping the kernel context open.
 
@@ -150,12 +165,14 @@ def execute_file(
     error to a CLI response.
     """
     from jupyter_jcli.kernel import (
+        ExecutionObserverError,
         ExecutionTimeout,
         KernelInterruptFailed,
         execute_with_timeout,
         expression_display_mode,
         kernel_connection,
     )
+    from jupyter_jcli.streaming import NotebookCheckpoint
 
     parsed = parse_file(file_path)
     selected = _select_cells(parsed, cell_spec)
@@ -176,6 +193,46 @@ def execute_file(
     ):
         deadline = time.monotonic() + timeout if timeout is not None else None
         for cell in selected:
+            target = notebook_cell_targets.get(cell.index, (cell.index, None, False))
+            notebook_cell_index, expected_cell_id, had_saved_outputs = target
+            checkpoint = None
+            if ipynb_path and periodic_writeback:
+                checkpoint = NotebookCheckpoint(
+                    writeback,
+                    ipynb_path,
+                    notebook_cell_index,
+                    expected_cell_id,
+                    cell.source,
+                    had_saved_outputs=had_saved_outputs,
+                )
+
+            execute_observer = None
+            if checkpoint is not None or observer is not None:
+
+                def observe_update(
+                    message: dict | None,
+                    outputs: list[dict],
+                    changed_indices: set[int],
+                    execution_count: int | None,
+                    *,
+                    current_checkpoint=checkpoint,
+                    cell_index=cell.index,
+                ) -> None:
+                    if current_checkpoint is not None:
+                        current_checkpoint.observe(
+                            message, outputs, changed_indices, execution_count
+                        )
+                    if observer is not None:
+                        observer(
+                            cell_index,
+                            message,
+                            outputs,
+                            changed_indices,
+                            execution_count,
+                        )
+
+                execute_observer = observe_update
+
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -185,9 +242,27 @@ def execute_file(
             else:
                 remaining = 10
 
+            if on_cell_start is not None:
+                on_cell_start(cell.index)
+
             execution_error = None
+            observer_failure = None
             try:
-                result = execute_with_timeout(kernel, cell.source, timeout=remaining)
+                result = execute_with_timeout(
+                    kernel,
+                    cell.source,
+                    timeout=remaining,
+                    observer=execute_observer,
+                )
+            except ExecutionObserverError as error:
+                if error.result is None:
+                    raise
+                observer_failure = error
+                result = error.result
+                if isinstance(
+                    error.kernel_error, (ExecutionTimeout, KernelInterruptFailed)
+                ):
+                    execution_error = error.kernel_error
             except (ExecutionTimeout, KernelInterruptFailed) as error:
                 if error.partial_result is None:
                     raise
@@ -199,21 +274,19 @@ def execute_file(
                 else ResponseStatus.ERROR
             )
             raw_outputs = result.get("outputs", [])
-            if execution_error is not None and not any(
+            failure = observer_failure or execution_error
+            if failure is not None and not any(
                 output.get("output_type") == "error" for output in raw_outputs
             ):
                 raw_outputs.append(
                     {
                         "output_type": "error",
-                        "ename": type(execution_error).__name__,
-                        "evalue": str(execution_error),
+                        "ename": type(failure).__name__,
+                        "evalue": str(failure),
                         "traceback": [],
                     }
                 )
 
-            notebook_cell_index, expected_cell_id = notebook_cell_targets.get(
-                cell.index, (cell.index, None)
-            )
             cell_result = {
                 "cell_index": notebook_cell_index,
                 "expected_cell_id": expected_cell_id,
@@ -225,9 +298,14 @@ def execute_file(
 
             notebook_updated = None
             if ipynb_path:
-                notebook_updated = writeback(ipynb_path, [cell_result])
-                if notebook_updated is None:
-                    raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
+                try:
+                    notebook_updated = writeback(ipynb_path, [cell_result])
+                    if notebook_updated is None:
+                        raise RuntimeError(f"Notebook writeback failed: {ipynb_path}")
+                except Exception as error:
+                    if observer_failure is not None:
+                        raise observer_failure from error
+                    raise
                 last_notebook_updated = notebook_updated
 
             output_manifest = None
@@ -271,6 +349,12 @@ def execute_file(
                 on_cell(event)
             notebook_created = None
 
+            if observer_failure is not None:
+                if execution_error is not None:
+                    raise observer_failure from execution_error
+                if execution_status != ResponseStatus.OK:
+                    raise observer_failure from CellExecutionFailed(cell.index)
+                raise observer_failure
             if execution_error is not None:
                 raise execution_error
             if execution_status != ResponseStatus.OK:

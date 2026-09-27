@@ -2,6 +2,7 @@
 
 import json
 import textwrap
+from copy import deepcopy
 from unittest.mock import patch
 
 import nbformat
@@ -199,6 +200,105 @@ class TestPyPercentWriteback:
         updated_nb = nbformat.read(nb_path, as_version=4)
         assert any("first" in str(o) for o in updated_nb.cells[0].outputs)
         assert any("second" in str(o) for o in updated_nb.cells[1].outputs)
+
+    def test_no_stream_disables_periodic_notebook_writeback(
+        self, live_session, mock_kernel_connection, tmp_path, monkeypatch
+    ):
+        py_file = tmp_path / "no_stream.py"
+        py_file.write_text('# %%\nprint("completed-only")\n')
+        nb_path = tmp_path / "no_stream.ipynb"
+        nbformat.write(
+            nbformat.v4.new_notebook(
+                cells=[nbformat.v4.new_code_cell('print("completed-only")')]
+            ),
+            nb_path,
+        )
+        monkeypatch.setattr("jupyter_jcli.streaming.NOTEBOOK_CHECKPOINT_INTERVAL", 0)
+        calls = []
+        from jupyter_jcli.notebook_writer import (
+            write_outputs_to_notebook as real_writeback,
+        )
+
+        def recording_writeback(path, cell_results):
+            calls.append(cell_results[0])
+            return real_writeback(path, cell_results)
+
+        with patch(
+            "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook",
+            side_effect=recording_writeback,
+        ):
+            result = CliRunner().invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                    "--no-stream",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert result.output.count("completed-only") == 1
+        assert len(calls) == 1
+
+    def test_streaming_saves_notebook_during_a_running_cell(
+        self, live_session, mock_kernel_connection, tmp_path, monkeypatch
+    ):
+        py_file = tmp_path / "periodic.py"
+        py_file.write_text(
+            '# %%\nprint("checkpointed", flush=True)\n'
+            "import time; time.sleep(0.25); print('finished', flush=True)\n"
+        )
+        nb_path = tmp_path / "periodic.ipynb"
+        nb = nbformat.v4.new_notebook(
+            cells=[
+                nbformat.v4.new_code_cell(
+                    'print("checkpointed", flush=True)\n'
+                    "import time; time.sleep(0.25); print('finished', flush=True)"
+                )
+            ]
+        )
+        nbformat.write(nb, nb_path)
+
+        monkeypatch.setattr("jupyter_jcli.streaming.NOTEBOOK_CHECKPOINT_INTERVAL", 0.05)
+        writes = []
+        from jupyter_jcli.notebook_writer import (
+            write_outputs_to_notebook as real_writeback,
+        )
+
+        def recording_writeback(path, cell_results):
+            writes.append(deepcopy(cell_results[0]["raw_outputs"]))
+            return real_writeback(path, cell_results)
+
+        with patch(
+            "jupyter_jcli.commands.exec_cmd.write_outputs_to_notebook",
+            side_effect=recording_writeback,
+        ):
+            result = CliRunner().invoke(
+                main,
+                [
+                    "-s",
+                    live_session["url"],
+                    "-t",
+                    live_session["token"],
+                    "exec",
+                    live_session["session_id"],
+                    "--file",
+                    str(py_file),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert len(writes) >= 2
+        assert any("checkpointed" in str(output) for output in writes[0])
+        assert not any("finished" in str(output) for output in writes[0])
+        saved = nbformat.read(nb_path, as_version=4)
+        assert any("finished" in str(output) for output in saved.cells[0].outputs)
 
     def test_completed_cells_are_written_before_later_kernel_exception(
         self, live_session, mock_kernel_connection, tmp_path
@@ -593,3 +693,32 @@ class TestIpynbWriteback:
             if o.get("output_type") in ("display_data", "execute_result")
         )
         assert has_image
+
+
+def test_writeback_does_not_mutate_live_display_id(tmp_path):
+    nb_path = tmp_path / "live_display.ipynb"
+    cell = nbformat.v4.new_code_cell("display(value)", id="stable")
+    nbformat.write(nbformat.v4.new_notebook(cells=[cell]), nb_path)
+    output = {
+        "output_type": "display_data",
+        "data": {"text/plain": "before update"},
+        "metadata": {},
+        "transient": {"display_id": "display-1"},
+    }
+
+    write_outputs_to_notebook(
+        str(nb_path),
+        [
+            {
+                "cell_index": 0,
+                "expected_cell_id": "stable",
+                "expected_source": "display(value)",
+                "raw_outputs": [output],
+                "execution_count": 3,
+            }
+        ],
+    )
+
+    saved = nbformat.read(nb_path, as_version=4)
+    assert output["transient"] == {"display_id": "display-1"}
+    assert "transient" not in saved.cells[0].outputs[0]
