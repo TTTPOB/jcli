@@ -161,7 +161,7 @@ test('pair routing preserves notebook refusal and Python guards for normalized p
   for (const [file_path, expectedGuards] of [
     ['book.ipynb', ['pair-drift-guard-pre']],
     ['book.ipynb/.', ['pair-drift-guard-pre']],
-    ['book.dummy.py', ['pair-drift-guard-pre', 'pair-drift-guard-post']],
+    ['book.py', ['pair-drift-guard-pre', 'pair-drift-guard-post']],
   ]) {
     const h = harness({ results: [result(2, '', 'guard refusal')] })
     const call = exec('edit', { file_path })

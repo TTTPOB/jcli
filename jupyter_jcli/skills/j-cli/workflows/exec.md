@@ -91,7 +91,6 @@ When executing from a file, j-cli automatically writes each completed cell's out
 
 - `notebook.ipynb` → outputs written back to itself
 - `analysis.py` (py:percent) → outputs written to `analysis.ipynb`; **created automatically if it does not exist**
-- `analysis.dummy.py` (py:percent) → outputs written to `analysis.ipynb`; created automatically if absent
 - `script.py` (plain, no `# %%` markers or front matter) → short text stays inline; rich or oversized output gets an `output_manifest`; no `.ipynb` created
 
 A py:percent file is one that has at least one `# %%` cell marker or a `# ---` YAML front matter block. Plain scripts without these markers are not treated as notebooks.

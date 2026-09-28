@@ -57,3 +57,39 @@ def test_pair_discovery_ignores_non_python_file(tmp_path):
 
     assert find_paired_ipynb(markdown) is None
     assert find_pair(markdown) is None
+
+
+def test_pair_discovery_swaps_extension_for_same_stem(tmp_path):
+    py = tmp_path / "foo.py"
+    notebook = tmp_path / "foo.ipynb"
+    py.write_text("x = 1\n", encoding="utf-8")
+    notebook.write_text("{}", encoding="utf-8")
+
+    assert find_paired_ipynb(py) == notebook
+    assert find_pair(notebook) == py
+
+
+def test_dummy_name_is_not_special(tmp_path):
+    py = tmp_path / "foo.dummy.py"
+    plain_notebook = tmp_path / "foo.ipynb"
+    dummy_notebook = tmp_path / "foo.dummy.ipynb"
+    py.write_text("x = 1\n", encoding="utf-8")
+    plain_notebook.write_text("{}", encoding="utf-8")
+
+    assert find_paired_ipynb(py) is None
+
+    dummy_notebook.write_text("{}", encoding="utf-8")
+    assert find_paired_ipynb(py) == dummy_notebook
+
+
+def test_notebook_resolution_uses_same_stem_py_only(tmp_path):
+    notebook = tmp_path / "foo.ipynb"
+    plain_py = tmp_path / "foo.py"
+    dummy_py = tmp_path / "foo.dummy.py"
+    notebook.write_text("{}", encoding="utf-8")
+    dummy_py.write_text("x = 1\n", encoding="utf-8")
+
+    assert find_pair(notebook) is None
+
+    plain_py.write_text("x = 1\n", encoding="utf-8")
+    assert find_pair(notebook) == plain_py

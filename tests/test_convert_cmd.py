@@ -241,7 +241,8 @@ class TestIpynbToPy:
             py.read_text(encoding="utf-8")
         )
 
-    def test_dummy_ipynb_to_py_refreshes_baseline(self, git_repo):
+    def test_dummy_named_py_is_not_canonical_for_plain_ipynb(self, git_repo):
+        """nb.dummy.py pairs with nb.dummy.ipynb, so nb.ipynb is not its pair."""
         nb = _make_ipynb([("code", "x = 1", [])])
         ipynb = git_repo / "nb.ipynb"
         nbformat.write(nb, str(ipynb))
@@ -250,7 +251,8 @@ class TestIpynbToPy:
         result = _invoke("convert", "ipynb-to-py", str(ipynb), str(py))
 
         assert result.exit_code == 0
-        assert _has_ref(git_repo, "nb.dummy.py")
+        assert py.exists()
+        assert not _has_ref(git_repo, "nb.dummy.py")
 
     def test_noncanonical_ipynb_to_py_does_not_refresh_baseline(self, git_repo):
         nb = _make_ipynb([("code", "x = 1", [])])
@@ -427,13 +429,14 @@ class TestPyToIpynbCreate:
         assert out.exists()
 
     def test_dummy_py_default_output(self, tmp_path):
-        """foo.dummy.py -> foo.ipynb by default."""
+        """foo.dummy.py -> foo.dummy.ipynb by default; dummy is an ordinary name."""
         py = tmp_path / "foo.dummy.py"
         py.write_text("# %%\nx = 1\n", encoding="utf-8")
 
         result = _invoke("convert", "py-to-ipynb", str(py))
         assert result.exit_code == 0
-        assert (tmp_path / "foo.ipynb").exists()
+        assert (tmp_path / "foo.dummy.ipynb").exists()
+        assert not (tmp_path / "foo.ipynb").exists()
 
     def test_canonical_py_to_ipynb_refreshes_baseline(self, git_repo):
         py = git_repo / "script.py"

@@ -45,7 +45,6 @@ other cell magics are commented through the end of the cell.
 
 ## Pair naming
 
-- `analysis.py` (py:percent) pairs with `analysis.ipynb`.
-- `analysis.dummy.py` (py:percent) pairs with `analysis.ipynb`.
+- Pair discovery uses the same directory and filename, replacing only the extension: `analysis.py` (py:percent) pairs with `analysis.ipynb`.
 - A py:percent file has at least one `# %%` cell marker or a `# ---` YAML front matter block.
 - Plain scripts without these markers are not treated as notebooks during execution.

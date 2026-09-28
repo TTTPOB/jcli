@@ -131,19 +131,16 @@ original IPython syntax before sending code to a kernel.
 
 ## Pair Naming
 
-Pair discovery uses fixed names in the same directory:
+Pair discovery uses fixed names in the same directory: a `.py` file pairs with
+the `.ipynb` file that has the same name, differing only by extension.
 
 | Python path | Notebook path |
 | --- | --- |
 | `name.py` | `name.ipynb` |
-| `name.dummy.py` | `name.ipynb` |
+| `analysis.v2.py` | `analysis.v2.ipynb` |
 
-When resolving from `name.ipynb`, j-cli prefers `name.dummy.py` if it exists,
-then falls back to `name.py`. It does not search other directories or infer a
-pair from notebook metadata.
-
-The `.dummy.py` form lets a repository keep a Python representation without
-claiming that direct Python execution has notebook semantics.
+When resolving from `name.ipynb`, j-cli looks only for `name.py`. It does not
+search other directories or infer a pair from notebook metadata.
 
 ## Conversion
 

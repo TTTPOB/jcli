@@ -158,9 +158,7 @@ def py_to_ipynb(
 
     # Determine output path
     if out_ipynb is None:
-        stem = in_py_path.stem
-        stem = stem.removesuffix(".dummy")
-        out_ipynb = str(in_py_path.parent / f"{stem}.ipynb")
+        out_ipynb = str(ipynb_path_for_py(in_py_path))
 
     out_path = Path(out_ipynb)
 

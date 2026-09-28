@@ -569,7 +569,7 @@ Inline code and file execution default to `--display-mode last_expr`, matching V
 
 **Notebook writeback**: When executing from a py:percent file (one with `# %%` cell markers or a `# ---` front matter block), changed outputs are periodically written to the paired `.ipynb` after 10 seconds or 1 MiB of output-message changes; size-triggered saves are at least 1 second apart. Idle polling ticks can trigger a due save. Each completed cell is still fully written back after execution, including timeout partial outputs and errors. A writeback failure is reported; it is not treated as a successful save. If `analysis.ipynb` does not yet exist, j-cli creates it automatically before the first cell executes. Plain Python scripts without markers and inline `--code` have no notebook checkpoint target; their rich or oversized outputs use `output_manifest` storage after execution.
 
-**Convert baseline refresh**: When `j-cli convert` syncs a canonical managed pair (`foo.py` ↔ `foo.ipynb`, or `foo.dummy.py` ↔ `foo.ipynb`) inside a git repo, it also refreshes the sticky pair baseline under `refs/jcli/pair-sync/*`. This lets later drift checks compare against the last successful pair sync instead of falling back to an older `HEAD`.
+**Convert baseline refresh**: When `j-cli convert` syncs a canonical managed pair (`foo.py` ↔ `foo.ipynb`) inside a git repo, it also refreshes the sticky pair baseline under `refs/jcli/pair-sync/*`. This lets later drift checks compare against the last successful pair sync instead of falling back to an older `HEAD`.
 
 If you convert to a non-canonical output path such as `foo.py -> custom.ipynb` or `nb.ipynb -> custom.py`, j-cli treats that as an export/conversion only and does **not** refresh the sticky baseline.
 

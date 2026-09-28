@@ -772,10 +772,10 @@ class TestExecAutoCreatesIpynb:
             "plain script must NOT create .ipynb"
         )
 
-    def test_dummy_py_targets_correct_ipynb(
+    def test_dummy_py_targets_same_stem_ipynb(
         self, live_session, mock_kernel_connection, tmp_path
     ):
-        """foo.dummy.py should create foo.ipynb, not foo.dummy.ipynb."""
+        """foo.dummy.py is an ordinary name: it targets foo.dummy.ipynb."""
         runner = CliRunner()
         script = tmp_path / "analysis.dummy.py"
         script.write_text(
@@ -799,8 +799,10 @@ class TestExecAutoCreatesIpynb:
             ],
         )
         assert result.exit_code == 0
-        assert (tmp_path / "analysis.ipynb").exists(), "should create analysis.ipynb"
-        assert not (tmp_path / "analysis.dummy.ipynb").exists()
+        assert (tmp_path / "analysis.dummy.ipynb").exists(), (
+            "should create analysis.dummy.ipynb"
+        )
+        assert not (tmp_path / "analysis.ipynb").exists()
 
     def test_existing_ipynb_not_replaced(
         self, live_session, mock_kernel_connection, tmp_path

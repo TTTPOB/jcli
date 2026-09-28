@@ -28,10 +28,11 @@ def parse_cell_spec(spec: str, num_cells: int) -> list[int]:
 
 
 def ipynb_path_for_py(py_path: Path) -> Path:
-    """Compute the paired .ipynb path for a .py file."""
-    stem = py_path.stem
-    stem = stem.removesuffix(".dummy")
-    return py_path.parent / f"{stem}.ipynb"
+    """Compute the paired .ipynb path for a .py file.
+
+    Pairing is purely extension-based: the notebook shares the .py file name.
+    """
+    return py_path.with_suffix(".ipynb")
 
 
 def find_paired_ipynb(py_path: Path) -> Path | None:
@@ -45,11 +46,7 @@ def find_paired_ipynb(py_path: Path) -> Path | None:
 def find_pair(path: Path) -> Path | None:
     """Find the paired file for a .py or .ipynb path."""
     if path.suffix == ".ipynb":
-        stem = path.stem
-        dummy = path.parent / f"{stem}.dummy.py"
-        if dummy.exists():
-            return dummy
-        py_path = path.parent / f"{stem}.py"
+        py_path = path.with_suffix(".py")
         return py_path if py_path.exists() else None
     return find_paired_ipynb(path)
 
