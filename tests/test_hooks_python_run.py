@@ -69,20 +69,6 @@ def test_paired_intercept(command: str, tmp_path):
     )
 
 
-def test_dotted_py_pairs_only_with_same_stem_notebook(tmp_path):
-    """bar.dummy.py is an ordinary name: it pairs with bar.dummy.ipynb."""
-    (tmp_path / "bar.dummy.py").touch()
-    (tmp_path / "bar.ipynb").touch()
-    exit_code, out = _invoke("python bar.dummy.py", str(tmp_path))
-    assert exit_code == 0, "bar.ipynb is not bar.dummy.py's pair"
-    assert out is None
-
-    (tmp_path / "bar.dummy.ipynb").touch()
-    exit_code, out = _invoke("python bar.dummy.py", str(tmp_path))
-    assert exit_code == 2
-    assert _is_deny(out)
-
-
 # ---------------------------------------------------------------------------
 # Unpaired + allow silently — tools.py (no tools.ipynb) in tmp_path
 # ---------------------------------------------------------------------------

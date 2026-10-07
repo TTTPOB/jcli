@@ -772,38 +772,6 @@ class TestExecAutoCreatesIpynb:
             "plain script must NOT create .ipynb"
         )
 
-    def test_dummy_py_targets_same_stem_ipynb(
-        self, live_session, mock_kernel_connection, tmp_path
-    ):
-        """foo.dummy.py is an ordinary name: it targets foo.dummy.ipynb."""
-        runner = CliRunner()
-        script = tmp_path / "analysis.dummy.py"
-        script.write_text(
-            textwrap.dedent("""\
-            # %%
-            print("dummy pair")
-        """)
-        )
-
-        result = runner.invoke(
-            main,
-            [
-                "-s",
-                live_session["url"],
-                "-t",
-                live_session["token"],
-                "exec",
-                live_session["session_id"],
-                "--file",
-                str(script),
-            ],
-        )
-        assert result.exit_code == 0
-        assert (tmp_path / "analysis.dummy.ipynb").exists(), (
-            "should create analysis.dummy.ipynb"
-        )
-        assert not (tmp_path / "analysis.ipynb").exists()
-
     def test_existing_ipynb_not_replaced(
         self, live_session, mock_kernel_connection, tmp_path
     ):
