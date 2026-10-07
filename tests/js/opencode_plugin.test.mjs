@@ -103,6 +103,7 @@ beforeAll(async () => {
   project = path.join(root, "project")
   nested = path.join(project, "nested")
   mkdirSync(nested, { recursive: true })
+  writeFileSync(path.join(project, "analysis.ipynb"), "{}", "utf8")
   callsPath = path.join(root, "calls.jsonl")
   responsePath = path.join(root, "response.json")
   modePath = path.join(root, "mode")
