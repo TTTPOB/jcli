@@ -2,7 +2,8 @@
 
 The internal `j-cli _hooks` commands use process status as part of their hook
 contract. The status is independent from the optional JSON decision written to
-stdout.
+stdout. The `j-cli-hook` entry point preserves this contract; a skipped pair
+check returns `0` without output.
 
 | Exit code | Meaning | Hook behavior |
 | --- | --- | --- |
