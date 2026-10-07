@@ -42,7 +42,10 @@ class TestOpenCodeInstall:
             .joinpath("opencode_plugin.js")
             .read_text(encoding="utf-8")
         )
-        assert installed == packaged
+        from jupyter_jcli.commands.setup.plugin_source import inline_pair_guard
+
+        assert installed == inline_pair_guard(packaged)
+        assert "./pair_guard.js" not in installed
         assert "read_notebook_output" in installed
         assert 'from "@opencode-ai/plugin"' in installed
 

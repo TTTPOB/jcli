@@ -38,7 +38,7 @@ MANAGED_BLOCKS = (
         "PreToolUse",
         "Edit|Write",
         frozenset({"claude", "codex"}),
-        "j-cli _hooks pair-drift-guard-pre{platform_flag}",
+        "j-cli-hook pair-drift-guard-pre{platform_flag}",
         "pair-drift-guard-pre",
         frozenset({"pair-drift-guard"}),
     ),
@@ -54,7 +54,7 @@ MANAGED_BLOCKS = (
         "PostToolUse",
         "Edit|Write",
         frozenset({"claude", "codex"}),
-        "j-cli _hooks pair-drift-guard-post{platform_flag}",
+        "j-cli-hook pair-drift-guard-post{platform_flag}",
         "pair-drift-guard-post",
     ),
     HookBlock(

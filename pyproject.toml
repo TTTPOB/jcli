@@ -39,6 +39,7 @@ test = [
 
 [project.scripts]
 j-cli = "jupyter_jcli.cli:main"
+j-cli-hook = "jupyter_jcli.hook_entry:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["jupyter_jcli"]

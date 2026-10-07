@@ -1,6 +1,7 @@
 """Tests for hook handlers with --platform codex (apply_patch input parsing)."""
 
 import json
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -144,7 +145,7 @@ class TestExtractFilePathsCodex:
             },
         }
         result = _extract_file_paths_codex(payload)
-        assert result == ["foo.py"]
+        assert result == [str(Path("foo.py").absolute())]
 
     def test_string_command_fallback(self):
         payload = {
@@ -154,7 +155,7 @@ class TestExtractFilePathsCodex:
             },
         }
         result = _extract_file_paths_codex(payload)
-        assert result == ["bar.py"]
+        assert result == [str(Path("bar.py").absolute())]
 
     def test_no_command(self):
         assert _extract_file_paths_codex({}) == []

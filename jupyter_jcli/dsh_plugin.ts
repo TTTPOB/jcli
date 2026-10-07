@@ -1,7 +1,8 @@
 // Managed by j-cli setup dsh.
 
 import { randomUUID } from 'node:crypto'
-import { extname, resolve } from 'node:path'
+import { resolve } from 'node:path'
+import { needsPairGuardPayload } from './pair_guard.js'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 120_000
@@ -781,14 +782,14 @@ function registerOutputTool(ctx: Context, config: NormalizedConfig): void {
   })
 }
 
-/** Skip unrelated files without spawning Python; the CLI owns pair discovery and validation. */
+/** Check the sibling before starting Python, using the same cwd as requestFor. */
 function needsPairGuard(exec: ToolExecution, phase: 'pre' | 'post'): boolean {
   if (exec.name !== 'edit' && exec.name !== 'write') return false
-  const path = isRecord(exec.arguments) ? exec.arguments.file_path : undefined
-  // Let the CLI diagnose malformed payloads rather than silently skipping them.
-  if (typeof path !== 'string' || path.length === 0) return true
-  const suffix = extname(resolve(path))
-  return suffix === '.py' || (phase === 'pre' && suffix === '.ipynb')
+  return needsPairGuardPayload({
+    tool_name: exec.name,
+    tool_input: exec.arguments,
+    cwd: exec.agent?.session?.header.cwd ?? process.cwd(),
+  }, phase)
 }
 
 export function apply(ctx: Context, config?: Config): void {

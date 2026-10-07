@@ -39,6 +39,7 @@ from .common import (
     warn_global_conflicts,
 )
 from .hooks import clean_dsh_legacy_settings, load_dsh_legacy_settings
+from .plugin_source import inline_pair_guard
 
 _DSH_ROW_ID = "jcli-hooks"
 _DSH_MARKER_START = "# >>> jcli managed (dsh hooks) >>>"
@@ -532,7 +533,7 @@ def _plugin_resource_source(use_json: bool) -> str:
             f"jupyter_jcli/{_DSH_PLUGIN_RESOURCE}: missing managed header",
             use_json,
         )
-    return source
+    return inline_pair_guard(source)
 
 
 def _versioned_plugin_source(source: str, use_json: bool) -> str:

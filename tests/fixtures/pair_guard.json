@@ -1,0 +1,323 @@
+[
+  {
+    "name": "bare Python",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "bare.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": false,
+    "post": false
+  },
+  {
+    "name": "new Python with pair",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "pair.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "notebook",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "book.ipynb"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": false
+  },
+  {
+    "name": "unrelated",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "note.txt"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": false,
+    "post": false
+  },
+  {
+    "name": "nested cwd",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "pair.py"
+      },
+      "cwd": "$ROOT/nested"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "tool cwd",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "pair.py",
+        "workdir": "nested"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "absolute path",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "$ROOT/pair.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "path normalization",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "nested/../pair.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "not directory",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "blocked/file.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": false,
+    "post": false
+  },
+  {
+    "name": "stat uncertainty",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "loop.py"
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "multi-file pair last",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "*** Update File: bare.py\n*** Add File: note.txt\n*** Update File: pair.py"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "move target",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "*** Update File: note.txt\n*** Move to: pair.py"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "legacy target",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "**_ Update File: bare.py\n**_ Move to: pair.py"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "patch notebook",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "*** Add File: book.ipynb"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": false
+  },
+  {
+    "name": "patch bare",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "*** Add File: bare.py\n*** Update File: note.txt"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": false,
+    "post": false
+  },
+  {
+    "name": "content not directive",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "*** Add File: note.txt\n+*** Add File: pair.py"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": false,
+    "post": false
+  },
+  {
+    "name": "missing directives",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "apply_patch",
+          "broken patch"
+        ]
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "empty path",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": ""
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "invalid path",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": 42
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "missing field",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {}
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "missing args",
+    "payload": {
+      "tool_name": "Edit"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "invalid cwd",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "bare.py"
+      },
+      "cwd": 42
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "invalid workdir",
+    "payload": {
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "bare.py",
+        "workdir": 42
+      },
+      "cwd": "$ROOT"
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "not object",
+    "payload": [],
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "unknown tool",
+    "payload": {
+      "tool_name": "unknown",
+      "tool_input": {}
+    },
+    "pre": true,
+    "post": true
+  },
+  {
+    "name": "malformed patch argv",
+    "payload": {
+      "tool_name": "apply_patch",
+      "tool_input": {
+        "command": [
+          "wrong",
+          "*** Add File: bare.py"
+        ]
+      }
+    },
+    "pre": true,
+    "post": true
+  }
+]

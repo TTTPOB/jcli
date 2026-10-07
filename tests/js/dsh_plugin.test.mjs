@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import { apply, inject, name } from '../../jupyter_jcli/dsh_plugin.ts'
+
+const pairRoot = mkdtempSync(join(tmpdir(), 'jcli-pairs-'))
+writeFileSync(join(pairRoot, 'x.ipynb'), '{}')
+writeFileSync(join(pairRoot, 'book.ipynb'), '{}')
+after(() => rmSync(pairRoot, { recursive: true, force: true }))
 
 const pluginPath = new URL('../../jupyter_jcli/dsh_plugin.ts', import.meta.url)
 
@@ -132,7 +137,7 @@ for (const hooks of [false, true]) {
 test('filters unrelated tools without invoking a guard', async () => {
   const h = harness({ results: [result(9, '', 'must not run')] })
   let nextCalls = 0
-  const decision = await h.pre(exec('read', { file_path: 'x.py' }), async () => {
+  const decision = await h.pre(exec('read', { file_path: join(pairRoot, 'x.py') }), async () => {
     nextCalls++
     return { kind: 'allow' }
   })
@@ -157,11 +162,32 @@ test('unrelated file edits skip both guards and preserve downstream decisions', 
   assert.deepEqual(h.calls, [])
 })
 
+test('host skips bare Python and rechecks the session cwd after pair creation', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'jcli-session-'))
+  try {
+    const h = harness()
+    const agent = makeAgent(cwd)
+    const call = exec('write', { file_path: 'created.py' }, { agent })
+    const pre = { kind: 'allow' }
+    const post = { kind: 'accept' }
+    assert.equal(await h.pre(call, async () => pre), pre)
+    assert.equal(await h.post(call, {}, async () => post), post)
+    assert.equal(h.calls.length, 0)
+    writeFileSync(join(cwd, 'created.ipynb'), '')
+    await h.post(call, {}, async () => post)
+    assert.equal(h.calls.length, 1)
+    assert.equal(JSON.parse(h.calls[0].stdin).cwd, cwd)
+    rmSync(join(cwd, 'created.ipynb'))
+    await h.pre(call, async () => pre)
+    assert.equal(h.calls.length, 1)
+  } finally { rmSync(cwd, { recursive: true, force: true }) }
+})
+
 test('pair routing preserves notebook refusal and Python guards for normalized paths', async () => {
   for (const [file_path, expectedGuards] of [
     ['book.ipynb', ['pair-drift-guard-pre']],
     ['book.ipynb/.', ['pair-drift-guard-pre']],
-    ['book.py', ['pair-drift-guard-pre', 'pair-drift-guard-post']],
+    [join(pairRoot, 'book.py'), ['pair-drift-guard-pre', 'pair-drift-guard-post']],
   ]) {
     const h = harness({ results: [result(2, '', 'guard refusal')] })
     const call = exec('edit', { file_path })
@@ -195,7 +221,7 @@ test('skipped file guards still propagate cancellation', async () => {
 test('guards and notebook output await the shell execution result handle', async () => {
   let resultsRead = 0
   const h = harness({ shellRun: () => { resultsRead++; return result(0, JSON.stringify({ schema_version: 1, status: 'ok', outputs: [] })) } })
-  assert.deepEqual(await h.pre(exec('write', { file_path: 'x.py' }), async () => ({ kind: 'allow' })), { kind: 'allow' })
+  assert.deepEqual(await h.pre(exec('write', { file_path: join(pairRoot, 'x.py') }), async () => ({ kind: 'allow' })), { kind: 'allow' })
   assert.deepEqual(await h.tools[0].execute({ file_path: 'book.ipynb', cell_index: 0 }, { signal: new AbortController().signal }), {
     schema_version: 1, status: 'ok', outputs: [],
   })
@@ -261,7 +287,7 @@ test('agentless calls resolve policy with an empty request and omit workdir', as
   const requests = []
   const policy = { resolve(request) { requests.push(request); return { mode: 'read-only', workspaceRoot: '/policy' } } }
   const h = harness({ results: [result()], policy })
-  await h.pre(exec('write', { file_path: 'x.py', content: 'x' }), async () => ({ kind: 'allow' }))
+  await h.pre(exec('write', { file_path: join(pairRoot, 'x.py'), content: 'x' }), async () => ({ kind: 'allow' }))
   assert.deepEqual(requests, [{}])
   assert.equal(Object.hasOwn(h.calls[0], 'workdir'), false)
   assert.equal(JSON.parse(h.calls[0].stdin).cwd, process.cwd())
@@ -292,7 +318,7 @@ test('pre exit 0 accepts the existing structured deny shape', async () => {
   const h = harness({ results: [result(0, JSON.stringify({ hookSpecificOutput: {
     permissionDecision: 'deny', permissionDecisionReason: 'structured reason',
   } }))] })
-  const decision = await h.pre(exec('write', { file_path: 'x.py' }), async () => ({ kind: 'allow' }))
+  const decision = await h.pre(exec('write', { file_path: join(pairRoot, 'x.py') }), async () => ({ kind: 'allow' }))
   assert.deepEqual(decision, { kind: 'deny', reason: 'structured reason' })
 })
 
@@ -302,7 +328,7 @@ test('pre exit 0 preserves structured deny when its reason is missing or empty',
     { permissionDecision: 'deny', permissionDecisionReason: '' },
   ]) {
     const h = harness({ results: [result(0, JSON.stringify({ hookSpecificOutput }))] })
-    const decision = await h.pre(exec('write', { file_path: 'x.py' }), async () => ({ kind: 'allow' }))
+    const decision = await h.pre(exec('write', { file_path: join(pairRoot, 'x.py') }), async () => ({ kind: 'allow' }))
     assert.equal(decision.kind, 'deny')
     assert.equal(decision.reason, 'j-cli denied this tool call')
   }
@@ -345,7 +371,7 @@ test('cancellation from the shell is propagated and does not call next', async (
   const h = harness({ results: [result(null, '', '', { aborted: true })] })
   let nextCalls = 0
   await assert.rejects(
-    h.pre(exec('write', { file_path: 'x.py' }, { signal: controller.signal }), async () => {
+    h.pre(exec('write', { file_path: join(pairRoot, 'x.py') }, { signal: controller.signal }), async () => {
       nextCalls++
       return { kind: 'allow' }
     }),
@@ -364,7 +390,7 @@ test('post success prepends context while preserving downstream block, feedback,
     additionalContexts: [context('downstream', 'existing context')],
   }
   const decision = await h.post(
-    exec('edit', { file_path: 'x.py', old_string: 'a', new_string: 'b' }),
+    exec('edit', { file_path: join(pairRoot, 'x.py'), old_string: 'a', new_string: 'b' }),
     { isError: false },
     async () => downstream,
   )
@@ -387,7 +413,7 @@ test('post failures never block and prepend bounded real process diagnostics', a
     value: { ok: true },
     additionalContexts: [context('downstream')],
   }
-  const decision = await h.post(exec('write', { file_path: 'x.py', content: 'x' }), {}, async () => {
+  const decision = await h.post(exec('write', { file_path: join(pairRoot, 'x.py'), content: 'x' }), {}, async () => {
     nextCalls++
     return downstream
   })
@@ -408,7 +434,7 @@ test('post hook failures deduplicate structured context from matching stderr', a
   const h = harness({ results: [result(1, stdout, stderr)] })
 
   const decision = await h.post(
-    exec('edit', { file_path: 'x.py' }),
+    exec('edit', { file_path: join(pairRoot, 'x.py') }),
     {},
     async () => ({ kind: 'accept' }),
   )
@@ -427,7 +453,7 @@ test('post hook failure deduplication preserves independent stderr', async () =>
   const h = harness({ results: [result(1, stdout, stderr)] })
 
   const decision = await h.post(
-    exec('write', { file_path: 'x.py', content: 'x' }),
+    exec('write', { file_path: join(pairRoot, 'x.py'), content: 'x' }),
     {},
     async () => ({ kind: 'accept' }),
   )
@@ -441,7 +467,7 @@ test('post hook failure deduplication preserves independent stderr', async () =>
 test('post guard exceptions still delegate downstream', async () => {
   const h = harness({ results: [new Error('post executor failure')] })
   const downstream = { kind: 'accept', content: [{ type: 'text', text: 'tool result' }] }
-  const decision = await h.post(exec('edit', { file_path: 'x.py' }), {}, async () => downstream)
+  const decision = await h.post(exec('edit', { file_path: join(pairRoot, 'x.py') }), {}, async () => downstream)
   assert.equal(decision.kind, 'accept')
   assert.deepEqual(decision.content, downstream.content)
   assert.equal(decision.additionalContexts.length, 1)
@@ -470,7 +496,7 @@ test('real POSIX shell validates executable quoting for spaces, apostrophes, and
     },
   }
   const h = harness({ shellRun: async spec => (await shell.execute(spec)).result(), config: { executable } })
-  const decision = await h.pre(exec('write', { file_path: 'x.py', content: 'x' }), async () => ({ kind: 'allow' }))
+  const decision = await h.pre(exec('write', { file_path: join(pairRoot, 'x.py'), content: 'x' }), async () => ({ kind: 'allow' }))
   assert.deepEqual(decision, { kind: 'allow' })
   assert.equal(h.calls.length, 1)
   assert.equal(h.calls[0].command.startsWith("'") , true)

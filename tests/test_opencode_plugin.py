@@ -55,6 +55,7 @@ elif mode == "invalid":
 
 _RUNNER = r"""import { mock } from "bun:test"
 import { pathToFileURL } from "node:url"
+import { writeFileSync, unlinkSync } from "node:fs"
 
 const schemaValue = () => ({
   describe() { return this },
@@ -76,6 +77,22 @@ const hooks = await module.JcliPlugin({
 })
 const scenario = process.env.JCLI_TEST_SCENARIO
 
+if (scenario === "prefilter") {
+  const args = { filePath: "created.py" }
+  const input = { tool: "write", args }
+  await hooks["tool.execute.before"](input, { args })
+  await hooks["tool.execute.after"](input, { output: "written" })
+  writeFileSync(process.env.JCLI_TEST_DIRECTORY + "/created.ipynb", "")
+  await hooks["tool.execute.after"](input, { output: "written" })
+  unlinkSync(process.env.JCLI_TEST_DIRECTORY + "/created.ipynb")
+  await hooks["tool.execute.before"](input, { args })
+  const patchText = "*** Update File: bare.py\n**_ Move to: analysis.py"
+  await hooks["tool.execute.before"]({ tool: "apply_patch" }, { args: { patchText } })
+  await hooks["tool.execute.before"]({ tool: "write" }, { args: { filePath: "book.ipynb" } })
+  await hooks["tool.execute.after"]({ tool: "write", args: { filePath: "book.ipynb" } }, { output: "written" })
+  console.log(JSON.stringify({ logs }))
+}
+
 if (scenario === "mapping") {
   await hooks["tool.execute.before"](
     { tool: "bash", sessionID: "s", callID: "1" },
@@ -83,11 +100,11 @@ if (scenario === "mapping") {
   )
   await hooks["tool.execute.before"](
     { tool: "edit", sessionID: "s", callID: "2" },
-    { args: { filePath: "/tmp/analysis.py", oldString: "a", newString: "b" } },
+    { args: { filePath: `${process.env.JCLI_TEST_DIRECTORY}/analysis.py`, oldString: "a", newString: "b" } },
   )
   const writeOutput = { title: "write", output: "written", metadata: {} }
   await hooks["tool.execute.after"](
-    { tool: "write", sessionID: "s", callID: "3", args: { filePath: "/tmp/analysis.py" } },
+    { tool: "write", sessionID: "s", callID: "3", args: { filePath: `${process.env.JCLI_TEST_DIRECTORY}/analysis.py` } },
     writeOutput,
   )
   await hooks["tool.execute.before"](
@@ -114,7 +131,7 @@ if (scenario === "capabilities") {
   )
   const writeOutput = { title: "write", output: "written", metadata: {} }
   await hooks["tool.execute.after"](
-    { tool: "write", sessionID: "s", callID: "2", args: { filePath: "/tmp/analysis.py" } },
+    { tool: "write", sessionID: "s", callID: "2", args: { filePath: `${process.env.JCLI_TEST_DIRECTORY}/analysis.py` } },
     writeOutput,
   )
   console.log(JSON.stringify({ tools: Object.keys(hooks.tool), logs }))
@@ -138,7 +155,7 @@ if (scenario === "invalid") {
   try {
     await hooks["tool.execute.before"](
       { tool: "edit", sessionID: "s", callID: "1" },
-      { args: { filePath: "/tmp/analysis.py" } },
+      { args: { filePath: `${process.env.JCLI_TEST_DIRECTORY}/analysis.py` } },
     )
   } catch (caught) {
     error = String(caught)
@@ -149,7 +166,7 @@ if (scenario === "invalid") {
 if (scenario === "post-failure") {
   const writeOutput = { title: "write", output: "written", metadata: {} }
   await hooks["tool.execute.after"](
-    { tool: "write", sessionID: "s", callID: "1", args: { filePath: "/tmp/analysis.py" } },
+    { tool: "write", sessionID: "s", callID: "1", args: { filePath: `${process.env.JCLI_TEST_DIRECTORY}/analysis.py` } },
     writeOutput,
   )
   console.log(JSON.stringify({ writeOutput, logs }))
@@ -173,6 +190,7 @@ def _run_plugin(
     calls_path.touch()
     directory = tmp_path / "project"
     (directory / "nested").mkdir(parents=True)
+    (directory / "analysis.ipynb").write_text("{}", encoding="utf-8")
 
     env = {
         **os.environ,
@@ -227,7 +245,9 @@ def test_maps_tools_to_existing_guards(tmp_path):
     ]
     assert calls[0]["cwd"] == str(tmp_path / "project" / "nested")
     assert calls[0]["payload"]["cwd"] == str(tmp_path / "project" / "nested")
-    assert calls[2]["payload"]["tool_input"]["file_path"] == "/tmp/analysis.py"
+    assert calls[2]["payload"]["tool_input"]["file_path"] == str(
+        tmp_path / "project" / "analysis.py"
+    )
     assert calls[4]["payload"]["tool_input"]["command"][0] == "apply_patch"
     assert output["writeOutput"]["output"].endswith("pair synced by test")
     assert output["patchOutput"]["output"].endswith("pair synced by test")
@@ -278,3 +298,18 @@ def test_post_exit2_diagnostic_is_appended_to_tool_output(tmp_path):
     assert len(calls) == 1
     assert "post context" in output["writeOutput"]["output"]
     assert "post diagnostic" in output["writeOutput"]["output"]
+
+
+def test_host_prefilter_skips_spawns_and_preserves_full_patch(tmp_path):
+    _, calls = _run_plugin(tmp_path, "prefilter")
+    assert [call["argv"][1] for call in calls] == [
+        "pair-drift-guard-post",
+        "pair-drift-guard-pre",
+        "pair-drift-guard-pre",
+    ]
+    assert calls[0]["payload"]["tool_input"]["file_path"] == "created.py"
+    assert (
+        calls[1]["payload"]["tool_input"]["command"][1]
+        == "*** Update File: bare.py\n**_ Move to: analysis.py"
+    )
+    assert all(call["payload"]["cwd"] == str(tmp_path / "project") for call in calls)

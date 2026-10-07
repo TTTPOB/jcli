@@ -33,6 +33,7 @@ from .common import (
     validate_skill_dir,
     warn_global_conflicts,
 )
+from .plugin_source import inline_pair_guard
 
 _OPENCODE_MANAGED_MARKER = "// Managed by j-cli setup opencode."
 _OPENCODE_PLUGIN_NAME = "jcli.js"
@@ -228,7 +229,7 @@ def _skill_target(scope: Scope, override: Path | None) -> Path:
 
 
 def _base_source() -> str:
-    return (
+    return inline_pair_guard(
         resources.files("jupyter_jcli")
         .joinpath("opencode_plugin.js")
         .read_text(encoding="utf-8")

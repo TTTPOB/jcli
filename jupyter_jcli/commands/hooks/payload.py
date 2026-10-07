@@ -1,7 +1,8 @@
 """Platform-specific payload extraction for agent hook handlers."""
 
-import re
 from pathlib import Path
+
+from jupyter_jcli.pair_guard import normalize_path, patch_paths
 
 
 def _extract_bash_command_claude(payload: dict) -> str:
@@ -60,7 +61,8 @@ def _extract_dsh_bash_command_and_cwd(payload: dict) -> tuple[str, str]:
 
 def _extract_file_path_claude(payload: dict) -> str:
     """Claude Code: Edit/Write tools have file_path in tool_input."""
-    return payload.get("tool_input", {}).get("file_path", "") or ""
+    file_path = payload.get("tool_input", {}).get("file_path", "") or ""
+    return normalize_path(file_path, payload) if file_path else ""
 
 
 def _extract_dsh_file_path(payload: dict) -> str:
@@ -69,11 +71,7 @@ def _extract_dsh_file_path(payload: dict) -> str:
     file_path = tool_input.get("file_path", "") if isinstance(tool_input, dict) else ""
     if not isinstance(file_path, str) or not file_path:
         return ""
-    cwd = payload.get("cwd", "")
-    if not isinstance(cwd, str) or not cwd:
-        return file_path
-    path = Path(file_path)
-    return str(path if path.is_absolute() else Path(cwd) / path)
+    return normalize_path(file_path, payload)
 
 
 def _extract_file_paths_codex(payload: dict) -> list[str]:
@@ -89,7 +87,7 @@ def _extract_file_paths_codex(payload: dict) -> list[str]:
         patch_text = cmd[1] if len(cmd) > 1 else ""
     else:
         patch_text = cmd if isinstance(cmd, str) else ""
-    return _parse_codex_apply_patch_file_paths(patch_text)
+    return [normalize_path(path, payload) for path in patch_paths(patch_text)]
 
 
 def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
@@ -108,14 +106,4 @@ def _parse_codex_apply_patch_file_paths(patch_text: str) -> list[str]:
     markers at column 0 cannot be confused with file content.  ^ anchor
     enforces this guarantee.
     """
-    _MARKER = r"\*{3}|\*{2}_"  # both "*** " and "**_ " (legacy prompt)
-    _DIRECTIVE = (
-        rf"^(?:{_MARKER}) (?:Update|Add|Delete) File: |^(?:{_MARKER}) Move to: "
-    )
-    paths: list[str] = []
-    for line in patch_text.splitlines():
-        m = re.match(_DIRECTIVE, line)
-        if not m:
-            continue
-        paths.append(line[m.end() :].strip())
-    return paths
+    return patch_paths(patch_text)

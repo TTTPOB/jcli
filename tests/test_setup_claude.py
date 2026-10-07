@@ -523,9 +523,9 @@ class TestThreeBlocks:
         settings = _read_json(tmp_path / ".claude" / "settings.local.json")
         expected = {
             "notebook-exec-guard": "j-cli _hooks notebook-exec-guard",
-            "pair-drift-guard-pre": "j-cli _hooks pair-drift-guard-pre",
+            "pair-drift-guard-pre": "j-cli-hook pair-drift-guard-pre",
             "notebook-edit-guard": "j-cli _hooks notebook-edit-guard",
-            "pair-drift-guard-post": "j-cli _hooks pair-drift-guard-post",
+            "pair-drift-guard-post": "j-cli-hook pair-drift-guard-post",
             "python-run-guard": "j-cli _hooks python-run-guard",
         }
         actual = {}
@@ -608,7 +608,7 @@ class TestThreeBlocks:
         for block in settings.get("hooks", {}).get("PreToolUse", []):
             for entry in block.get("hooks", []):
                 if entry.get("_jcli_managed") == "pair-drift-guard-pre":
-                    assert entry["command"] == "j-cli _hooks pair-drift-guard-pre"
+                    assert entry["command"] == "j-cli-hook pair-drift-guard-pre"
 
     def test_legacy_nbconvert_guard_upgraded(self, tmp_path, monkeypatch):
         """Legacy nbconvert-guard entry is replaced even with new hook blocks."""
