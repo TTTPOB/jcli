@@ -5,49 +5,21 @@ from __future__ import annotations
 import ast
 
 from jupyter_jcli._enums import CellType, ResponseStatus
-from jupyter_jcli.diff.alignment import CellChange
 from jupyter_jcli.formats.model import Cell, ParsedFile
 
 _MAX_ANALYSIS_ITEMS = 8
 _MAX_SOURCE_PREVIEW_CHARS = 120
 
 
-def build_summary_data(
-    parsed: ParsedFile, changes: list[CellChange] | None = None
-) -> dict:
-    """Build structured cell summaries, optionally annotated with cell changes."""
-    changes = changes or []
-    changed_current = {
-        change.new_index: change for change in changes if change.new_index is not None
-    }
-    cells = []
-    for cell in parsed.cells:
-        cell_data = _summarize_cell(cell)
-        if change := changed_current.get(cell.index):
-            cell_data["change"] = change.kind.value
-            if change.old_index is not None:
-                cell_data["old_index"] = change.old_index
-        cells.append(cell_data)
+def build_summary_data(parsed: ParsedFile) -> dict:
+    """Build structured cell summaries for notebook inspection."""
     return {
         "status": ResponseStatus.OK,
         "path": parsed.source_path,
         "cell_count": len(parsed.cells),
         "kernel": parsed.kernel_name,
-        "cells": cells,
-        "changes": [_serialize_change(change) for change in changes],
+        "cells": [_summarize_cell(cell) for cell in parsed.cells],
     }
-
-
-def _serialize_change(change: CellChange) -> dict:
-    data = {
-        "kind": change.kind.value,
-        "old_index": change.old_index,
-        "new_index": change.new_index,
-        "current_insertion_index": change.current_insertion_index,
-    }
-    if change.old_cell is not None:
-        data["old_cell"] = _summarize_cell(change.old_cell)
-    return data
 
 
 def _summarize_cell(cell: Cell) -> dict:

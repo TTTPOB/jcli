@@ -79,9 +79,9 @@ Install the git `pre-commit` hook to keep `.py` / `.ipynb` pairs in sync:
 j-cli setup git
 ```
 
-After a post-edit pair sync with a git baseline, the agent hook appends a cell
-summary to its context. `~` marks edited cells, `+` marks inserted cells, and
-`- old:N` records deleted baseline cells at their current insertion point.
+After a successful post-edit pair sync, the agent hook reports that the pair is
+now in sync without echoing notebook content. Use `j-cli notebook summary` or
+`j-cli notebook show` when you want to inspect cells.
 
 If your notebooks live in a subdirectory, limit pair detection to that path
 (avoids false positives elsewhere in the repo). `--include` can be repeated:

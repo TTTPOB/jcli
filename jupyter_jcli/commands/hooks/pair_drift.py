@@ -13,8 +13,6 @@ if TYPE_CHECKING:
 from .decision import HookOutcome
 
 _MAX_DIFF_CHARS = 6000
-_HOOK_SUMMARY_MAX_CELLS = 16
-_HOOK_SUMMARY_MAX_CHARS = 8000
 _HOOK_CONTEXT_MAX_CHARS = 16000
 
 
@@ -209,10 +207,8 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
     if not py_path.exists() or not ipynb_path.exists():
         return None
 
-    from jupyter_jcli import pair_baseline
     from jupyter_jcli.diff import Conflict, DriftOnly, InSync, Merged
 
-    old_baseline_text = pair_baseline.read_baseline(py_path, strict=True)
     try:
         from jupyter_jcli.pairing import synchronize_pair
 
@@ -236,14 +232,7 @@ def _run_post_drift_check(path: Path, logger=None) -> PostDriftNotice | None:
         return None
 
     if isinstance(result, Merged):
-        context = _sync_pair_after_edit(
-            path,
-            py_path,
-            ipynb_path,
-            sync,
-            old_baseline_text,
-            logger=logger,
-        )
+        context = _sync_pair_after_edit(path, py_path, ipynb_path, sync)
         return PostDriftNotice(context, HookOutcome.success()) if context else None
 
     if isinstance(result, Conflict):
@@ -292,34 +281,14 @@ def _sync_pair_after_edit(
     py_path: Path,
     ipynb_path: Path,
     sync,
-    old_baseline_text: str | None,
-    logger=None,
 ) -> str | None:
     """Describe the actual write performed by the shared synchronization flow."""
     other_changed = sync.ipynb_changed if edited == py_path else sync.py_changed
     if not other_changed or sync.state is None:
         return None
 
-    summary_text: str | None = None
-    if old_baseline_text is not None:
-        try:
-            from jupyter_jcli.diff import diff_cells
-            from jupyter_jcli.formats.percent import loads
-            from jupyter_jcli.summ import build_summary_data, format_summary_human
-
-            baseline = loads(old_baseline_text, source_path=str(py_path))
-            current = loads(sync.state.canonical_text(), source_path=str(py_path))
-            summary_text = format_summary_human(
-                build_summary_data(current, diff_cells(baseline, current)),
-                max_cells=_HOOK_SUMMARY_MAX_CELLS,
-                max_chars=_HOOK_SUMMARY_MAX_CHARS,
-            )
-        except Exception as exc:  # noqa: BLE001
-            if logger is not None:
-                logger.record_exception(exc)
     other = ipynb_path if edited == py_path else py_path
-    context = (
+    return (
         f"Auto-synced your edit in `{edited.name}` to `{other.name}`. "
         "Pair is now in sync."
     )
-    return f"{context}\n\n{summary_text}" if summary_text is not None else context

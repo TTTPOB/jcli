@@ -42,5 +42,5 @@ Hook synchronization assigns IDs to newly inserted cells. Preserve existing IDs 
 | Who triggers | Hook | When | Meaning | Next step |
 |---|---|---|---|---|
 | Agent (pre-edit) | `pair-drift-guard` | Pre Edit/Write/apply_patch | Drift already existed before your call | Read the message; if auto-merged, re-read the target file; if conflict, inspect and pick a side |
-| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | Read `~` edited, `+` inserted, and `- old:N` deleted markers after an auto-sync with a git baseline. Follow any omission hint with `j-cli notebook summary`. If warned: pick a side with `j-cli convert` |
+| Agent (post-edit) | `pair-drift-guard-post` | Post Edit/Write/apply_patch | Your edit may have diverged the pair | A successful auto-sync reports that the pair is now in sync without echoing cells. If warned: inspect the diagnostic and pick a side with `j-cli convert` |
 | Agent | `notebook-edit-guard` | Pre NotebookEdit | Hard deny; use py:percent round-trip | Follow the three-step convert workflow above |

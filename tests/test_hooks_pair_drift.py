@@ -590,6 +590,9 @@ class TestPairDriftGuardPost:
         ctx = _additional_context(out)
         assert "drift detected" in ctx
         assert "j-cli convert" in ctx
+        assert all(
+            marker in ctx for marker in ("<<<<<<<", "|||||||", "=======", ">>>>>>>")
+        )
         assert _event_name(out) == "PostToolUse"
 
     def test_drift_only_count_mismatch_after_edit_warns(self, tmp_path):
@@ -632,6 +635,9 @@ class TestPairDriftGuardPost:
         assert _decision(out) is None
         ctx = _additional_context(out)
         assert "j-cli convert" in ctx
+        assert "--- py\n+++ ipynb" in ctx
+        assert "-x = 10" in ctx
+        assert "+x = 99" in ctx
         assert _event_name(out) == "PostToolUse"
 
     def test_non_paired_file_is_silent(self, tmp_path):
@@ -922,8 +928,10 @@ class TestPreBaselineBootstrapBoundaries:
 
 
 class TestConsecutiveEdits:
-    def test_post_context_includes_baseline_cell_summary(self, git_repo: Path):
-        py, _ipynb = _make_pair(
+    def test_post_context_is_only_success_notice_after_cell_changes(
+        self, git_repo: Path
+    ):
+        py, ipynb = _make_pair(
             git_repo,
             ["x = 1", "y = 2", "gone = 3"],
             ["x = 1", "y = 2", "gone = 3"],
@@ -942,43 +950,16 @@ class TestConsecutiveEdits:
             {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
             "pair-drift-guard-post",
         )
-
         assert code == 0
         assert _event_name(out) == "PostToolUse"
-        context = _additional_context(out)
-        assert "Auto-synced" in context
-        assert (
-            "changes: edited current[1]; inserted current[0]; "
-            "deleted [old:2 at current:3]"
-        ) in context
-        assert "legend: ~ edited | + inserted | - deleted" in context
-        assert "+ 0 [code]" in context
-        assert "~ 1 [code]" in context
-        assert "- old:2 at current:3 [code]" in context
-
-    def test_post_context_keeps_late_change_and_reports_omitted_cells(
-        self, git_repo: Path
-    ):
-        sources = [f"value_{index} = {index}" for index in range(40)]
-        py, _ = _make_pair(git_repo, sources, sources)
-        _git(git_repo, "add", "nb.py")
-        _git(git_repo, "commit", "-m", "init", env=_git_env(100))
-
-        py.write_text(
-            py.read_text(encoding="utf-8").replace("value_39 = 39", "value_39 = 999"),
-            encoding="utf-8",
+        assert _additional_context(out) == (
+            "Auto-synced your edit in `nb.py` to `nb.ipynb`. Pair is now in sync."
         )
-        code, out = _invoke(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(py)}},
-            "pair-drift-guard-post",
-        )
-
-        assert code == 0
-        context = _additional_context(out)
-        assert "~ 39 [code]" in context
-        assert "value_39 = 999" in context
-        assert "omitted:" in context
-        assert "j-cli notebook summary" in context
+        assert [cell.source for cell in parse_file(str(ipynb)).cells] == [
+            "new = 0",
+            "x = 10",
+            "y = 2",
+        ]
 
     def test_post_converges_both_sides_when_concurrent_cells_merge(
         self, git_repo: Path

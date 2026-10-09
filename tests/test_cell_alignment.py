@@ -6,7 +6,7 @@ from difflib import SequenceMatcher as RealSequenceMatcher
 from unittest.mock import patch
 
 from jupyter_jcli._enums import AlignmentMethod, CellChangeKind, CellType
-from jupyter_jcli.diff import align_cells, diff_cells
+from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.formats.percent import loads as parse_py_percent_text
 
@@ -40,7 +40,7 @@ def test_notebook_helpers_import_without_cli_cycle(tmp_path):
         [
             sys.executable,
             "-c",
-            "from jupyter_jcli.diff import diff_cells; print(diff_cells.__name__)",
+            "from jupyter_jcli.diff import align_cells; print(align_cells.__name__)",
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -49,14 +49,24 @@ def test_notebook_helpers_import_without_cli_cycle(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "diff_cells"
+    assert result.stdout.strip() == "align_cells"
 
 
-def test_cell_diff_classifies_edited_inserted_deleted_and_unequal_replace():
-    edited = diff_cells(_parsed("old"), _parsed("new"))
-    inserted = diff_cells(_parsed("keep"), _parsed("new", "keep"))
-    deleted = diff_cells(_parsed("keep", "gone"), _parsed("keep"))
-    unequal_replace = diff_cells(_parsed("old one", "old two"), _parsed("new one"))
+def _changed_alignments(old: ParsedFile, current: ParsedFile):
+    return [
+        change
+        for change in align_cells(old, current)
+        if change.kind is not CellChangeKind.EQUAL
+    ]
+
+
+def test_cell_alignment_classifies_edited_inserted_deleted_and_unequal_replace():
+    edited = _changed_alignments(_parsed("old"), _parsed("new"))
+    inserted = _changed_alignments(_parsed("keep"), _parsed("new", "keep"))
+    deleted = _changed_alignments(_parsed("keep", "gone"), _parsed("keep"))
+    unequal_replace = _changed_alignments(
+        _parsed("old one", "old two"), _parsed("new one")
+    )
 
     assert [(change.kind, change.old_index, change.new_index) for change in edited] == [
         ("edited", 0, 0)
@@ -75,8 +85,8 @@ def test_cell_diff_classifies_edited_inserted_deleted_and_unequal_replace():
     ]
 
 
-def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor():
-    changes = diff_cells(
+def test_cell_alignment_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor():
+    changes = _changed_alignments(
         _parsed("x = 1", "y = 2"), _parsed("new = 0", "x = 10", "y = 2")
     )
 
@@ -88,7 +98,7 @@ def test_cell_diff_pairs_an_edited_cell_with_the_most_similar_insertion_neighbor
     ]
 
 
-def test_cell_diff_uses_stable_ids_before_source_similarity():
+def test_cell_alignment_uses_stable_ids_before_source_similarity():
     old = parse_py_percent_text(
         '# %% id="first"\nshared old\n\n# %% id="second"\nshared old\n'
     )
@@ -98,7 +108,7 @@ def test_cell_diff_uses_stable_ids_before_source_similarity():
         '# %% id="second"\nsecond rewritten\n'
     )
 
-    changes = diff_cells(old, current)
+    changes = _changed_alignments(old, current)
 
     assert [
         (change.kind, change.old_index, change.new_index) for change in changes
@@ -109,6 +119,26 @@ def test_cell_diff_uses_stable_ids_before_source_similarity():
     ]
 
 
+def test_cell_alignment_preserves_positions_after_nearby_insert_and_delete():
+    old = _parsed(*(f"value_{index}" for index in range(200)))
+    current_sources = [cell.source for cell in old.cells]
+    current_sources.insert(50, "inserted")
+    del current_sources[56]
+
+    alignments = align_cells(old, _parsed(*current_sources))
+
+    expected = [
+        *(("equal", index, index) for index in range(50)),
+        ("inserted", None, 50),
+        *(("equal", index, index + 1) for index in range(50, 55)),
+        ("deleted", 55, None),
+        *(("equal", index, index) for index in range(56, 200)),
+    ]
+    assert [
+        (change.kind, change.old_index, change.new_index) for change in alignments
+    ] == expected
+
+
 def test_large_replace_block_uses_linear_positional_fallback():
     old = _parsed(*(f"old value {index}" for index in range(100)))
     current = _parsed(*(f"new value {index}" for index in range(100)))
@@ -117,7 +147,7 @@ def test_large_replace_block_uses_linear_positional_fallback():
         "jupyter_jcli.diff.alignment._cell_edit_cost",
         side_effect=AssertionError("large replace block allocated similarity DP"),
     ):
-        changes = diff_cells(old, current)
+        changes = _changed_alignments(old, current)
 
     assert len(changes) == 100
     assert all(change.kind == "edited" for change in changes)
@@ -137,7 +167,9 @@ def test_long_cell_edit_uses_bounded_similarity_input():
     with patch(
         "jupyter_jcli.diff.alignment.SequenceMatcher", side_effect=recording_matcher
     ):
-        changes = diff_cells(_parsed("a" * 10_000 + "x"), _parsed("a" * 10_000 + "y"))
+        changes = _changed_alignments(
+            _parsed("a" * 10_000 + "x"), _parsed("a" * 10_000 + "y")
+        )
 
     assert [
         (change.kind, change.old_index, change.new_index) for change in changes
@@ -154,7 +186,10 @@ def test_large_equal_repeated_sequence_skips_sequence_matcher():
         "jupyter_jcli.diff.alignment.SequenceMatcher",
         side_effect=AssertionError("equal sequence used SequenceMatcher"),
     ):
-        assert diff_cells(old, current) == []
+        alignments = align_cells(old, current)
+
+    assert len(alignments) == 4_000
+    assert all(change.kind is CellChangeKind.EQUAL for change in alignments)
 
 
 def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
@@ -168,13 +203,13 @@ def test_large_repeated_sequence_with_sparse_edits_uses_linear_path():
         "jupyter_jcli.diff.alignment.SequenceMatcher",
         side_effect=AssertionError("sparse sequence used SequenceMatcher"),
     ):
-        changes = diff_cells(old, current)
+        alignments = align_cells(old, current)
 
     assert [
-        (change.kind, change.old_index, change.new_index) for change in changes
+        (change.kind, change.old_index, change.new_index) for change in alignments
     ] == [
-        ("edited", 100, 100),
-        ("edited", 3_900, 3_900),
+        ("edited" if index in {100, 3_900} else "equal", index, index)
+        for index in range(4_000)
     ]
 
 
@@ -194,7 +229,7 @@ def test_large_replace_fallback_detects_leading_insertion_before_edits():
     with patch(
         "jupyter_jcli.diff.alignment.SequenceMatcher", side_effect=recording_matcher
     ):
-        changes = diff_cells(old, current)
+        changes = _changed_alignments(old, current)
 
     assert autojunk_values[0] is True
     assert (changes[0].kind, changes[0].old_index, changes[0].new_index) == (
@@ -214,7 +249,7 @@ def test_large_replace_fallback_detects_leading_deletion_before_edits():
     )
     current = _parsed(*(f"value_{index} = 1" for index in range(101)))
 
-    changes = diff_cells(old, current)
+    changes = _changed_alignments(old, current)
 
     assert (changes[0].kind, changes[0].old_index, changes[0].new_index) == (
         "deleted",
@@ -230,8 +265,8 @@ def test_large_replace_fallback_detects_trailing_insert_and_delete():
     old = _parsed(*(f"value_{index} = 0" for index in range(101)))
     edited = [f"value_{index} = 1" for index in range(101)]
 
-    inserted = diff_cells(old, _parsed(*edited, "trailing_insert = True"))
-    deleted = diff_cells(
+    inserted = _changed_alignments(old, _parsed(*edited, "trailing_insert = True"))
+    deleted = _changed_alignments(
         _parsed(*(cell.source for cell in old.cells), "trailing_delete = True"),
         _parsed(*edited),
     )

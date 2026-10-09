@@ -7,9 +7,8 @@ import nbformat
 import pytest
 from click.testing import CliRunner
 
-from jupyter_jcli._enums import CellChangeKind, CellType
+from jupyter_jcli._enums import CellType
 from jupyter_jcli.cli import main
-from jupyter_jcli.diff import CellChange, diff_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
 from jupyter_jcli.summ import build_summary_data, format_summary_human
 
@@ -127,9 +126,6 @@ def test_summary_source_fields_are_exclusive_across_non_code_cells(
     data = build_summary_data(parsed)
     cell = data["cells"][0]
     normal = format_summary_human(data)
-    bounded = format_summary_human(data, max_cells=1, max_chars=8_000)
-
-    assert normal == bounded
     assert source_field in cell
     assert {"full_text", "preview"}.intersection(cell) == {source_field}
     assert all(
@@ -459,136 +455,3 @@ def test_map_missing_pair_uses_structured_error(tmp_path):
         "code": "PAIR_NOT_FOUND",
         "message": f"No paired file found for: {path}",
     }
-
-
-def test_summary_marks_only_the_inserted_cell_after_leading_insert():
-    old = _parsed("first", "second")
-    current = _parsed("new first", "first", "second")
-
-    changes = diff_cells(old, current)
-    data = build_summary_data(current, changes)
-
-    assert [(change.kind, change.new_index) for change in changes] == [("inserted", 0)]
-    assert data["cells"][0]["change"] == "inserted"
-    assert "change" not in data["cells"][1]
-    assert "change" not in data["cells"][2]
-
-
-def test_summary_preserves_markers_after_nearby_insert_and_delete():
-    old = _parsed(*(f"value_{index}" for index in range(200)))
-    current_sources = [cell.source for cell in old.cells]
-    current_sources.insert(50, "inserted")
-    del current_sources[56]
-    current = _parsed(*current_sources)
-
-    changes = diff_cells(old, current)
-
-    assert [
-        (change.kind, change.old_index, change.new_index) for change in changes
-    ] == [
-        ("inserted", None, 50),
-        ("deleted", 55, None),
-    ]
-    data = build_summary_data(current, changes)
-    assert data["cells"][50]["change"] == "inserted"
-    assert all("change" not in data["cells"][index] for index in range(51, 56))
-
-
-def test_summary_data_has_no_changes_or_markers_without_diff():
-    data = build_summary_data(_parsed("value = 1"))
-    human = format_summary_human(data)
-
-    assert data["changes"] == []
-    assert "change" not in data["cells"][0]
-    assert "legend:" not in human
-    assert "~ 0" not in human
-
-
-def test_summary_human_renders_dynamic_legend_and_deleted_tombstone():
-    old = _parsed("gone = 1", "value = 1")
-    current = _parsed("value = 2", "new = 3")
-    changes = [
-        CellChange(CellChangeKind.EDITED, 1, 0, old.cells[1], current.cells[0], 0),
-        CellChange(CellChangeKind.INSERTED, None, 1, None, current.cells[1], 1),
-        CellChange(CellChangeKind.DELETED, 0, None, old.cells[0], None, 0),
-    ]
-
-    data = build_summary_data(current, changes)
-    human = format_summary_human(data)
-
-    assert data["changes"][2]["old_index"] == 0
-    assert data["changes"][2]["current_insertion_index"] == 0
-    assert data["changes"][2]["old_cell"]["full_text"] == "gone = 1"
-    assert (
-        "changes: edited current[0]; inserted current[1]; deleted [old:0 at current:0]"
-        in human
-    )
-    assert "legend: ~ edited | + inserted | - deleted" in human
-    assert "~ 0 [code]" in human
-    assert "+ 1 [code]" in human
-    assert "- old:0 at current:0 [code]" in human
-    assert "full_text='gone = 1'" in human
-
-
-def test_bounded_summary_keeps_changed_cell_at_end_and_reports_omissions():
-    old = _parsed(*(f"value_{index} = {index}" for index in range(50)))
-    current_sources = [cell.source for cell in old.cells]
-    current_sources[-1] = "value_49 = 999"
-    current = _parsed(*current_sources)
-
-    human = format_summary_human(
-        build_summary_data(current, diff_cells(old, current)),
-        max_cells=4,
-        max_chars=2000,
-    )
-
-    assert "~ 49 [code]" in human
-    assert "value_49 = 999" in human
-    assert "omitted:" in human
-    assert "j-cli notebook summary" in human
-    assert len(human) <= 2000
-
-
-def test_bounded_summary_preserves_change_marker_with_long_kernel():
-    old = _parsed("value = 1")
-    current = ParsedFile(
-        kernel_name="kernel" * 2_000,
-        cells=[Cell(index=0, cell_type=CellType.CODE, source="value = 2")],
-        source_path="notebook.py",
-    )
-
-    human = format_summary_human(
-        build_summary_data(current, diff_cells(old, current)),
-        max_cells=16,
-        max_chars=8_000,
-    )
-
-    assert "path=notebook.py cells=1 kernel=" in human
-    assert "changes: edited current[0]" in human
-    assert "legend: ~ edited" in human
-    assert "~ 0 [code]" in human
-    assert human.endswith("j-cli notebook summary notebook.py")
-    assert len(human) <= 8_000
-
-
-def test_bounded_summary_counts_only_rendered_long_changed_cells():
-    old = _parsed(*(f"value_{index} = 0" for index in range(30)))
-    long_identifier = "identifier" * 400
-    current = _parsed(
-        *(f"{long_identifier}_{index} = 1" for index in range(16)),
-        *(cell.source for cell in old.cells[16:]),
-    )
-
-    human = format_summary_human(
-        build_summary_data(current, diff_cells(old, current)),
-        max_cells=16,
-        max_chars=8_000,
-    )
-    rendered_markers = sum(f"~ {index} [code]" in human for index in range(16))
-
-    assert rendered_markers >= 1
-    assert (
-        f"omitted: {30 - rendered_markers} current cells, 0 deleted tombstones" in human
-    )
-    assert human.endswith("j-cli notebook summary ")
-    assert len(human) <= 8_000

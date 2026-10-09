@@ -33,7 +33,6 @@ class CellChange:
     new_index: int | None
     old_cell: Cell | None
     new_cell: Cell | None
-    current_insertion_index: int
     alignment: AlignmentMethod | None = None
 
 
@@ -48,33 +47,11 @@ def align_cells(
     current: ParsedFile | list[Cell],
 ) -> list[CellChange]:
     """Align old and current cells, including unchanged pairs."""
-    return _align_cells(old, current, include_equal=True)
-
-
-def diff_cells(
-    old: ParsedFile | list[Cell],
-    current: ParsedFile | list[Cell],
-) -> list[CellChange]:
-    """Classify cell changes while preserving unchanged-cell alignment."""
-    return _align_cells(old, current, include_equal=False)
-
-
-def _align_cells(
-    old: ParsedFile | list[Cell],
-    current: ParsedFile | list[Cell],
-    *,
-    include_equal: bool,
-) -> list[CellChange]:
     old_cells = old.cells if isinstance(old, ParsedFile) else old
     current_cells = current.cells if isinstance(current, ParsedFile) else current
     anchors = _cell_id_anchors(old_cells, current_cells)
     if not anchors:
-        return _align_cells_by_content(
-            old_cells,
-            current_cells,
-            include_equal=include_equal,
-            end_insertion_index=len(current_cells),
-        )
+        return _align_cells_by_content(old_cells, current_cells)
 
     alignments: list[CellChange] = []
     old_start = 0
@@ -84,17 +61,14 @@ def _align_cells(
             _align_cells_by_content(
                 old_cells[old_start:old_index],
                 current_cells[new_start:new_index],
-                include_equal=include_equal,
-                end_insertion_index=current_cells[new_index].index,
             )
         )
         old_cell = old_cells[old_index]
         new_cell = current_cells[new_index]
         kind = _paired_kind(old_cell, new_cell)
-        if include_equal or kind != CellChangeKind.EQUAL:
-            alignments.append(
-                _paired_change(kind, old_cell, new_cell, alignment=AlignmentMethod.ID)
-            )
+        alignments.append(
+            _paired_change(kind, old_cell, new_cell, alignment=AlignmentMethod.ID)
+        )
         old_start = old_index + 1
         new_start = new_index + 1
 
@@ -102,8 +76,6 @@ def _align_cells(
         _align_cells_by_content(
             old_cells[old_start:],
             current_cells[new_start:],
-            include_equal=include_equal,
-            end_insertion_index=len(current_cells),
         )
     )
     return alignments
@@ -143,16 +115,11 @@ def _cell_id_anchors(
 def _align_cells_by_content(
     old_cells: list[Cell],
     current_cells: list[Cell],
-    *,
-    include_equal: bool,
-    end_insertion_index: int,
 ) -> list[CellChange]:
     old_keys = [(cell.cell_type.value, cell.source) for cell in old_cells]
     current_keys = [(cell.cell_type.value, cell.source) for cell in current_cells]
 
     if old_keys == current_keys:
-        if not include_equal:
-            return []
         return [
             _paired_change(
                 CellChangeKind.EQUAL,
@@ -191,7 +158,6 @@ def _align_cells_by_content(
                 for index, (old_cell, new_cell) in enumerate(
                     zip(old_cells, current_cells)
                 )
-                if include_equal or index in changed_positions
             ]
 
     matcher = SequenceMatcher(
@@ -205,18 +171,17 @@ def _align_cells_by_content(
     alignments: list[CellChange] = []
     for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
         if tag == "equal":
-            if include_equal:
-                alignments.extend(
-                    _paired_change(
-                        CellChangeKind.EQUAL,
-                        old_cell,
-                        new_cell,
-                        alignment=AlignmentMethod.CONTENT,
-                    )
-                    for old_cell, new_cell in zip(
-                        old_cells[old_start:old_end], current_cells[new_start:new_end]
-                    )
+            alignments.extend(
+                _paired_change(
+                    CellChangeKind.EQUAL,
+                    old_cell,
+                    new_cell,
+                    alignment=AlignmentMethod.CONTENT,
                 )
+                for old_cell, new_cell in zip(
+                    old_cells[old_start:old_end], current_cells[new_start:new_end]
+                )
+            )
             continue
         if tag == "insert":
             alignments.extend(
@@ -226,15 +191,11 @@ def _align_cells_by_content(
                     new_index=cell.index,
                     old_cell=None,
                     new_cell=cell,
-                    current_insertion_index=cell.index,
                 )
                 for cell in current_cells[new_start:new_end]
             )
             continue
         if tag == "delete":
-            insertion_index = _current_insertion_index(
-                current_cells, new_start, end_insertion_index
-            )
             alignments.extend(
                 CellChange(
                     kind=CellChangeKind.DELETED,
@@ -242,7 +203,6 @@ def _align_cells_by_content(
                     new_index=None,
                     old_cell=cell,
                     new_cell=None,
-                    current_insertion_index=insertion_index,
                 )
                 for cell in old_cells[old_start:old_end]
             )
@@ -252,17 +212,10 @@ def _align_cells_by_content(
             _align_replaced_cells(
                 old_cells[old_start:old_end],
                 current_cells[new_start:new_end],
-                current_cells,
-                new_start,
                 signatures,
-                end_insertion_index,
             )
         )
-    if include_equal:
-        return alignments
-    return [
-        alignment for alignment in alignments if alignment.kind != CellChangeKind.EQUAL
-    ]
+    return alignments
 
 
 def _paired_change(
@@ -278,7 +231,6 @@ def _paired_change(
         new_index=new_cell.index,
         old_cell=old_cell,
         new_cell=new_cell,
-        current_insertion_index=new_cell.index,
         alignment=alignment,
     )
 
@@ -310,10 +262,7 @@ def _has_shifted_unique_anchor(
 def _align_replaced_cells(
     old_cells: list[Cell],
     new_cells: list[Cell],
-    all_current_cells: list[Cell],
-    new_start: int,
     signatures: dict[str, _SourceSignature],
-    end_insertion_index: int,
 ) -> list[CellChange]:
     """Align a replace block so nearby source revisions remain edits."""
     old_count = len(old_cells)
@@ -322,10 +271,7 @@ def _align_replaced_cells(
         return _align_replaced_cells_by_position(
             old_cells,
             new_cells,
-            all_current_cells,
-            new_start,
             signatures,
-            end_insertion_index,
         )
 
     costs = [[0.0] * (new_count + 1) for _ in range(old_count + 1)]
@@ -382,11 +328,6 @@ def _align_replaced_cells(
                     new_index=None,
                     old_cell=old_cell,
                     new_cell=None,
-                    current_insertion_index=_current_insertion_index(
-                        all_current_cells,
-                        new_start + new_pos,
-                        end_insertion_index,
-                    ),
                 )
             )
             old_pos -= 1
@@ -399,7 +340,6 @@ def _align_replaced_cells(
                     new_index=new_cell.index,
                     old_cell=None,
                     new_cell=new_cell,
-                    current_insertion_index=new_cell.index,
                 )
             )
             new_pos -= 1
@@ -411,10 +351,7 @@ def _align_replaced_cells(
 def _align_replaced_cells_by_position(
     old_cells: list[Cell],
     new_cells: list[Cell],
-    all_current_cells: list[Cell],
-    new_start: int,
     signatures: dict[str, _SourceSignature],
-    end_insertion_index: int,
 ) -> list[CellChange]:
     """Classify a large replace block with bounded one-cell lookahead."""
     changes: list[CellChange] = []
@@ -462,7 +399,6 @@ def _align_replaced_cells_by_position(
                     new_index=inserted_cell.index,
                     old_cell=None,
                     new_cell=inserted_cell,
-                    current_insertion_index=inserted_cell.index,
                 )
                 for inserted_cell in new_cells[new_pos : new_pos + insertion_offset]
             )
@@ -480,7 +416,6 @@ def _align_replaced_cells_by_position(
                     new_index=None,
                     old_cell=deleted_cell,
                     new_cell=None,
-                    current_insertion_index=new_cell.index,
                 )
                 for deleted_cell in old_cells[old_pos : old_pos + deletion_offset]
             )
@@ -493,9 +428,6 @@ def _align_replaced_cells_by_position(
         old_pos += 1
         new_pos += 1
 
-    insertion_index = _current_insertion_index(
-        all_current_cells, new_start + new_pos, end_insertion_index
-    )
     for old_cell in old_cells[old_pos:]:
         changes.append(
             CellChange(
@@ -504,7 +436,6 @@ def _align_replaced_cells_by_position(
                 new_index=None,
                 old_cell=old_cell,
                 new_cell=None,
-                current_insertion_index=insertion_index,
             )
         )
     for new_cell in new_cells[new_pos:]:
@@ -515,7 +446,6 @@ def _align_replaced_cells_by_position(
                 new_index=new_cell.index,
                 old_cell=None,
                 new_cell=new_cell,
-                current_insertion_index=new_cell.index,
             )
         )
     return changes
@@ -636,9 +566,3 @@ def _source_signature(source: str) -> _SourceSignature:
         lines=line_signature,
         tokens=frozenset([*first_tokens, *last_tokens]),
     )
-
-
-def _current_insertion_index(
-    cells: list[Cell], position: int, end_insertion_index: int
-) -> int:
-    return cells[position].index if position < len(cells) else end_insertion_index

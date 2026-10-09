@@ -1,6 +1,6 @@
 """Notebook diff, merge, and pair drift operations."""
 
-from jupyter_jcli.diff.alignment import CellChange, align_cells, diff_cells
+from jupyter_jcli.diff.alignment import CellChange, align_cells
 from jupyter_jcli.diff.drift import (
     BaselineAvailable,
     BaselineMissing,
@@ -23,5 +23,4 @@ __all__ = [
     "Merged",
     "align_cells",
     "check_drift",
-    "diff_cells",
 ]
