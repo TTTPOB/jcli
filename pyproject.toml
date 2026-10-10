@@ -16,7 +16,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8",
-    "jupyter-kernel-client>=0.7.3,<1",
+    "jcli-kernel-client==0.1.0",
     "jupyter-server-client",
     "mcp>=1.12,<2",
     "nbformat>=5",
@@ -41,8 +41,15 @@ test = [
 j-cli = "jupyter_jcli.cli:main"
 j-cli-hook = "jupyter_jcli.hook_entry:main"
 
+# Local dual-repository development only; remove before publishing.
+[tool.uv.sources]
+jcli-kernel-client = { path = "../jcli-kernel-client", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["jupyter_jcli"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.agents", "/.ast-bro", "/.codegraph"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

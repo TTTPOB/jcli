@@ -21,6 +21,21 @@ Requires Python 3.10+.
 
 Note: the PyPI package name is `jupyter-jcli`, while the installed binary is `j-cli`. MCP support for Claude Code and Codex notebook-output integration is included in the default installation.
 
+### Local dual-repository development
+
+The current development checkout depends on the unpublished
+`jcli-kernel-client==0.1.0` fork. Place its checkout beside this repository as
+`../jcli-kernel-client`; uv uses it as an editable local source. To keep the
+existing environment untouched, run:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-kernel-client-acceptance uv sync --extra test
+UV_PROJECT_ENVIRONMENT=.venv-kernel-client-acceptance uv run --no-sync python -m pytest -v
+```
+
+The local source is for development only. Before publishing this checkout,
+publish the fork, remove the local source, and regenerate the lockfile.
+
 ## Recommended Workflow
 
 ### 1. Set up environment variables

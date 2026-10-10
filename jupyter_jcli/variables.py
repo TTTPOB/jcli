@@ -7,7 +7,7 @@ import logging
 import typing as t
 from enum import Enum
 
-from jupyter_kernel_client.snippets import SNIPPETS_REGISTRY
+from jcli_kernel_client.snippets import SNIPPETS_REGISTRY
 
 from jupyter_jcli.kernel import execute_with_timeout
 

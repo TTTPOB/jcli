@@ -1,4 +1,4 @@
-"""Kernel execution via jupyter-kernel-client (WebSocket)."""
+"""Kernel execution via jcli-kernel-client (WebSocket)."""
 
 import queue
 import signal
@@ -11,9 +11,9 @@ from collections.abc import Callable
 from contextlib import contextmanager, suppress
 from uuid import uuid4
 
-from jupyter_kernel_client import KernelClient
-from jupyter_kernel_client.client import output_hook
-from jupyter_kernel_client.wsclient import KernelWebSocketClient
+from jcli_kernel_client import KernelClient
+from jcli_kernel_client.client import output_hook
+from jcli_kernel_client.wsclient import KernelWebSocketClient
 
 _KERNEL_READY_TIMEOUT = 30
 # A failed attach attempt should be abandoned quickly.  The total budget below
@@ -363,8 +363,9 @@ def execute_with_timeout(
     if timeout <= 0:
         raise ExecutionTimeout("Execution deadline expired before the request was sent")
 
-    # jupyter-kernel-client 0.9.0's execute_interactive() recalculates its
-    # timeout as zero at the deadline, then loops forever on Event.wait(0).
+    # The fork inherits upstream jupyter-kernel-client 0.9.0's timeout issue:
+    # execute_interactive() recalculates its timeout as zero at the deadline,
+    # then loops forever on Event.wait(0).
     # Drive its channel queues ourselves so a lost WebSocket cannot defeat the
     # caller's deadline. Remove this workaround once upstream raises on expiry.
     client = kernel._manager.client
