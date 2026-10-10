@@ -950,7 +950,8 @@ wheels = [
 
 [[package]]
 name = "jcli-kernel-client"
-source = { editable = "../jcli-kernel-client" }
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jupyter-client" },
     { name = "jupyter-core" },
@@ -959,54 +960,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websocket-client" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ipykernel", marker = "extra == 'test'" },
-    { name = "jupyter-client", specifier = ">=8.6.3" },
-    { name = "jupyter-console", marker = "extra == 'konsole'" },
-    { name = "jupyter-core" },
-    { name = "jupyter-mimetypes", marker = "extra == 'objects'", specifier = ">=0.2.0" },
-    { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2.10,<3" },
-    { name = "kaggle", marker = "extra == 'kaggle'", specifier = ">=1.6" },
-    { name = "mdformat", marker = "extra == 'lint'", specifier = ">0.7" },
-    { name = "mdformat-gfm", marker = "extra == 'lint'", specifier = ">=0.3.5" },
-    { name = "mypy", marker = "extra == 'typing'", specifier = ">=0.990" },
-    { name = "numpy", marker = "extra == 'test'" },
-    { name = "pandas", marker = "extra == 'test'" },
-    { name = "pre-commit", marker = "extra == 'lint'" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'" },
-    { name = "pytest-cov", marker = "extra == 'test'" },
-    { name = "pytest-timeout", marker = "extra == 'test'" },
-    { name = "requests" },
-    { name = "ruff", marker = "extra == 'lint'" },
-    { name = "traitlets", specifier = ">=5.3" },
-    { name = "typing-extensions" },
-    { name = "websocket-client" },
-]
-provides-extras = ["kaggle", "konsole", "lint", "objects", "test", "typing"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ipykernel", specifier = ">=6.31.0" },
-    { name = "jupyter-server", specifier = ">=2.17.0" },
-    { name = "numpy", specifier = ">=2.0.2" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-]
-test = [
-    { name = "ipykernel", specifier = ">=6.31.0" },
-    { name = "jupyter-server", specifier = ">=2.17.0" },
-    { name = "numpy", specifier = ">=2.0.2" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/11/ad/c8fafa1f010c25e081338efa2a86d796e762af7cab6c2362200c53920f83/jcli_kernel_client-0.1.1.tar.gz", hash = "sha256:5efccd4951d3170e263b0f1adf25a2a251c3b1271fc6b7c8ee157f8bb88a19e7", size = 55664, upload-time = "2026-10-10T10:50:15.349Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/02/b619d8c41d3049d1e6c7c5101ded90cb452713e681ccceea0675367bd4e6/jcli_kernel_client-0.1.1-py3-none-any.whl", hash = "sha256:94d7cb24acf7256a952d83a253b5d651283315ac9043cc74f3301dfad2413614", size = 63296, upload-time = "2026-10-10T10:50:14.2Z" },
 ]
 
 [[package]]
@@ -1164,7 +1120,7 @@ requires-dist = [
     { name = "click", specifier = ">=8" },
     { name = "ipykernel", marker = "extra == 'test'" },
     { name = "ipython", marker = "extra == 'test'", specifier = ">=8" },
-    { name = "jcli-kernel-client", editable = "../jcli-kernel-client" },
+    { name = "jcli-kernel-client", specifier = "==0.1.1" },
     { name = "jupyter-server", marker = "extra == 'test'", specifier = ">=2,<3" },
     { name = "jupyter-server-client" },
     { name = "matplotlib", marker = "extra == 'test'" },
