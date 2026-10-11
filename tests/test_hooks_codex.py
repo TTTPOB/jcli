@@ -462,11 +462,11 @@ class TestCodexMultiFilePostMerge:
         def fake_post_drift_check(path, logger=None):
             call_count[0] += 1
             # Return different messages per file
-            if "a" in str(path):
+            if Path(path).name == "a.py":
                 return _success_notice(
                     "Auto-synced your edit in `a.py` to `a.ipynb`. Pair is now in sync."
                 )
-            if "b" in str(path):
+            if Path(path).name == "b.py":
                 return _success_notice(
                     "Auto-synced your edit in `b.py` to `b.ipynb`. Pair is now in sync."
                 )
