@@ -84,9 +84,11 @@ def test_in_sync_validates_first_read_without_verification_or_baseline_write(
     before = pair.py.read_bytes(), pair.nb.read_bytes()
     verify = Mock(wraps=pairing._verify_pair)
     validate = Mock(wraps=nbformat.validate)
+    load_notebook = Mock(wraps=ipynb.load)
     persist = Mock()
     monkeypatch.setattr(pairing, "_verify_pair", verify)
     monkeypatch.setattr(nbformat, "validate", validate)
+    monkeypatch.setattr(ipynb, "load", load_notebook)
     monkeypatch.setattr(pairing, "_persist_pair_baseline", persist)
 
     result = synchronize_pair(pair.py, pair.nb)
@@ -96,7 +98,12 @@ def test_in_sync_validates_first_read_without_verification_or_baseline_write(
     assert [cell.source for cell in result.state.cells] == ["x = 1", "y = 2"]
     assert result.py_changed is result.ipynb_changed is result.baseline_written is False
     assert (pair.py.read_bytes(), pair.nb.read_bytes()) == before
-    validate.assert_called()
+    # Validation must see the complete saved notebook, not just a source projection.
+    assert any(
+        call.args[0] == pair.notebook for call in validate.call_args_list if call.args
+    )
+    # Count notebook decodes, not the separate raw-byte comparator read.
+    load_notebook.assert_called_once_with(pair.nb)
     verify.assert_not_called()
     persist.assert_not_called()
 
