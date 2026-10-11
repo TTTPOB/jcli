@@ -10,6 +10,7 @@ import nbformat
 from jupyter_jcli._enums import CellChangeKind, CellType, OutputPolicy
 from jupyter_jcli._pair_prepared import (
     NotebookInput,
+    PreparedState,
     PythonInput,
     read_notebook,
     read_python,
@@ -85,6 +86,7 @@ def synchronize_pair(
         ipynb_needs = True
         drift = None
         should_persist = True
+        target = PreparedState.from_state(state)
     elif authoritative == "ipynb":
         notebook_input = read_notebook(ipynb_path)
         python_input = read_python(py_path, missing_ok=True)
@@ -97,6 +99,7 @@ def synchronize_pair(
         ipynb_needs = False
         drift = None
         should_persist = True
+        target = PreparedState.from_state(state)
     else:
         pair, outcome = prepare_and_check_pair(
             py_path, ipynb_path, strict_baseline=strict_baseline
@@ -104,7 +107,8 @@ def synchronize_pair(
         drift = outcome.drift
         if outcome.target is None:
             return PairSyncResult(state=None, drift=drift)
-        state = outcome.target.state
+        target = outcome.target
+        state = target.state
         python_input = pair.python
         notebook_input = pair.notebook
         py_needs = outcome.py_needs_update
@@ -128,12 +132,12 @@ def synchronize_pair(
         else False
     )
 
-    _verify_pair(py_path, ipynb_path, state)
+    _verify_pair(py_path, ipynb_path, target)
 
     baseline_written = False
     if persist_baseline and should_persist:
         baseline_written = _persist_pair_baseline(
-            py_path, state.canonical_text(), strict=strict_baseline
+            py_path, target.canonical_text(), strict=strict_baseline
         )
     return PairSyncResult(
         state=state,
@@ -144,15 +148,16 @@ def synchronize_pair(
     )
 
 
-def _verify_pair(py_path: Path, ipynb_path: Path, state: PairState) -> None:
+def _verify_pair(py_path: Path, ipynb_path: Path, target: PreparedState) -> None:
     """Physically reload both representations, including the InSync path."""
-    py_state = PairState.from_parsed(
-        percent.load(py_path), include_cell_ids=state.include_cell_ids
+    include_ids = target.state.include_cell_ids
+    py_state = PreparedState.from_document(
+        percent.load(py_path), include_cell_ids=include_ids, reuse=(target,)
     )
-    nb_state = PairState.from_parsed(
-        ipynb.load(ipynb_path), include_cell_ids=state.include_cell_ids
+    nb_state = PreparedState.from_document(
+        ipynb.load(ipynb_path), include_cell_ids=include_ids, reuse=(target, py_state)
     )
-    if py_state != state or nb_state != state:
+    if not py_state.matches(target) or not nb_state.matches(target):
         raise RuntimeError("pair writeback did not converge to the target state")
 
 

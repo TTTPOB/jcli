@@ -8,8 +8,10 @@ from unittest.mock import Mock
 import nbformat
 import pytest
 
+from jupyter_jcli._pair_prepared import PreparedState, prepare_pair
 from jupyter_jcli.diff import Conflict, InSync, Merged, check_drift
 from jupyter_jcli.formats import ipynb, percent
+from jupyter_jcli.formats.model import ParsedFile
 from jupyter_jcli.pairing import synchronize_pair
 
 
@@ -81,6 +83,84 @@ def test_plain_cell_sync_preserves_complete_saved_notebook_data(tmp_path, monkey
     assert result.ipynb_changed is True
     assert result.state.cells[0].source == "x = 10"
     assert isinstance(check_drift(pair.py, pair.nb), InSync)
+
+
+@pytest.mark.parametrize("changed_input", ["source", "id", "type", "order", "id-mode"])
+def test_prepared_text_reuse_invalidates_changed_emitter_input(
+    tmp_path, monkeypatch, changed_input
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    candidate = prepare_pair(pair.py, pair.nb).ours
+    state = candidate.state
+    old_text = candidate.cell_text
+    if changed_input == "source":
+        state.cells[0].node.source = "x = 10"
+    elif changed_input == "id":
+        state.cells[0].node.id = "changed-id"
+    elif changed_input == "type":
+        state.cells[0].node = nbformat.v4.new_raw_cell("x = 1", id="first")
+    elif changed_input == "order":
+        state.cells.reverse()
+    else:
+        state.include_cell_ids = False
+    expected = percent.dumps(
+        ParsedFile(cells=deepcopy(state.cells)),
+        include_cell_ids=state.include_cell_ids,
+        assign_missing_ids=False,
+    )
+    emit = Mock(wraps=percent.emit_cell_text)
+    monkeypatch.setattr(percent, "emit_cell_text", emit)
+
+    refreshed = PreparedState.from_state(state, reuse=(candidate,))
+
+    emit.assert_called_once()
+    assert refreshed.cell_text == expected
+    assert refreshed.cell_text != old_text
+
+
+def test_prepared_text_reuses_exact_snapshot_without_reemitting(tmp_path, monkeypatch):
+    pair = _make_pair(tmp_path, monkeypatch)
+    candidate = prepare_pair(pair.py, pair.nb).ours
+    state = deepcopy(candidate.state)
+    state.cells[0].node.outputs = [
+        nbformat.v4.new_output("stream", name="stdout", text="runtime-only")
+    ]
+    state.cells[0].node.execution_count = 123
+    state.cells[0].node.metadata = {"tags": ["local-only"]}
+    state.metadata["custom"]["left"] = 99
+    emit = Mock(wraps=percent.emit_cell_text)
+    monkeypatch.setattr(percent, "emit_cell_text", emit)
+
+    refreshed = PreparedState.from_state(state, reuse=(candidate,))
+
+    emit.assert_not_called()
+    assert refreshed.cell_text == candidate.cell_text
+    assert refreshed.state is state
+    assert not refreshed.matches(candidate)
+
+
+def test_runtime_only_notebook_changes_do_not_require_pair_writeback(
+    tmp_path, monkeypatch
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    notebook = nbformat.read(pair.nb, as_version=4)
+    notebook.cells[0].outputs = [
+        nbformat.v4.new_output("stream", name="stdout", text="new saved output\n")
+    ]
+    notebook.cells[0].execution_count = 99
+    notebook.cells[0].metadata = {"tags": ["runtime-only"]}
+    notebook.metadata["language_info"]["version"] = "3.12"
+    notebook.metadata["vscode"] = {"side": "changed-notebook-local"}
+    notebook.metadata["widgets"] = {"custom": "new widget state"}
+    pair.nb.write_text(nbformat.writes(notebook), encoding="utf-8")
+    before = pair.py.read_bytes(), pair.nb.read_bytes()
+
+    result = synchronize_pair(pair.py, pair.nb, persist_baseline=False)
+
+    assert isinstance(result.drift, InSync)
+    assert result.py_changed is result.ipynb_changed is False
+    assert (pair.py.read_bytes(), pair.nb.read_bytes()) == before
+    assert nbformat.read(pair.nb, as_version=4) == notebook
 
 
 def test_new_merge_combines_cell_and_metadata_edits_from_both_sides(
@@ -236,10 +316,12 @@ def test_writeback_does_not_mutate_loaded_input_cell_nodes(tmp_path, monkeypatch
     result = synchronize_pair(pair.py, pair.nb, persist_baseline=False)
 
     assert captured
-    for nodes, snapshot in captured:
-        assert nodes == snapshot
     assert result.state.cells[0].source == "x = 10"
     assert nbformat.read(pair.nb, as_version=4).cells[0].source == "x = 10"
+    result.state.cells[0].node.source = "changed result"
+    result.state.cells[0].node.id = "changed-result-id"
+    for nodes, snapshot in captured:
+        assert nodes == snapshot
 
 
 def test_successful_write_is_physically_reloaded_before_baseline(tmp_path, monkeypatch):

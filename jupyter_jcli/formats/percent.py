@@ -202,6 +202,37 @@ def dumps(
         parts.append(_dump_front_matter_document({"jupyter": parsed.notebook.metadata}))
         parts.append("\n" if cells else "")
 
+    parts.extend(
+        _cell_parts(
+            cells,
+            include_cell_ids=include_cell_ids,
+            assign_missing_ids=assign_missing_ids,
+            stable_cell_ids=parsed.stable_cell_ids,
+        )
+    )
+    return "".join(parts)
+
+
+def emit_cell_text(cells: list[Cell], *, include_cell_ids: bool = True) -> str:
+    """Emit metadata-free cell text without assigning IDs or modifying nodes."""
+    return "".join(
+        _cell_parts(
+            cells,
+            include_cell_ids=include_cell_ids,
+            assign_missing_ids=False,
+            stable_cell_ids=set(),
+        )
+    )
+
+
+def _cell_parts(
+    cells: list[Cell],
+    *,
+    include_cell_ids: bool,
+    assign_missing_ids: bool,
+    stable_cell_ids: set[str],
+) -> list[str]:
+    parts: list[str] = []
     emitted_ids: set[str] = set()
     for index, cell in enumerate(cells):
         if index:
@@ -212,9 +243,9 @@ def dumps(
         ):
             cell_id = None
         if include_cell_ids and cell_id is None and assign_missing_ids:
-            cell_id = _new_unique_cell_id(parsed.stable_cell_ids | emitted_ids)
+            cell_id = _new_unique_cell_id(stable_cell_ids | emitted_ids)
             cell.node.id = cell_id
-            parsed.stable_cell_ids.add(cell_id)
+            stable_cell_ids.add(cell_id)
         if cell_id is not None:
             emitted_ids.add(cell_id)
         id_option = f' id="{cell_id}"' if include_cell_ids and cell_id else ""
@@ -235,7 +266,42 @@ def dumps(
             source = _without_trailing_blank_lines(cell.source)
             for line in source.splitlines():
                 parts.append(f"# {line}\n" if line else "#\n")
-    return "".join(parts)
+    return parts
+
+
+def can_reuse_canonical_code_cells(cells: list[Cell]) -> bool:
+    """Recognize the deliberately narrow, normalization-free sync input range."""
+    if not cells:
+        return False
+    ids: set[str] = set()
+    for cell in cells:
+        cell_id = cell.cell_id
+        if (
+            cell.cell_type != CellType.CODE
+            or cell_id is None
+            or not _VALID_CELL_ID_RE.fullmatch(cell_id)
+            or cell_id in ids
+        ):
+            return False
+        ids.add(cell_id)
+        source = cell.source
+        lines = source.splitlines()
+        if (
+            not lines
+            or not lines[0].strip()
+            or not lines[-1].strip()
+            or source != "\n".join(lines)
+            or any(
+                line.rstrip() != line or _CELL_MARKER_RE.match(line) for line in lines
+            )
+        ):
+            return False
+        if (
+            transform_ipython_magics(source, comment=True) != source
+            or transform_ipython_magics(source, comment=False) != source
+        ):
+            return False
+    return True
 
 
 def dump(parsed: ParsedFile, path: str | Path) -> None:
@@ -307,7 +373,13 @@ def _to_plain(value):
 
 def canonicalize(text: str, *, include_cell_ids: bool | None = None) -> str:
     """Normalize py:percent text through a parser and emitter round trip."""
-    parsed = loads(text)
+    return _canonicalize_parsed(text, loads(text), include_cell_ids=include_cell_ids)
+
+
+def _canonicalize_parsed(
+    text: str, parsed: ParsedFile, *, include_cell_ids: bool | None = None
+) -> str:
+    """Continue normal canonicalization with an operation-owned initial parse."""
     if not parsed.is_py_percent:
         return text
     parsed.front_matter_raw = None

@@ -145,7 +145,7 @@ def check_drift(
     """Check whether a py/ipynb pair has drifted and attempt auto-merge.
 
     Strategy:
-    - Both sides are normalized to py:percent text via canonicalize + emit.
+    - Both sides are normalized to canonical py:percent projections.
     - ``.py`` tracked in git → `git merge-file` three-way text merge:
       base=py_HEAD (canonicalized), ours=py_now (canonicalized),
       theirs=ipynb_now (emitted). Myers diff handles insertions and deletions.
@@ -167,7 +167,7 @@ def check_drift(
 def prepare_and_check_pair(
     py_path: Path, ipynb_path: Path, *, strict_baseline: bool = False
 ) -> tuple[PreparedPair, CheckOutcome]:
-    """Read once for check and retain the same inputs for subsequent apply."""
+    """Prepare canonical inputs for check and retain them for subsequent apply."""
     pair = prepare_pair(py_path, ipynb_path)
     base_raw = (
         _get_git_base_text_strict(py_path)
@@ -183,14 +183,14 @@ def check_prepared(pair: PreparedPair, base_raw: str | None) -> CheckOutcome:
     if base_raw is None:
         if ours.matches(theirs):
             return CheckOutcome(
-                InSync(baseline=BaselineMissing(seed_text=ours.state.canonical_text())),
+                InSync(baseline=BaselineMissing(seed_text=ours.canonical_text())),
                 target=ours,
                 should_persist=True,
             )
         return CheckOutcome(
             DriftOnly(
                 diff_text=render_no_baseline_diff(
-                    ours.state.canonical_text(), theirs.state.canonical_text()
+                    ours.canonical_text(), theirs.canonical_text()
                 )
             )
         )
