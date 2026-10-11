@@ -1,0 +1,685 @@
+{
+  "decision": "evaluation complete; defer production adoption; retain stdlib and existing dependencies",
+  "commit": "e34219e71a235bee185316688d239a0df8dccbcb",
+  "versions": {
+    "python": "3.10.19",
+    "nbformat": "5.10.4",
+    "orjson": "3.13.0"
+  },
+  "sample": {
+    "cells": [
+      24,
+      300
+    ],
+    "stable_unique_ids": true,
+    "normalized_code_cells": true,
+    "text_output_bytes": 16777216,
+    "output_cells": 4,
+    "includes": [
+      "Unicode",
+      "execution count",
+      "cell metadata",
+      "output metadata",
+      "shared metadata",
+      "local notebook metadata"
+    ],
+    "representative_real_notebook_available": false
+  },
+  "measurement": {
+    "unit": "ms",
+    "timed": "synchronize_pair call only",
+    "warmup": "each variant warmed before measurement",
+    "rounds": 3,
+    "order": "rotating variants",
+    "cache": "warm",
+    "excluded": [
+      "construction",
+      "input restoration",
+      "independent correctness validation",
+      "process startup",
+      "baseline Git read/write"
+    ],
+    "baseline": "existing canonical text injected; persist_baseline=False",
+    "output_policy": "PRESERVE",
+    "profile": "separate run; event counting disabled during wall",
+    "group_policy": "initial and targeted repeats are separate, never pooled",
+    "no_kernel": true,
+    "no_authoritative_conversion": true
+  },
+  "variants": {
+    "text_stdlib": "A: native text + stdlib; prepared raw snapshot plus separate text read",
+    "bytes_stdlib": "B: reuse prepared bytes + stdlib; physical post-write reload retained",
+    "bytes_fast_decode": "C: B input boundary + orjson decode, stdlib encode, bounded fallback",
+    "bytes_fast_both": "D: B input boundary + orjson decode/encode, bounded fallback"
+  },
+  "wall_groups": [
+    {
+      "group": "initial",
+      "payload_kind": "standard",
+      "rows": [
+        {
+          "cells": 24,
+          "scenario": "insync",
+          "variant": "text_stdlib",
+          "wall_ms": [
+            158.23696600273252,
+            166.4935889421031,
+            166.85348702594638
+          ],
+          "median_ms": 166.4935889421031,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "insync",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            139.7924580378458,
+            139.91510798223317,
+            142.0956290094182
+          ],
+          "median_ms": 139.91510798223317,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "insync",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            92.34602504875511,
+            98.99959806352854,
+            116.85123399365693
+          ],
+          "median_ms": 98.99959806352854,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "insync",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            102.02520003076643,
+            94.78571801446378,
+            96.85154992621392
+          ],
+          "median_ms": 96.85154992621392,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "text_stdlib",
+          "wall_ms": [
+            542.4524999689311,
+            457.9377779737115,
+            434.69526001717895
+          ],
+          "median_ms": 457.9377779737115,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            402.50769699923694,
+            448.65218305494636,
+            465.62957705464214
+          ],
+          "median_ms": 448.65218305494636,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            377.38972797524184,
+            355.66745803225785,
+            385.8155820053071
+          ],
+          "median_ms": 377.38972797524184,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            384.8710670135915,
+            296.44364095292985,
+            303.0395091045648
+          ],
+          "median_ms": 303.0395091045648,
+          "writer_reference_byte_equal": false
+        },
+        {
+          "cells": 300,
+          "scenario": "insync",
+          "variant": "text_stdlib",
+          "wall_ms": [
+            354.2109680129215,
+            391.20152802206576,
+            297.4058670224622
+          ],
+          "median_ms": 354.2109680129215,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "insync",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            364.20338100288063,
+            374.2231270298362,
+            359.5891440054402
+          ],
+          "median_ms": 364.20338100288063,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "insync",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            305.4308630526066,
+            322.4800130119547,
+            420.7502040080726
+          ],
+          "median_ms": 322.4800130119547,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "insync",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            356.32115695625544,
+            347.7625399827957,
+            271.1547380313277
+          ],
+          "median_ms": 347.7625399827957,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "text_stdlib",
+          "wall_ms": [
+            925.9092209395021,
+            822.7325730258599,
+            799.8453739564866
+          ],
+          "median_ms": 822.7325730258599,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            850.6148000014946,
+            767.6793090067804,
+            841.6558419121429
+          ],
+          "median_ms": 841.6558419121429,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            685.7031779363751,
+            758.2814579363912,
+            663.2097399560735
+          ],
+          "median_ms": 685.7031779363751,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            703.987515065819,
+            628.2150829210877,
+            704.5181909343228
+          ],
+          "median_ms": 703.987515065819,
+          "writer_reference_byte_equal": false
+        }
+      ]
+    },
+    {
+      "group": "repeat_300_edit",
+      "payload_kind": "standard",
+      "rows": [
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            812.5559680629522,
+            718.7977239955217,
+            722.8030679980293
+          ],
+          "median_ms": 722.8030679980293,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            686.4087879657745,
+            653.0595240183175,
+            654.9440680537373
+          ],
+          "median_ms": 654.9440680537373,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 300,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            710.2807170012966,
+            610.4332219110802,
+            726.1556240264326
+          ],
+          "median_ms": 710.2807170012966,
+          "writer_reference_byte_equal": false
+        }
+      ]
+    },
+    {
+      "group": "repeat_24_edit",
+      "payload_kind": "standard",
+      "rows": [
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            310.4801999870688,
+            327.81121297739446,
+            328.9212390081957
+          ],
+          "median_ms": 327.81121297739446,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            281.75513993483037,
+            279.9216019921005,
+            289.62418192531914
+          ],
+          "median_ms": 281.75513993483037,
+          "writer_reference_byte_equal": false
+        }
+      ]
+    },
+    {
+      "group": "nonfinite_24_edit",
+      "payload_kind": "nonfinite",
+      "rows": [
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            393.12465908005834,
+            403.7918510148302,
+            433.1178149441257
+          ],
+          "median_ms": 403.7918510148302,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            486.76516499836,
+            494.5590510033071,
+            513.5490350658074
+          ],
+          "median_ms": 494.5590510033071,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            488.64381096791476,
+            512.7203470328823,
+            500.9557050652802
+          ],
+          "median_ms": 500.9557050652802,
+          "writer_reference_byte_equal": true
+        }
+      ]
+    },
+    {
+      "group": "bigint_24_edit",
+      "payload_kind": "bigint",
+      "rows": [
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_stdlib",
+          "wall_ms": [
+            410.8305189292878,
+            425.1383040100336,
+            399.45433905813843
+          ],
+          "median_ms": 410.8305189292878,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_decode",
+          "wall_ms": [
+            443.7995710177347,
+            453.0400770017877,
+            458.03307509049773
+          ],
+          "median_ms": 453.0400770017877,
+          "writer_reference_byte_equal": true
+        },
+        {
+          "cells": 24,
+          "scenario": "edit",
+          "variant": "bytes_fast_both",
+          "wall_ms": [
+            465.14492901042104,
+            434.37238596379757,
+            436.6025850176811
+          ],
+          "median_ms": 436.6025850176811,
+          "writer_reference_byte_equal": true
+        }
+      ]
+    }
+  ],
+  "correctness": {
+    "all_measured_calls_passed": true,
+    "comparison": "complete notebook tree with exact numeric type/value, Python bytes, unpatched drift InSync",
+    "insync_original_bytes_preserved": true,
+    "stdlib_writer_bytes": "A/B/C exact; D numeric fallback exact",
+    "fast_writer_standard": {
+      "byte_equal": false,
+      "indent_spaces": 2,
+      "additional_bytes_by_cells": {
+        "24": 1835,
+        "300": 18947
+      }
+    },
+    "sync_terminal_newline": false,
+    "nbformat_write_terminal_newline": true
+  },
+  "probes": {
+    "passed": 28,
+    "total": 28,
+    "scope": "small nbformat-chain probes; no sync timing or kernel",
+    "results": [
+      {
+        "case": "unicode_mime_arrays_attachments_transient",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "unicode_mime_arrays_attachments_transient",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "unicode_mime_arrays_attachments_transient",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "unicode_mime_arrays_attachments_transient",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": false,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "nonfinite_outputs",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "nonfinite_outputs",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "nonfinite_outputs",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "decode_fallback_parse"
+        ]
+      },
+      {
+        "case": "nonfinite_outputs",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "encode_fallback_numeric_or_version",
+          "decode_fallback_parse"
+        ]
+      },
+      {
+        "case": "bigint_outputs",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "bigint_outputs",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "bigint_outputs",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "decode_fallback_numeric_or_version"
+        ]
+      },
+      {
+        "case": "bigint_outputs",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "encode_fallback_numeric_or_version",
+          "decode_fallback_numeric_or_version"
+        ]
+      },
+      {
+        "case": "small_finite_float_outputs",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "small_finite_float_outputs",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "small_finite_float_outputs",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "small_finite_float_outputs",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": false,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "finite_float_outputs",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "finite_float_outputs",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "finite_float_outputs",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "decode_fallback_numeric_or_version"
+        ]
+      },
+      {
+        "case": "finite_float_outputs",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": false,
+        "writes_terminal_newline": false,
+        "fallbacks": [
+          "decode_fallback_numeric_or_version"
+        ]
+      },
+      {
+        "case": "ascii_bytes",
+        "variant": "text_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "ascii_bytes",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "ascii_bytes",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "byte_equal": true,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "ascii_bytes",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "byte_equal": false,
+        "writes_terminal_newline": false,
+        "fallbacks": []
+      },
+      {
+        "case": "kwargs_errors_v3_validation_write_newline",
+        "variant": "text_stdlib",
+        "pass": true,
+        "fallbacks": []
+      },
+      {
+        "case": "kwargs_errors_v3_validation_write_newline",
+        "variant": "bytes_stdlib",
+        "pass": true,
+        "fallbacks": []
+      },
+      {
+        "case": "kwargs_errors_v3_validation_write_newline",
+        "variant": "bytes_fast_decode",
+        "pass": true,
+        "fallbacks": [
+          "decode_fallback_parse",
+          "decode_fallback_numeric_or_version"
+        ]
+      },
+      {
+        "case": "kwargs_errors_v3_validation_write_newline",
+        "variant": "bytes_fast_both",
+        "pass": true,
+        "fallbacks": [
+          "decode_fallback_parse",
+          "decode_fallback_numeric_or_version"
+        ]
+      }
+    ],
+    "raw_hazards": {
+      "raw_nonfinite_encode": "[null,null]",
+      "raw_bigint_decode_types": [
+        "float",
+        "float"
+      ],
+      "raw_bigint_decode_exact": false
+    },
+    "limitations": [
+      "one nbformat 5.10.4 environment, not all nbformat>=5 versions",
+      "not all target platforms",
+      "small empty v3 conversion example only",
+      "not all kwargs or special numeric/types",
+      "synthetic large-text output, not representative real notebooks"
+    ]
+  }
+}
