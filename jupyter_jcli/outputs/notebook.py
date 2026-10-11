@@ -11,6 +11,7 @@ from typing import Any
 from jupyter_jcli._enums import AlignmentMethod, CellChangeKind
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.source import normalize_cell_source
 from jupyter_jcli.outputs.contracts import (
     DEFAULT_TEXT_LIMIT,
     MAX_TRANSPORT_BYTES,
@@ -120,7 +121,9 @@ def resolve_execution_notebook_cell(
 ) -> ResolvedNotebookCell:
     """Require matching source before writing newly executed outputs."""
     resolved = resolve_notebook_cell(file_path, cell_index)
-    if resolved.requested_cell.source != resolved.notebook_cell.source:
+    if normalize_cell_source(resolved.requested_cell.source) != normalize_cell_source(
+        resolved.notebook_cell.source
+    ):
         raise OutputProtocolError(
             "NOTEBOOK_OUT_OF_SYNC",
             f"Python cell {cell_index} differs from its notebook cell; "

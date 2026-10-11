@@ -26,6 +26,26 @@ _CANONICAL_FRONT_MATTER = (
 )
 
 
+def test_source_normalization_preserves_significant_whitespace():
+    import nbformat
+
+    from jupyter_jcli.formats import ipynb, percent
+    from jupyter_jcli.formats.source import normalize_cell_source
+
+    source = '    value = """first\n\n  last  \n"""  '
+    assert normalize_cell_source(source + "\n \t\n\n") == source
+    for changed in (
+        source[4:],
+        source[:-2],
+        source.replace("first\n\n", "first\n"),
+    ):
+        assert normalize_cell_source(changed) != normalize_cell_source(source)
+    parsed = ipynb.from_node(
+        nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell(source + "\n\n")])
+    )
+    assert percent.loads(percent.dumps(parsed)).cells[0].source == source
+
+
 class TestCanonicalizePyText:
     @pytest.mark.parametrize(
         ("text", "expected"),

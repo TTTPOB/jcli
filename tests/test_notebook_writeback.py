@@ -2,6 +2,7 @@
 
 import json
 import textwrap
+from contextlib import nullcontext
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -695,6 +696,163 @@ class TestIpynbWriteback:
             if o.get("output_type") in ("display_data", "execute_result")
         )
         assert has_image
+
+
+@pytest.fixture
+def synced_newline_pair(tmp_path):
+    from jupyter_jcli.diff import InSync, check_drift
+    from jupyter_jcli.pairing import synchronize_pair
+
+    py_path = tmp_path / "newline.py"
+    nb_path = tmp_path / "newline.ipynb"
+    target = nbformat.v4.new_code_cell("x = 1\n", id="target")
+    target.outputs = [
+        nbformat.v4.new_output("stream", name="stdout", text="old output")
+    ]
+    nbformat.write(
+        nbformat.v4.new_notebook(
+            cells=[nbformat.v4.new_markdown_cell("untouched", id="intro"), target]
+        ),
+        nb_path,
+    )
+    synchronize_pair(py_path, nb_path, authoritative="ipynb")
+    assert isinstance(check_drift(py_path, nb_path), InSync)
+    return py_path, nb_path
+
+
+def _mock_file_kernel(monkeypatch, execute):
+    monkeypatch.setattr(
+        "jupyter_jcli.kernel.kernel_connection", lambda *a, **kw: nullcontext(object())
+    )
+    monkeypatch.setattr(
+        "jupyter_jcli.kernel.expression_display_mode", lambda *a, **kw: nullcontext()
+    )
+    monkeypatch.setattr("jupyter_jcli.kernel.execute_with_timeout", execute)
+    monkeypatch.setattr("jupyter_jcli.streaming.NOTEBOOK_CHECKPOINT_INTERVAL", 0)
+
+
+@pytest.mark.parametrize("extra_lf_side", ["notebook", "python"])
+def test_synced_newlines_resolve_checkpoint_and_final_writeback(
+    synced_newline_pair, monkeypatch, extra_lf_side
+):
+    from jupyter_jcli.diff import InSync, check_drift
+    from jupyter_jcli.file_execution import execute_file
+    from jupyter_jcli.formats import percent
+    from jupyter_jcli.outputs.notebook import resolve_execution_notebook_cell
+    from jupyter_jcli.pairing import synchronize_pair
+
+    py_path, nb_path = synced_newline_pair
+    if extra_lf_side == "python":
+        notebook = nbformat.read(nb_path, as_version=4)
+        notebook.cells[1].source = "x = 1"
+        nbformat.write(notebook, nb_path)
+        py_path.write_text(py_path.read_text() + "\n\n")
+    synchronize_pair(py_path, nb_path)
+    assert isinstance(check_drift(py_path, nb_path), InSync)
+    resolved = resolve_execution_notebook_cell(py_path, 1)
+    code = percent.load(py_path).cells[1].source
+    original = nbformat.read(nb_path, as_version=4)
+    expected_sources = {
+        "notebook": ("x = 1", "x = 1\n"),
+        "python": ("x = 1\n", "x = 1"),
+    }
+    assert (code, original.cells[1].source) == expected_sources[extra_lf_side]
+    assert resolved.notebook_cell.source == original.cells[1].source
+    writes = []
+
+    def writeback(path, results):
+        writes.append(deepcopy(results[0]))
+        updated = write_outputs_to_notebook(path, results)
+        saved = nbformat.read(path, as_version=4)
+        assert saved.cells[0] == original.cells[0]
+        assert saved.cells[1].source == original.cells[1].source
+        assert saved.cells[1].id == original.cells[1].id
+        assert saved.cells[1].outputs[0].text == results[0]["raw_outputs"][0]["text"]
+        return updated
+
+    def execute(kernel, source, *, observer, **kwargs):
+        assert source == code
+        partial = [{"output_type": "stream", "name": "stdout", "text": "partial"}]
+        observer({"header": {"msg_type": "stream"}}, partial, {0}, 7)
+        assert len(writes) == 1
+        return {
+            "status": "ok",
+            "outputs": [{**partial[0], "text": "finished"}],
+            "execution_count": 7,
+        }
+
+    _mock_file_kernel(monkeypatch, execute)
+    summary = execute_file(
+        "unused", None, "mock", str(py_path), "1", "last", None, writeback=writeback
+    )
+    assert summary.cells_executed == 1
+    assert [result["raw_outputs"][0]["text"] for result in writes] == [
+        "partial",
+        "finished",
+    ]
+    assert all(
+        result["expected_source"] == original.cells[1].source for result in writes
+    )
+    assert nbformat.read(nb_path, as_version=4).cells[1].execution_count == 7
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "periodic"), [("source", True), ("id", False)]
+)
+def test_resolved_target_change_rejects_writeback(
+    synced_newline_pair, monkeypatch, changed_field, periodic
+):
+    from jupyter_jcli.file_execution import execute_file
+
+    py_path, nb_path = synced_newline_pair
+    mutated_snapshot = None
+
+    def execute(kernel, source, *, observer, **kwargs):
+        nonlocal mutated_snapshot
+        notebook = nbformat.read(nb_path, as_version=4)
+        if changed_field == "source":
+            notebook.cells[1].source += "\n"
+        else:
+            notebook.cells[1].id = "replacement"
+        nbformat.write(notebook, nb_path)
+        mutated_snapshot = nbformat.read(nb_path, as_version=4)
+        outputs = [{"output_type": "stream", "name": "stdout", "text": "new output"}]
+        if periodic:
+            observer({"header": {"msg_type": "stream"}}, outputs, {0}, 7)
+        return {"status": "ok", "outputs": outputs, "execution_count": 7}
+
+    _mock_file_kernel(monkeypatch, execute)
+    with pytest.raises(ValueError, match="synchronize before execution"):
+        execute_file(
+            "unused",
+            None,
+            "mock",
+            str(py_path),
+            "1",
+            "last",
+            None,
+            periodic_writeback=periodic,
+        )
+    saved = nbformat.read(nb_path, as_version=4)
+    assert mutated_snapshot is not None
+    assert saved == mutated_snapshot
+
+
+def test_source_difference_rejected_before_kernel(synced_newline_pair, monkeypatch):
+    from jupyter_jcli.file_execution import execute_file
+    from jupyter_jcli.outputs import OutputProtocolError
+
+    py_path, nb_path = synced_newline_pair
+    py_path.write_text(py_path.read_text().replace("x = 1", "x = 2"))
+
+    def unexpected_kernel(*args, **kwargs):
+        pytest.fail("Source mismatch must be rejected before opening the kernel")
+
+    monkeypatch.setattr("jupyter_jcli.kernel.kernel_connection", unexpected_kernel)
+    with pytest.raises(OutputProtocolError) as caught:
+        execute_file("unused", None, "mock", str(py_path), "1", "last", None)
+    assert caught.value.code == "NOTEBOOK_OUT_OF_SYNC"
+    assert nbformat.read(nb_path, as_version=4).cells[1].outputs[0].text == "old output"
 
 
 def test_writeback_does_not_mutate_live_display_id(tmp_path):

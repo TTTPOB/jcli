@@ -117,7 +117,7 @@ def _notebook_cell_targets(
     selected: list,
     ipynb_path: str | None,
     notebook_created: str | None,
-) -> dict[int, tuple[int, str | None, bool]]:
+) -> dict[int, tuple[int, str | None, str, bool]]:
     """Validate selected sources and resolve write targets before execution."""
     if ipynb_path is None:
         return {}
@@ -127,6 +127,7 @@ def _notebook_cell_targets(
             cell.index: (
                 cell.index,
                 cell.node.id,
+                cell.source,
                 bool(cell.node.get("outputs", [])),
             )
             for cell in selected
@@ -137,6 +138,7 @@ def _notebook_cell_targets(
         targets[cell.index] = (
             resolved.notebook_cell_index,
             resolved.notebook_cell.node.id,
+            resolved.notebook_cell.source,
             bool(resolved.notebook_cell.node.get("outputs", [])),
         )
     return targets
@@ -193,8 +195,15 @@ def execute_file(
     ):
         deadline = time.monotonic() + timeout if timeout is not None else None
         for cell in selected:
-            target = notebook_cell_targets.get(cell.index, (cell.index, None, False))
-            notebook_cell_index, expected_cell_id, had_saved_outputs = target
+            target = notebook_cell_targets.get(
+                cell.index, (cell.index, None, cell.source, False)
+            )
+            (
+                notebook_cell_index,
+                expected_cell_id,
+                expected_source,
+                had_saved_outputs,
+            ) = target
             checkpoint = None
             if ipynb_path and periodic_writeback:
                 checkpoint = NotebookCheckpoint(
@@ -202,7 +211,7 @@ def execute_file(
                     ipynb_path,
                     notebook_cell_index,
                     expected_cell_id,
-                    cell.source,
+                    expected_source,
                     had_saved_outputs=had_saved_outputs,
                 )
 
@@ -290,7 +299,7 @@ def execute_file(
             cell_result = {
                 "cell_index": notebook_cell_index,
                 "expected_cell_id": expected_cell_id,
-                "expected_source": cell.source,
+                "expected_source": expected_source,
                 "source_preview": cell.source[:80].replace("\n", " "),
                 "raw_outputs": raw_outputs,
                 "execution_count": result.get("execution_count"),

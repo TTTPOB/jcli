@@ -75,7 +75,7 @@ def write_outputs_to_notebook(
         cell_results: List of dicts with keys:
             - cell_index: int
             - expected_cell_id: str, ID of the notebook target at resolution
-            - expected_source: str, source of the executed cell
+            - expected_source: str, raw notebook target source at resolution
             - raw_outputs: list of raw kernel output dicts
             - execution_count: int or None
 

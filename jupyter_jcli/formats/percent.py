@@ -10,6 +10,7 @@ import yaml
 from jupyter_jcli._enums import CellType
 from jupyter_jcli.formats.ipython_magics import transform_ipython_magics
 from jupyter_jcli.formats.model import Cell, ParsedFile
+from jupyter_jcli.formats.source import normalize_cell_source
 from jupyter_jcli.metadata import json_compatible_copy, json_equal
 
 _CELL_MARKER_RE = re.compile(r"^# %%(?:\s|$)")
@@ -23,13 +24,6 @@ def _without_final_line_ending(text: str) -> str:
     if text.endswith(("\n", "\r")):
         return text[:-1]
     return text
-
-
-def _without_trailing_blank_lines(source: str) -> str:
-    lines = source.splitlines()
-    while lines and not lines[-1].strip():
-        lines.pop()
-    return "\n".join(lines)
 
 
 def loads(text: str, *, source_path: str = "") -> ParsedFile:
@@ -251,7 +245,7 @@ def _cell_parts(
         id_option = f' id="{cell_id}"' if include_cell_ids and cell_id else ""
         if cell.cell_type == CellType.CODE:
             parts.append(f"# %%{id_option}\n")
-            source = _without_trailing_blank_lines(
+            source = normalize_cell_source(
                 transform_ipython_magics(cell.source, comment=True)
             )
             if source:
@@ -263,7 +257,7 @@ def _cell_parts(
                 else cell.cell_type.value
             )
             parts.append(f"# %% [{marker}]{id_option}\n")
-            source = _without_trailing_blank_lines(cell.source)
+            source = normalize_cell_source(cell.source)
             for line in source.splitlines():
                 parts.append(f"# {line}\n" if line else "#\n")
     return parts
