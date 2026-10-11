@@ -8,6 +8,12 @@ from typing import Literal
 import nbformat
 
 from jupyter_jcli._enums import CellChangeKind, CellType, OutputPolicy
+from jupyter_jcli._pair_prepared import (
+    NotebookInput,
+    PythonInput,
+    read_notebook,
+    read_python,
+)
 from jupyter_jcli.diff import align_cells
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import Cell, ParsedFile
@@ -45,21 +51,17 @@ def synchronize_pair(
     ):
         raise PairPathConflictError("Input and output must be different files")
 
-    from jupyter_jcli.diff import (
-        BaselineMissing,
-        Conflict,
-        DriftOnly,
-        InSync,
-        Merged,
-        check_drift,
-    )
+    from jupyter_jcli.diff.drift import prepare_and_check_pair
 
     if authoritative == "py":
-        parsed = percent.load(py_path)
+        python_input = read_python(py_path)
+        notebook_input = read_notebook(ipynb_path) if ipynb_path.exists() else None
+        # Authoritative ID/kernel repair must not change the original template.
+        parsed = deepcopy(python_input.document)
         include_ids = bool(parsed.stable_cell_ids)
         missing_ids = include_ids and any(cell.cell_id is None for cell in parsed.cells)
-        if missing_ids and ipynb_path.exists():
-            paired = ipynb.load(ipynb_path)
+        if missing_ids and notebook_input is not None:
+            paired = notebook_input.document
             used_ids = set(parsed.stable_cell_ids)
             for alignment in align_cells(paired, parsed):
                 old_cell = alignment.old_cell
@@ -84,7 +86,9 @@ def synchronize_pair(
         drift = None
         should_persist = True
     elif authoritative == "ipynb":
-        parsed = ipynb.load(ipynb_path)
+        notebook_input = read_notebook(ipynb_path)
+        python_input = read_python(py_path, missing_ok=True)
+        parsed = notebook_input.document
         include_ids = bool(parsed.cells) and all(
             cell.cell_id is not None for cell in parsed.cells
         )
@@ -94,23 +98,18 @@ def synchronize_pair(
         drift = None
         should_persist = True
     else:
-        drift = check_drift(py_path, ipynb_path, strict_baseline=strict_baseline)
-        if isinstance(drift, (Conflict, DriftOnly)):
+        pair, outcome = prepare_and_check_pair(
+            py_path, ipynb_path, strict_baseline=strict_baseline
+        )
+        drift = outcome.drift
+        if outcome.target is None:
             return PairSyncResult(state=None, drift=drift)
-        if isinstance(drift, InSync):
-            parsed = percent.load(py_path)
-            state = PairState.from_parsed(
-                parsed, include_cell_ids=bool(parsed.stable_cell_ids)
-            )
-            py_needs = ipynb_needs = False
-            should_persist = isinstance(drift.baseline, BaselineMissing)
-        elif isinstance(drift, Merged):
-            state = drift.target_state
-            py_needs = drift.py_needs_update
-            ipynb_needs = drift.ipynb_needs_update
-            should_persist = True
-        else:  # pragma: no cover - closed result union
-            raise TypeError(f"Unsupported drift result: {type(drift).__name__}")
+        state = outcome.target.state
+        python_input = pair.python
+        notebook_input = pair.notebook
+        py_needs = outcome.py_needs_update
+        ipynb_needs = outcome.ipynb_needs_update
+        should_persist = outcome.should_persist
 
     both_need_update = py_needs and ipynb_needs
     if protected_path == py_path and py_needs and not both_need_update:
@@ -118,21 +117,18 @@ def synchronize_pair(
     if protected_path == ipynb_path and ipynb_needs and not both_need_update:
         raise RuntimeError("edited notebook source requires a canonical update")
 
-    py_changed = apply_pair_state_to_python(py_path, state) if py_needs else False
+    py_changed = (
+        _apply_prepared_python(py_path, state, python_input) if py_needs else False
+    )
     ipynb_changed = (
-        apply_pair_state_to_ipynb(ipynb_path, state, output_policy=output_policy)
+        _apply_prepared_notebook(
+            ipynb_path, state, notebook_input, output_policy=output_policy
+        )
         if ipynb_needs
         else False
     )
 
-    py_state = PairState.from_parsed(
-        percent.load(py_path), include_cell_ids=state.include_cell_ids
-    )
-    nb_state = PairState.from_parsed(
-        ipynb.load(ipynb_path), include_cell_ids=state.include_cell_ids
-    )
-    if py_state != state or nb_state != state:
-        raise RuntimeError("pair writeback did not converge to the target state")
+    _verify_pair(py_path, ipynb_path, state)
 
     baseline_written = False
     if persist_baseline and should_persist:
@@ -146,6 +142,18 @@ def synchronize_pair(
         ipynb_changed=ipynb_changed,
         baseline_written=baseline_written,
     )
+
+
+def _verify_pair(py_path: Path, ipynb_path: Path, state: PairState) -> None:
+    """Physically reload both representations, including the InSync path."""
+    py_state = PairState.from_parsed(
+        percent.load(py_path), include_cell_ids=state.include_cell_ids
+    )
+    nb_state = PairState.from_parsed(
+        ipynb.load(ipynb_path), include_cell_ids=state.include_cell_ids
+    )
+    if py_state != state or nb_state != state:
+        raise RuntimeError("pair writeback did not converge to the target state")
 
 
 def _ensure_valid_kernelspec(parsed: ParsedFile) -> bool:
@@ -200,14 +208,15 @@ def python_text_for_state(template: ParsedFile, state: PairState) -> str:
 
 def apply_pair_state_to_python(py_path: Path, state: PairState) -> bool:
     """Apply state to a Python file and report whether bytes changed."""
-    current = py_path.read_text(encoding="utf-8") if py_path.exists() else ""
-    template = (
-        percent.loads(current, source_path=str(py_path))
-        if current
-        else ParsedFile(source_path=str(py_path))
-    )
-    updated = python_text_for_state(template, state)
-    if updated == current:
+    return _apply_prepared_python(py_path, state, read_python(py_path, missing_ok=True))
+
+
+def _apply_prepared_python(
+    py_path: Path, state: PairState, source: PythonInput
+) -> bool:
+    """Write using the operation's original Python text and header template."""
+    updated = python_text_for_state(source.document, state)
+    if updated == source.text:
         return False
     py_path.write_text(updated, encoding="utf-8")
     return True
@@ -220,9 +229,23 @@ def apply_pair_state_to_ipynb(
     output_policy: OutputPolicy = OutputPolicy.PRESERVE,
 ) -> bool:
     """Apply state to a notebook while retaining unrelated notebook data."""
-    before = ipynb_path.read_bytes() if ipynb_path.exists() else None
-    if ipynb_path.exists():
-        nb = nbformat.read(str(ipynb_path), as_version=4)
+    source = read_notebook(ipynb_path) if ipynb_path.exists() else None
+    return _apply_prepared_notebook(
+        ipynb_path, state, source, output_policy=output_policy
+    )
+
+
+def _apply_prepared_notebook(
+    ipynb_path: Path,
+    state: PairState,
+    source: NotebookInput | None,
+    *,
+    output_policy: OutputPolicy,
+) -> bool:
+    """Replace cells/metadata without modifying nodes retained by input states."""
+    before = source.content if source is not None else None
+    if source is not None:
+        nb = source.document.notebook
         nb.cells = _updated_cells(nb.cells, state.cells, output_policy=output_policy)
         nb.metadata = metadata_with_local_fields(nb.metadata, state.metadata)
     else:

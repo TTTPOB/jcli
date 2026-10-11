@@ -8,7 +8,13 @@ from typing import ClassVar, TypeAlias
 
 from jupyter_jcli import pair_baseline
 from jupyter_jcli._enums import DriftStatus, MergeMode
-from jupyter_jcli.formats import ipynb, percent
+from jupyter_jcli._pair_prepared import (
+    PreparedPair,
+    PreparedState,
+    prepare_baseline,
+    prepare_merged,
+    prepare_pair,
+)
 from jupyter_jcli.pair_state import MetadataConflict, PairState, merge_metadata
 
 from .merge import merge_three_way
@@ -117,6 +123,17 @@ class DriftOnly(_DriftResult):
 DriftResult: TypeAlias = InSync | Merged | Conflict | DriftOnly
 
 
+@dataclass(frozen=True)
+class CheckOutcome:
+    """The selected target and write requirements, not byte-change reports."""
+
+    drift: DriftResult
+    target: PreparedState | None = None
+    py_needs_update: bool = False
+    ipynb_needs_update: bool = False
+    should_persist: bool = False
+
+
 # ---------------------------------------------------------------------------
 # check_drift
 # ---------------------------------------------------------------------------
@@ -142,55 +159,46 @@ def check_drift(
 
     Raises any exception encountered; callers decide how to report it.
     """
-    ours_raw = py_path.read_text(encoding="utf-8")
-    ours_source = percent.loads(ours_raw)
-    include_cell_ids = bool(ours_source.stable_cell_ids)
-    ours_preserved = percent.canonicalize(
-        ours_raw,
-        include_cell_ids=None if include_cell_ids else False,
-    )
-    ours_text = percent.canonicalize(
-        ours_raw,
-        include_cell_ids=include_cell_ids,
-    )
-    py_ids_need_writeback = ours_text != ours_preserved
-    notebook_source = ipynb.load(ipynb_path)
-    theirs_text = percent.canonicalize(
-        percent.dumps(notebook_source, include_cell_ids=include_cell_ids),
-        include_cell_ids=None if include_cell_ids else False,
-    )
-    ours = PairState.from_parsed(
-        percent.loads(ours_text), include_cell_ids=include_cell_ids
-    )
-    theirs = PairState.from_parsed(
-        percent.loads(theirs_text), include_cell_ids=include_cell_ids
-    )
+    return prepare_and_check_pair(py_path, ipynb_path, strict_baseline=strict_baseline)[
+        1
+    ].drift
 
+
+def prepare_and_check_pair(
+    py_path: Path, ipynb_path: Path, *, strict_baseline: bool = False
+) -> tuple[PreparedPair, CheckOutcome]:
+    """Read once for check and retain the same inputs for subsequent apply."""
+    pair = prepare_pair(py_path, ipynb_path)
     base_raw = (
         _get_git_base_text_strict(py_path)
         if strict_baseline
         else _get_git_base_text(py_path)
     )
+    return pair, check_prepared(pair, base_raw)
 
+
+def check_prepared(pair: PreparedPair, base_raw: str | None) -> CheckOutcome:
+    """Run the shared merge and conflict decision on canonical projections."""
+    ours, theirs = pair.ours, pair.theirs
     if base_raw is None:
-        if ours == theirs:
-            return InSync(baseline=BaselineMissing(seed_text=ours.canonical_text()))
-        return DriftOnly(
-            diff_text=render_no_baseline_diff(
-                ours.canonical_text(), theirs.canonical_text()
+        if ours.matches(theirs):
+            return CheckOutcome(
+                InSync(baseline=BaselineMissing(seed_text=ours.state.canonical_text())),
+                target=ours,
+                should_persist=True,
+            )
+        return CheckOutcome(
+            DriftOnly(
+                diff_text=render_no_baseline_diff(
+                    ours.state.canonical_text(), theirs.state.canonical_text()
+                )
             )
         )
 
-    base_text = percent.canonicalize(
-        base_raw,
-        include_cell_ids=None if include_cell_ids else False,
-    )
-    base = PairState.from_parsed(
-        percent.loads(base_text), include_cell_ids=include_cell_ids
-    )
-    cell_merge = merge_three_way(base.cell_text(), ours.cell_text(), theirs.cell_text())
+    base = prepare_baseline(base_raw, pair)
+    cell_merge = merge_three_way(base.cell_text, ours.cell_text, theirs.cell_text)
     merged_metadata, metadata_conflicts = merge_metadata(
-        base.metadata, ours.metadata, theirs.metadata
+        base.state.metadata, ours.state.metadata, theirs.state.metadata
     )
 
     if cell_merge.has_conflict or metadata_conflicts:
@@ -204,29 +212,33 @@ def check_drift(
         ]
         if cell_merge.has_conflict:
             diff_parts.append(cell_merge.text)
-        return Conflict(
-            diff_text="\n".join(diff_parts),
-            conflict_indices=(
-                locate_conflict_cells(cell_merge.text)
-                if cell_merge.has_conflict
-                else []
-            ),
-            metadata_conflicts=metadata_conflicts,
+        return CheckOutcome(
+            Conflict(
+                diff_text="\n".join(diff_parts),
+                conflict_indices=(
+                    locate_conflict_cells(cell_merge.text)
+                    if cell_merge.has_conflict
+                    else []
+                ),
+                metadata_conflicts=metadata_conflicts,
+            )
         )
 
     assert merged_metadata is not None
-    merged = PairState(
-        cells=percent.loads(cell_merge.text).cells,
-        metadata=merged_metadata,
-        include_cell_ids=include_cell_ids,
-    )
-    py_needs = merged != ours or py_ids_need_writeback
-    ipynb_needs = merged != theirs
+    merged = prepare_merged(cell_merge.text, merged_metadata, pair, base)
+    py_needs = not merged.matches(ours) or pair.py_ids_need_writeback
+    ipynb_needs = not merged.matches(theirs)
     if not py_needs and not ipynb_needs:
-        return InSync(baseline=BaselineAvailable())
-    return Merged(
-        merge_mode=MergeMode.THREE_WAY,
-        target_state=merged,
+        return CheckOutcome(InSync(baseline=BaselineAvailable()), target=ours)
+    return CheckOutcome(
+        Merged(
+            merge_mode=MergeMode.THREE_WAY,
+            target_state=merged.state,
+            py_needs_update=py_needs,
+            ipynb_needs_update=ipynb_needs,
+        ),
+        target=merged,
         py_needs_update=py_needs,
         ipynb_needs_update=ipynb_needs,
+        should_persist=True,
     )

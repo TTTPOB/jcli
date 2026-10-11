@@ -680,15 +680,23 @@ class TestPostSyncFailures:
         from tests.helpers import make_py_text
 
         base_py = make_py_text("x = 1")
-        py, _ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
+        py, ipynb = _make_pair(tmp_path, ["x = 10"], ["x = 1"])
+        write_bytes = Path.write_bytes
+
+        def fail_notebook_write(path, data):
+            if path == ipynb:
+                raise OSError("EROFS")
+            return write_bytes(path, data)
+
         with (
             patch(
                 "jupyter_jcli.diff.drift._get_git_base_text_strict",
                 side_effect=lambda p: base_py if p.suffix == ".py" else None,
             ),
             patch(
-                "jupyter_jcli.pairing.apply_pair_state_to_ipynb",
-                side_effect=OSError("EROFS"),
+                "pathlib.Path.write_bytes",
+                autospec=True,
+                side_effect=fail_notebook_write,
             ),
         ):
             runner = CliRunner()
@@ -719,6 +727,12 @@ class TestPostSyncFailures:
         notebook.cells[1].source = "y = 2"
         nbformat.write(notebook, ipynb)
         base_py = make_py_text("x = 1", "y = 1")
+        write_bytes = Path.write_bytes
+
+        def fail_notebook_write(path, data):
+            if path == ipynb:
+                raise OSError("readonly notebook")
+            return write_bytes(path, data)
 
         with (
             patch(
@@ -726,8 +740,9 @@ class TestPostSyncFailures:
                 side_effect=lambda p: base_py if p.suffix == ".py" else None,
             ),
             patch(
-                "jupyter_jcli.pairing.apply_pair_state_to_ipynb",
-                side_effect=OSError("readonly notebook"),
+                "pathlib.Path.write_bytes",
+                autospec=True,
+                side_effect=fail_notebook_write,
             ),
         ):
             code, _out = _invoke(
@@ -736,6 +751,7 @@ class TestPostSyncFailures:
             )
 
         assert code == 1
+        assert "y = 2" in py.read_text(encoding="utf-8")
         assert pair_baseline.read_baseline(py) == baseline
 
     def test_baseline_persistence_failure_is_nonzero(self, git_repo: Path):
