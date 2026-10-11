@@ -53,7 +53,7 @@ canonical cell 文本可显式保存在局部变量中，或按不可变的 emit
 
 ## 性能依据
 
-实际实现验收对照原版代码 `4abb59c` 与数据流复用实现 `25db49e`，后者保留 InSync 和写后物理重新加载。环境为 Python 3.10.19、nbformat 5.10.4。合成真实配对文件包含 24 或 300 个唯一稳定 ID、已规范化普通 code cells；前四个 cells 各保存 4 MiB 合法文本 MIME 输出，总输出 16 MiB，另含 Unicode、execution count、cell／output metadata 及共享和本地 notebook metadata。
+实际实现验收对照原版代码 `4abb59c` 与数据流复用实现 `25db49e`，后者保留 InSync 和写后物理重新加载。环境为 Python 3.10.19、nbformat 5.10.4。合成配对文件包含 24 或 300 个唯一稳定 ID、已规范化普通 code cells；前四个 cells 各保存 4 MiB 合法文本 MIME 输出，总输出 16 MiB，另含 Unicode、execution count、cell／output metadata 及共享和本地 notebook metadata。
 
 计时只覆盖进程内真实 `synchronize_pair` 调用，默认 `PRESERVE`，单 cell 修改走普通同步。每个场景使用 warm 文件缓存，一次不计时预热后取三次非 profile wall-time 中位数；构造、恢复输入、独立正确性检查和进程启动不计入。注入已有 canonical baseline 并禁用持久化，因此不含 baseline Git 读取和写入成本。
 
