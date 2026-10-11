@@ -7,11 +7,21 @@ from unittest.mock import Mock
 
 import nbformat
 import pytest
+from nbformat.reader import NotJSONError
 
+from jupyter_jcli import pairing
 from jupyter_jcli._pair_prepared import PreparedState, prepare_pair
-from jupyter_jcli.diff import Conflict, InSync, Merged, check_drift
+from jupyter_jcli.diff import (
+    BaselineAvailable,
+    BaselineMissing,
+    Conflict,
+    InSync,
+    Merged,
+    check_drift,
+)
 from jupyter_jcli.formats import ipynb, percent
 from jupyter_jcli.formats.model import ParsedFile
+from jupyter_jcli.pair_state import PairState
 from jupyter_jcli.pairing import synchronize_pair
 
 
@@ -65,6 +75,88 @@ def _change_python(pair, *, source=None, metadata=None):
     if metadata is not None:
         parsed.notebook.metadata.update(metadata)
     pair.py.write_text(percent.dumps(parsed), encoding="utf-8")
+
+
+def test_in_sync_validates_first_read_without_verification_or_baseline_write(
+    tmp_path, monkeypatch
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    before = pair.py.read_bytes(), pair.nb.read_bytes()
+    verify = Mock(wraps=pairing._verify_pair)
+    validate = Mock(wraps=nbformat.validate)
+    persist = Mock()
+    monkeypatch.setattr(pairing, "_verify_pair", verify)
+    monkeypatch.setattr(nbformat, "validate", validate)
+    monkeypatch.setattr(pairing, "_persist_pair_baseline", persist)
+
+    result = synchronize_pair(pair.py, pair.nb)
+
+    assert isinstance(result.drift, InSync)
+    assert isinstance(result.drift.baseline, BaselineAvailable)
+    assert [cell.source for cell in result.state.cells] == ["x = 1", "y = 2"]
+    assert result.py_changed is result.ipynb_changed is result.baseline_written is False
+    assert (pair.py.read_bytes(), pair.nb.read_bytes()) == before
+    validate.assert_called()
+    verify.assert_not_called()
+    persist.assert_not_called()
+
+
+@pytest.mark.parametrize("persist_baseline", [False, True])
+def test_in_sync_missing_baseline_keeps_canonical_seed_and_persistence_option(
+    tmp_path, monkeypatch, persist_baseline
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    expected_seed = PairState.from_parsed(percent.load(pair.py)).canonical_text()
+    before = pair.py.read_bytes(), pair.nb.read_bytes()
+    monkeypatch.setattr("jupyter_jcli.diff.drift._get_git_base_text", lambda path: None)
+    verify = Mock(wraps=pairing._verify_pair)
+    persist = Mock(return_value=True)
+    monkeypatch.setattr(pairing, "_verify_pair", verify)
+    monkeypatch.setattr(pairing, "_persist_pair_baseline", persist)
+
+    result = synchronize_pair(pair.py, pair.nb, persist_baseline=persist_baseline)
+
+    assert isinstance(result.drift, InSync)
+    assert isinstance(result.drift.baseline, BaselineMissing)
+    assert result.drift.baseline.seed_text == expected_seed
+    assert result.baseline_written is persist_baseline
+    assert result.py_changed is result.ipynb_changed is False
+    assert (pair.py.read_bytes(), pair.nb.read_bytes()) == before
+    verify.assert_not_called()
+    if persist_baseline:
+        persist.assert_called_once_with(pair.py, expected_seed, strict=False)
+    else:
+        persist.assert_not_called()
+
+
+def test_authoritative_apply_still_verifies_when_serialized_bytes_are_unchanged(
+    tmp_path, monkeypatch
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    before = pair.py.read_bytes(), pair.nb.read_bytes()
+    verify = Mock(wraps=pairing._verify_pair)
+    monkeypatch.setattr(pairing, "_verify_pair", verify)
+
+    result = synchronize_pair(
+        pair.py, pair.nb, authoritative="py", persist_baseline=False
+    )
+
+    assert result.drift is None
+    assert result.py_changed is result.ipynb_changed is False
+    assert (pair.py.read_bytes(), pair.nb.read_bytes()) == before
+    verify.assert_called_once()
+
+
+def test_next_sync_reads_invalid_notebook_instead_of_reusing_previous_in_sync(
+    tmp_path, monkeypatch
+):
+    pair = _make_pair(tmp_path, monkeypatch)
+    first = synchronize_pair(pair.py, pair.nb, persist_baseline=False)
+    assert isinstance(first.drift, InSync)
+    pair.nb.write_text("{broken notebook JSON", encoding="utf-8")
+
+    with pytest.raises(NotJSONError):
+        synchronize_pair(pair.py, pair.nb, persist_baseline=False)
 
 
 def test_plain_cell_sync_preserves_complete_saved_notebook_data(tmp_path, monkeypatch):
@@ -283,8 +375,12 @@ def test_missing_or_duplicate_id_is_repaired_during_normal_sync(
 ):
     pair = _make_pair(tmp_path, monkeypatch)
     pair.py.write_text(pair.baseline + f"\n{new_marker}\nz = 3\n", encoding="utf-8")
+    verify = Mock(wraps=pairing._verify_pair)
+    monkeypatch.setattr(pairing, "_verify_pair", verify)
 
     result = synchronize_pair(pair.py, pair.nb, persist_baseline=False)
+
+    verify.assert_called_once()
 
     py_cells = percent.load(pair.py).cells
     nb_cells = nbformat.read(pair.nb, as_version=4).cells

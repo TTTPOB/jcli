@@ -52,7 +52,7 @@ def synchronize_pair(
     ):
         raise PairPathConflictError("Input and output must be different files")
 
-    from jupyter_jcli.diff.drift import prepare_and_check_pair
+    from jupyter_jcli.diff.drift import InSync, prepare_and_check_pair
 
     if authoritative == "py":
         python_input = read_python(py_path)
@@ -132,7 +132,15 @@ def synchronize_pair(
         else False
     )
 
-    _verify_pair(py_path, ipynb_path, target)
+    # Write requirements include attempted writeback with unchanged final bytes.
+    in_sync_without_write = (
+        authoritative is None
+        and isinstance(drift, InSync)
+        and not py_needs
+        and not ipynb_needs
+    )
+    if not in_sync_without_write:
+        _verify_pair(py_path, ipynb_path, target)
 
     baseline_written = False
     if persist_baseline and should_persist:
@@ -149,7 +157,7 @@ def synchronize_pair(
 
 
 def _verify_pair(py_path: Path, ipynb_path: Path, target: PreparedState) -> None:
-    """Physically reload both representations, including the InSync path."""
+    """Physically reload both representations to verify the selected target."""
     include_ids = target.state.include_cell_ids
     py_state = PreparedState.from_document(
         percent.load(py_path), include_cell_ids=include_ids, reuse=(target,)
